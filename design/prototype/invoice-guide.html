@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Invoice Status Guide · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    // Background list stays visible under the guide modal
+    const bg = `
+      <div class="page-header">
+        <div class="page-title">
+          <span>Invoices</span>
+          <a href="invoice-guide.html" class="how-to-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>How to Guide</span>
+          </a>
+        </div>
+        <a href="create-invoice.html" class="btn btn-primary">${ICONS.plus}<span>Create invoice</span><kbd>C</kbd></a>
+      </div>
+      <div class="list-tabs">
+        <a class="list-tab active">All invoices <span class="list-tab-count">${countByStatus('all')}</span></a>
+        <a class="list-tab">Draft <span class="list-tab-count">${countByStatus('draft')}</span></a>
+        <a class="list-tab">Sent <span class="list-tab-count">${countByStatus('sent')}</span></a>
+        <a class="list-tab">Overdue <span class="list-tab-count">${countByStatus('overdue')}</span></a>
+        <a class="list-tab">Partially paid <span class="list-tab-count">${countByStatus('partially-paid')}</span></a>
+        <a class="list-tab">Paid <span class="list-tab-count">${countByStatus('paid')}</span></a>
+        <a class="list-tab">Cancelled <span class="list-tab-count">${countByStatus('cancelled')}</span></a>
+      </div>
+      <div class="toolbar">
+        ${renderFolderFilter('Invoices', 'green')}
+        <button class="btn btn-outline btn-sm">${ICONS.filter}<span>Filter</span>${ICONS.chevronDown}</button>
+        <button class="btn btn-outline btn-sm">${ICONS.sort}<span>Sort</span>${ICONS.chevronDown}</button>
+        <div class="toolbar-spacer"></div>
+        <div class="search">${ICONS.search}<input placeholder="Search by number or client" /></div>
+      </div>
+      ${renderInvoiceList('all')}
+    `;
+
+    const modal = `
+      <div class="modal-backdrop" onclick="if(event.target===this) window.location.href='invoices.html'">
+        <div class="modal guide-modal" role="dialog" aria-label="Invoice status guide">
+          <div class="modal-header">
+            <div class="modal-title">
+              <a href="invoices.html" style="color:var(--muted-foreground);text-decoration:none">Invoices</a>
+              <span class="breadcrumb-chev">${ICONS.chevronRight}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>How to Guide — Invoice statuses</span>
+            </div>
+            <a href="invoices.html" class="modal-close">${ICONS.x}</a>
+          </div>
+
+          <div class="modal-body guide-body">
+            <div>
+              <div class="guide-section-title">Detailed Breakdown & Guidelines</div>
+              <div class="guide-intro">When to use what invoice tags for appropriate accounting and reconciliation.</div>
+            </div>
+
+            <div class="guide-callout">
+              <div class="guide-callout-icon">i</div>
+              <div>
+                Every invoice starts as a <em>Draft</em>. When you send it, it becomes <em>Sent</em>. If the due date passes without settlement, it flips to <em>Overdue</em>. On receiving payment, use <em>Log Payment</em> to record it — the invoice moves to <em>Paid</em> or <em>Partially paid</em>. If a contract is terminated before fulfilment or an error is made, transition directly to <em>Cancelled</em>. <strong>Never delete the record.</strong>
+              </div>
+            </div>
+
+            <div class="guide-warn">
+              <strong>Partial payments →</strong> Do not mark the invoice as <em style="background:transparent;padding:0;color:inherit;font-weight:600">Paid</em> until the total amount due is completely settled. Instead, keep the status as <em style="background:transparent;padding:0;color:inherit;font-weight:600">Sent</em> or switch to <em style="background:transparent;padding:0;color:inherit;font-weight:600">Partially paid</em> and log the received amount against the open balance.
+            </div>
+
+            <div class="guide-steps">
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">1</span>
+                  <span class="guide-step-title">Draft</span>
+                  ${invoiceStatusPill('draft')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> While drafting, waiting for internal approval, or when work is still being tracked before issuing.</p>
+                  <p><span class="guide-label">Justification:</span> Avoids recognising revenue prematurely. Under accrual accounting, revenue should only be recognised when the obligation is finalised or the service/product is delivered and billed.</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">2</span>
+                  <span class="guide-step-title">Sent</span>
+                  ${invoiceStatusPill('sent')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> The moment an invoice is finalised and sent to the customer with an established due date (e.g. Net 30).</p>
+                  <p><span class="guide-label">Justification:</span> Converts potential work into a legal claim for payment (Accounts Receivable). It allows you to track ageing invoices and manage collections.</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">3</span>
+                  <span class="guide-step-title">Overdue</span>
+                  ${invoiceStatusPill('overdue')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> Applied automatically once the due date has passed without full payment. Prioritise collection activity for these.</p>
+                  <p><span class="guide-label">Justification:</span> Surfaces ageing receivables that pose collection risk so they can be escalated (dunning, reminders, or renegotiation).</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">4</span>
+                  <span class="guide-step-title">Partially paid</span>
+                  ${invoiceStatusPill('partially-paid')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> When the customer has settled part of the total due but a balance remains. Log each received amount against the invoice's open balance.</p>
+                  <p><span class="guide-label">Justification:</span> Keeps the receivable open and auditable without misrepresenting the amount collected. Prevents premature revenue recognition on the outstanding portion.</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">5</span>
+                  <span class="guide-step-title">Paid</span>
+                  ${invoiceStatusPill('paid')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> Mark as paid immediately upon bank confirmation, payment gateway settlement, or cheque clearance. Only after the full amount is cleared.</p>
+                  <p><span class="guide-label">Justification:</span> Closes the open receivable cycle, confirming that expected revenue has successfully converted into actual liquid cash.</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="guide-step-head">
+                  <span class="guide-step-num">6</span>
+                  <span class="guide-step-title">Cancelled</span>
+                  ${invoiceStatusPill('cancelled')}
+                </div>
+                <div class="guide-step-body">
+                  <p><span class="guide-label">When to use:</span> When an invoice was issued by mistake, billing terms changed fundamentally, or the agreement was cancelled.</p>
+                  <p><span class="guide-label">Justification:</span> Never delete an invoice. Maintaining cancelled records preserves sequential invoice numbering (crucial for tax compliance and audit trails) while ensuring your balance sheet does not report revenue you will never receive.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <div style="font-size:12px;color:var(--muted-foreground)">Tip: hover a status pill in the list to see this description as a tooltip.</div>
+            <a href="invoices.html" class="btn btn-primary">
+              <span>Got it</span>
+              <kbd>↵</kbd>
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    renderShell({ activeNav: 'invoice', activeSub: 'invoices', children: bg, modal });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.location.href = 'invoices.html';
+    });
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Links · 4th.link</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    const content = `
+      <div class="page-header">
+        <div class="page-title">
+          <span>Links</span>
+          <span class="title-count">${SAMPLE_LINKS.length} total</span>
+          <svg class="page-title-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <a href="create-link.html" class="btn btn-primary">
+          ${ICONS.plus}
+          <span>Create link</span>
+          <kbd>C</kbd>
+        </a>
+      </div>
+
+      <div class="list-tabs">
+        <button class="list-tab active">All Active <span class="list-tab-count">${SAMPLE_LINKS.length}</span></button>
+        <button class="list-tab">Archived <span class="list-tab-count">0</span></button>
+      </div>
+
+      <div class="toolbar">
+        ${renderFolderFilter('Links', 'green')}
+        <button class="btn btn-outline btn-sm">${ICONS.filter}<span>Filter</span>${ICONS.chevronDown}</button>
+        <button class="btn btn-outline btn-sm">${ICONS.sort}<span>Sort</span>${ICONS.chevronDown}</button>
+        <div class="toolbar-spacer"></div>
+        <div class="search">${ICONS.search}<input placeholder="Search by short link or URL" /></div>
+        <button class="icon-btn">${ICONS.more}</button>
+      </div>
+
+      ${renderLinkList()}
+      ${renderPagination()}
+    `;
+    renderShell({ activeNav: 'links', activeSub: 'links', children: content });
+
+    function toggleActionMenu(idx, e) {
+      // Nav to action-menu page for the demo
+      window.location.href = 'action-menu.html?row=' + idx;
+    }
+  </script>
+</body>
+</html>

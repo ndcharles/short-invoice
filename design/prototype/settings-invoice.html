@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Settings · Invoice · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script src="settings-shell.js"></script>
+  <script>
+    // Currency dropdown snippet — reused per account row
+    const currencyOptions = ['NGN (₦)', 'USD ($)', 'EUR (€)', 'GBP (£)', 'Other…'];
+
+    const companyCard = settingsCard({
+      title: 'Company profile',
+      subtitle: 'Shown as the "Pay To" party on every invoice you issue.',
+      body: `
+        ${settingsRow({
+          label: 'Legal name',
+          help: '',
+          control: `<input class="input" value="Your Company Ltd" />`
+        })}
+        ${settingsRow({
+          label: 'Tax ID (TIN)',
+          help: '',
+          control: `<input class="input" value="00000000-0001" />`
+        })}
+        ${settingsRow({
+          label: 'Registered address',
+          help: '',
+          control: `
+            <input class="input" value="1 Example Street" />
+            <input class="input" value="Ikeja, Lagos" />
+          `
+        })}
+        ${settingsRow({
+          label: 'Contact email',
+          help: 'Replies to invoice emails go here.',
+          control: `<input class="input" type="email" value="billing@example.com" />`
+        })}
+        ${settingsRow({
+          label: 'Company logo',
+          help: 'Shown top-left of every invoice and receipt. 512×512 PNG or SVG.',
+          control: `
+            <div style="display:flex;align-items:center;gap:12px">
+              <div class="inv-logo-slot" style="width:120px;height:44px">Upload logo</div>
+              <button class="btn btn-outline btn-sm">${ICONS.download}<span>Upload</span></button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--muted-foreground)">Remove</button>
+            </div>
+          `
+        })}
+      `
+    });
+
+    const currenciesCard = settingsCard({
+      title: 'Currencies',
+      subtitle: 'Currencies available in the invoice canvas and the Log Payment popup.',
+      body: `
+        ${settingsRow({
+          label: 'Default currency',
+          help: 'Used for new invoices unless overridden.',
+          control: `
+            <div class="setting-select">
+              <select>
+                <option>NGN (₦)</option>
+                <option>USD ($)</option>
+                <option>EUR (€)</option>
+                <option>GBP (£)</option>
+              </select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Enabled currencies',
+          help: 'Turn on any currency you want to invoice in. Custom currencies can be added at the end.',
+          control: `
+            <div class="setting-toggle-list">
+              <button class="setting-chip on">NGN (₦)</button>
+              <button class="setting-chip on">USD ($)</button>
+              <button class="setting-chip on">EUR (€)</button>
+              <button class="setting-chip on">GBP (£)</button>
+              <button class="setting-chip">CAD (C$)</button>
+              <button class="setting-chip">ZAR (R)</button>
+              <button class="setting-chip">KES (KSh)</button>
+              <button class="setting-chip">${ICONS.plus}<span>Add currency</span></button>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Tax rate',
+          help: 'Applied to the subtotal on every new invoice. Individual line items can still override.',
+          control: `
+            <div style="display:flex;gap:8px;align-items:center;max-width:200px">
+              <input class="input" value="7.5" style="text-align:right" />
+              <span style="color:var(--muted-foreground);font-size:13px">%</span>
+            </div>
+            <div style="font-size:11px;color:var(--muted-foreground);margin-top:4px">Label shown on invoice: <strong style="color:var(--foreground)">Tax (7.5%)</strong></div>
+          `
+        })}
+      `
+    });
+
+    const accountsCard = settingsCard({
+      title: 'Payment accounts',
+      subtitle: 'Bank accounts shown in the "Payment Information" section of every invoice. Pick a currency per account.',
+      body: `
+        <div class="setting-list">
+          <div class="setting-list-row account-row">
+            <div class="inv-account-flag" style="background:var(--foreground)">₦</div>
+            <div>
+              <div class="primary">Guaranty Trust Bank</div>
+              <div class="secondary">Your Company Ltd · 0123456789 · GTB · Ikeja</div>
+            </div>
+            <div class="setting-select" style="min-width:140px;max-width:140px">
+              <select>${currencyOptions.map(o => `<option${o.startsWith('NGN') ? ' selected' : ''}>${o}</option>`).join('')}</select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+            <div class="row-actions">
+              <button class="icon-btn">${ICONS.edit}</button>
+              <button class="icon-btn" style="color:var(--destructive)">${ICONS.trash}</button>
+            </div>
+          </div>
+          <div class="setting-list-row account-row">
+            <div class="inv-account-flag" style="background:var(--foreground)">$</div>
+            <div>
+              <div class="primary">Wise (US)</div>
+              <div class="secondary">Your Company Ltd · 9600 0000 0000 12 · SWIFT CMFGUS33</div>
+            </div>
+            <div class="setting-select" style="min-width:140px;max-width:140px">
+              <select>${currencyOptions.map(o => `<option${o.startsWith('USD') ? ' selected' : ''}>${o}</option>`).join('')}</select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+            <div class="row-actions">
+              <button class="icon-btn">${ICONS.edit}</button>
+              <button class="icon-btn" style="color:var(--destructive)">${ICONS.trash}</button>
+            </div>
+          </div>
+          <div class="setting-list-row account-row">
+            <div class="inv-account-flag" style="background:var(--foreground)">£</div>
+            <div>
+              <div class="primary">Wise (UK)</div>
+              <div class="secondary">Your Company Ltd · GB29 NWBK 6016 1331 9268 19</div>
+            </div>
+            <div class="setting-select" style="min-width:140px;max-width:140px">
+              <select>${currencyOptions.map(o => `<option${o.startsWith('GBP') ? ' selected' : ''}>${o}</option>`).join('')}</select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+            <div class="row-actions">
+              <button class="icon-btn">${ICONS.edit}</button>
+              <button class="icon-btn" style="color:var(--destructive)">${ICONS.trash}</button>
+            </div>
+          </div>
+          <div class="setting-list-row dashed">${ICONS.plus}<span style="margin-left:6px">Add payment account</span></div>
+        </div>
+      `
+    });
+
+    const methodsCard = settingsCard({
+      title: 'Payment methods',
+      subtitle: 'Which methods appear in the Log Payment dropdown. Toggle on to enable.',
+      body: `
+        <div class="setting-list">
+          ${['Cash', 'Bank transfer', 'Card', 'Paystack', 'Wire transfer', 'Cheque', 'Other']
+            .map((m, i) => `
+              <div class="setting-list-row method-row">
+                <span class="favicon" style="width:24px;height:24px;background:var(--muted-2);border:1px solid var(--border)"></span>
+                <div class="primary">${m}</div>
+                <span class="secondary">${['32', '18', '11', '7', '4', '2', '0'][i] || '0'} uses</span>
+                <label class="toggle ${i < 6 ? 'on' : ''}" onclick="this.classList.toggle('on')" data-dirty="true">
+                  <div class="toggle-switch"></div>
+                </label>
+              </div>
+            `).join('')}
+          <div class="setting-list-row dashed">${ICONS.plus}<span style="margin-left:6px">Add custom method</span></div>
+        </div>
+      `
+    });
+
+    const termsCard = settingsCard({
+      title: 'Payment terms & numbering',
+      subtitle: 'Defaults for every new invoice.',
+      body: `
+        ${settingsRow({
+          label: 'Default payment terms',
+          help: 'Sets the due date on new invoices (Net = days after issue).',
+          control: `
+            <div class="setting-select">
+              <select>
+                <option>Net 14</option>
+                <option selected>Net 30</option>
+                <option>Net 45</option>
+                <option>Net 60</option>
+                <option>Due on receipt</option>
+                <option>Custom</option>
+              </select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Terms note',
+          help: 'Free-text block appended to the Payment Terms section on the invoice.',
+          control: `<textarea class="input" style="min-height:70px">Net 30. Late payments accrue 1.5% interest per month.</textarea>`
+        })}
+        ${settingsRow({
+          label: 'Invoice number format',
+          help: 'Preview: <code style="background:var(--muted);padding:1px 5px;border-radius:3px">INV-435431</code>. Prefix + sequential number, zero-padded.',
+          control: `
+            <div style="display:grid;grid-template-columns:1fr 100px 1fr;gap:8px;max-width:420px">
+              <div class="setting-field">
+                <label>Prefix</label>
+                <input class="input" value="INV-" />
+              </div>
+              <div class="setting-field">
+                <label>Padding</label>
+                <input class="input" value="6" style="text-align:right" />
+              </div>
+              <div class="setting-field">
+                <label>Next number</label>
+                <input class="input" value="435431" style="text-align:right;font-variant-numeric:tabular-nums" />
+              </div>
+            </div>
+          `
+        })}
+      `
+    });
+
+    const taglineCard = settingsCard({
+      title: 'Invoice tagline strip',
+      subtitle: 'A branded strip that appears at the bottom of every invoice and receipt.',
+      body: `
+        ${settingsRow({
+          label: 'Show tagline strip',
+          help: '',
+          control: `
+            <label class="toggle on" onclick="this.classList.toggle('on')" data-dirty="true">
+              <div class="toggle-switch"></div>
+              <span style="font-size:13px;color:var(--muted-foreground)">On</span>
+            </label>
+          `
+        })}
+        ${settingsRow({
+          label: 'Tagline text',
+          help: '',
+          control: `<input class="input" value="May the 4th be with you!" />`
+        })}
+        ${settingsRow({
+          label: 'Background colour',
+          help: '',
+          control: `
+            <div class="setting-toggle-list">
+              <button class="color-swatch active" style="background:#1d4ed8;width:32px;height:32px;border-radius:8px;border-width:2px" title="Blue"></button>
+              <button class="color-swatch" style="background:#0f172a;width:32px;height:32px;border-radius:8px;border-width:2px" title="Slate"></button>
+              <button class="color-swatch" style="background:#166534;width:32px;height:32px;border-radius:8px;border-width:2px" title="Green"></button>
+              <button class="color-swatch" style="background:#9a3412;width:32px;height:32px;border-radius:8px;border-width:2px" title="Orange"></button>
+              <button class="color-swatch" style="background:#7c2d12;width:32px;height:32px;border-radius:8px;border-width:2px" title="Brown"></button>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Preview',
+          help: '',
+          control: `<div class="tagline-preview">May the 4th be with you!</div>`
+        })}
+      `
+    });
+
+    const emailCard = settingsCard({
+      title: 'Email templates',
+      subtitle: 'Default subject and message body when sending invoices and receipts from the Send modal.',
+      body: `
+        ${settingsRow({
+          label: 'Invoice email subject',
+          help: '',
+          control: `<input class="input" value="Your invoice from Your Company Ltd" />`
+        })}
+        ${settingsRow({
+          label: 'Invoice email body',
+          help: 'Use <code style="background:var(--muted);padding:1px 4px;border-radius:3px">{client}</code>, <code style="background:var(--muted);padding:1px 4px;border-radius:3px">{number}</code>, <code style="background:var(--muted);padding:1px 4px;border-radius:3px">{amount}</code>, <code style="background:var(--muted);padding:1px 4px;border-radius:3px">{due}</code>.',
+          control: `<textarea class="input" style="min-height:100px">Hi {client},
+
+Please find invoice {number} attached, due on {due}. Total amount: {amount}.
+
+Payment details are inside the invoice. Reply to this email with any questions.
+
+Thanks,
+Your Company Ltd</textarea>`
+        })}
+        ${settingsRow({
+          label: 'Receipt email subject',
+          help: '',
+          control: `<input class="input" value="Receipt for your recent payment" />`
+        })}
+        ${settingsRow({
+          label: 'Receipt email body',
+          help: '',
+          control: `<textarea class="input" style="min-height:100px">Hi {client},
+
+Thanks for your payment of {amount} on {payment_date}. Attached is your receipt for invoice {number}.
+
+Best,
+Your Company Ltd</textarea>`
+        })}
+      `
+    });
+
+    const content = `
+      <div class="settings-layout">
+        ${renderSettingsNav('invoice')}
+        <div class="settings-main">
+          <div class="settings-hero">
+            <div>
+              <h1>Invoice</h1>
+              <p>Company profile, currencies, payment accounts, and every invoice default.</p>
+            </div>
+          </div>
+          ${companyCard}
+          ${currenciesCard}
+          ${accountsCard}
+          ${methodsCard}
+          ${termsCard}
+          ${taglineCard}
+          ${emailCard}
+        </div>
+      </div>
+      ${renderSaveBar()}
+    `;
+    renderShell({ activeNav: 'settings', activeSub: '', children: content });
+    initSaveBar();
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

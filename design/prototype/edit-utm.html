@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Edit campaign · UTM Builder</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    .utm-edit-body {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      max-width: 1000px;
+    }
+    .utm-edit-body .utm-preview-col { padding: 22px 20px; }
+    .creator-note-inline {
+      padding: 12px 22px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    const u = SAMPLE_UTMS[0];
+
+    const content = `
+      <div class="crumb-bar">
+        <div class="crumbs">
+          <a href="utms.html">UTM Builder</a>
+          ${ICONS.chevronRight}
+          <span class="current">
+            <span class="favicon utm-favicon" style="width:20px;height:20px">${ICONS.utm}</span>
+            ${u.campaign || '(no campaign)'}
+            ${ICONS.chevronDown}
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="click-stat-large">${ICONS.cursor}<strong>${u.clicks.toLocaleString()}</strong> <span style="color:var(--muted-foreground)">clicks</span></div>
+          <button class="btn btn-outline btn-sm" onclick="copyUrl()">${ICONS.copy}<span>Copy URL</span></button>
+          <button class="icon-btn">${ICONS.more}</button>
+        </div>
+      </div>
+
+      <div class="utm-edit-body">
+        <div class="utm-layout">
+          <div class="utm-form-col">
+            <div class="utm-form-grid">
+              <div class="field wide">
+                <label class="field-label">Website URL <span class="required-mark">*</span> <span class="field-hint">${ICONS.info}</span></label>
+                <input class="input" id="f-website" value="${u.website}" oninput="renderPreview()" />
+                <div class="field-help">The full website URL (e.g. <code>https://www.example.com</code>)</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign source <span class="required-mark">*</span></label>
+                <input class="input" id="f-source" value="${u.source}" oninput="renderPreview()" />
+                <div class="field-help">The referrer (e.g. <code>google</code>, <code>newsletter</code>)</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign medium <span class="required-mark">*</span></label>
+                <input class="input" id="f-medium" value="${u.medium}" oninput="renderPreview()" />
+                <div class="field-help">Marketing medium (e.g. <code>cpc</code>, <code>banner</code>, <code>email</code>)</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign name</label>
+                <input class="input" id="f-campaign" value="${u.campaign}" oninput="renderPreview()" />
+                <div class="field-help">Product, promo code, or slogan.</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign ID</label>
+                <input class="input" id="f-id" placeholder="abc_123" oninput="renderPreview()" />
+                <div class="field-help">The ads campaign ID.</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign term</label>
+                <input class="input" id="f-term" value="${u.term || ''}" oninput="renderPreview()" />
+                <div class="field-help">Identify the paid keywords.</div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Campaign content</label>
+                <input class="input" id="f-content" value="${u.content}" oninput="renderPreview()" />
+                <div class="field-help">Use to differentiate ads.</div>
+              </div>
+
+              <div class="field wide">
+                <label class="field-label">Comments <span class="field-hint">${ICONS.info}</span></label>
+                <textarea class="input" id="f-comments" placeholder="Internal note — who this campaign is for, where it runs, expected volume…">${u.comments || ''}</textarea>
+                <div class="field-help">Internal only. Not appended to the URL.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="utm-preview-col">
+            <div class="folder-block">
+              <div class="folder-label">Folder <span class="field-hint">${ICONS.info}</span></div>
+              <div class="folder-select">
+                <span class="folder-swatch green">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                </span>
+                <span class="folder-name">Campaigns</span>
+                <span class="folder-chev">${ICONS.chevronDown}</span>
+              </div>
+            </div>
+
+            <div class="qr-block">
+              <div class="qr-block-label">
+                <span>QR Code</span>
+                <span class="field-hint">${ICONS.info}</span>
+              </div>
+              <div class="qr-block-inner">
+                <div class="qr-thumb">${ICONS.qr}</div>
+                <div class="qr-actions">
+                  <span>Auto-generated from the URL below.</span>
+                  <a href="#" onclick="event.preventDefault()">${ICONS.edit} Customize</a>
+                </div>
+              </div>
+            </div>
+
+            <div class="preview-label">
+              <span>Generated URL</span>
+              <span class="preview-length" id="preview-length"></span>
+            </div>
+            <div class="preview-card" id="preview-url"></div>
+          </div>
+        </div>
+
+        <div class="creator-note-inline">
+          <div class="avatar" style="width:20px;height:20px;font-size:10px">${u.avatar}</div>
+          <span>Created by <strong style="color:var(--foreground)">${u.avatar === 'NC' ? 'ndcharles' : 'jdoe'}</strong> · ${u.date}</span>
+        </div>
+      </div>
+    `;
+    renderShell({ activeNav: 'utm', activeSub: '', children: content });
+
+    function encode(s){ return encodeURIComponent(s); }
+    function plainUrl() {
+      const v = id => document.getElementById(id).value.trim();
+      const website = v('f-website') || 'https://www.example.com';
+      const parts = [];
+      const push = (k, val) => { if (val) parts.push(`${k}=${encode(val)}`); };
+      push('utm_source',   v('f-source'));
+      push('utm_medium',   v('f-medium'));
+      push('utm_campaign', v('f-campaign'));
+      push('utm_id',       v('f-id'));
+      push('utm_term',     v('f-term'));
+      push('utm_content',  v('f-content'));
+      return website + (parts.length ? '?' + parts.join('&') : '');
+    }
+    function renderPreview() {
+      const v = id => document.getElementById(id).value.trim();
+      const website = v('f-website') || 'https://www.example.com';
+      const parts = [];
+      const push = (k, val) => { if (val) parts.push(`<span class="param-key">${k}</span><span class="sep">=</span><span class="param-val">${encode(val)}</span>`); };
+      push('utm_source',   v('f-source'));
+      push('utm_medium',   v('f-medium'));
+      push('utm_campaign', v('f-campaign'));
+      push('utm_id',       v('f-id'));
+      push('utm_term',     v('f-term'));
+      push('utm_content',  v('f-content'));
+      let html = `<span class="base">${website}</span>`;
+      if (parts.length) html += '<span class="sep">?</span>' + parts.join('<span class="sep">&amp;</span>');
+      document.getElementById('preview-url').innerHTML = html;
+      document.getElementById('preview-length').textContent = plainUrl().length + ' chars';
+    }
+    function copyUrl() {
+      const url = plainUrl();
+      navigator.clipboard && navigator.clipboard.writeText(url);
+      const label = document.getElementById('copy-label');
+      if (label) {
+        const prev = label.textContent;
+        label.textContent = 'Copied!';
+        setTimeout(() => label.textContent = prev, 1200);
+      }
+    }
+    renderPreview();
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

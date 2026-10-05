@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Settings · General · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script src="settings-shell.js"></script>
+  <script>
+    const workspaceCard = settingsCard({
+      title: 'Workspace',
+      subtitle: 'How this workspace appears in the sidebar and on shared docs.',
+      body: `
+        ${settingsRow({
+          label: 'Workspace name',
+          help: 'Shown in the sidebar switcher and email templates.',
+          control: `<input class="input" value="Acme Inc." />`
+        })}
+        ${settingsRow({
+          label: 'Workspace logo',
+          help: 'Displayed on invoices, receipts and shared preview pages. PNG or SVG, 512×512 max.',
+          control: `
+            <div style="display:flex;align-items:center;gap:12px">
+              <div class="workspace-avatar" style="width:48px;height:48px;font-size:18px;border-radius:8px">A</div>
+              <button class="btn btn-outline btn-sm">${ICONS.download}<span>Upload logo</span></button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--muted-foreground)">Remove</button>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Timezone',
+          help: 'Used for scheduling, activity logs and analytics.',
+          control: `
+            <div class="setting-select">
+              <select>
+                <option>Africa / Lagos (GMT+1)</option>
+                <option>Europe / London (GMT+0)</option>
+                <option>America / New York (GMT-5)</option>
+                <option>Asia / Dubai (GMT+4)</option>
+              </select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Date format',
+          help: '',
+          control: `
+            <div class="setting-seg">
+              <button class="active">Mar 19, 2026</button>
+              <button>19 Mar 2026</button>
+              <button>2026-03-19</button>
+              <button>19/03/2026</button>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Language',
+          help: '',
+          control: `
+            <div class="setting-select">
+              <select>
+                <option>English (United Kingdom)</option>
+                <option>English (United States)</option>
+                <option>Français</option>
+                <option>Português (Brasil)</option>
+              </select>
+              <span class="chev">${ICONS.chevronDown}</span>
+            </div>
+          `
+        })}
+      `,
+      foot: `<span>Changes apply to everyone in the workspace.</span><span>ID: ws_2h8dc1</span>`
+    });
+
+    const profileCard = settingsCard({
+      title: 'Your profile',
+      subtitle: 'How you appear to teammates and clients.',
+      body: `
+        ${settingsRow({
+          label: 'Full name',
+          help: '',
+          control: `<input class="input" value="ndcharles" />`
+        })}
+        ${settingsRow({
+          label: 'Email',
+          help: 'Used for sign-in and notifications.',
+          control: `<input class="input" type="email" value="nd@acme.co" />`
+        })}
+        ${settingsRow({
+          label: 'Avatar',
+          help: '',
+          control: `
+            <div style="display:flex;align-items:center;gap:12px">
+              <div class="avatar" style="width:44px;height:44px;font-size:15px">NC</div>
+              <button class="btn btn-outline btn-sm">${ICONS.download}<span>Upload</span></button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--muted-foreground)">Remove</button>
+            </div>
+          `
+        })}
+        ${settingsRow({
+          label: 'Password',
+          help: 'You last changed your password 42 days ago.',
+          control: `<button class="btn btn-outline btn-sm" data-dirty="false" onclick="event.preventDefault()">Change password</button>`
+        })}
+      `
+    });
+
+    const teamCard = settingsCard({
+      title: 'Team members',
+      subtitle: '3 members · 1 owner, 2 editors. Invite by email to add more.',
+      body: `
+        <div class="setting-list">
+          <div class="setting-list-row team-row">
+            <div class="team-avatar">NC</div>
+            <div>
+              <div class="primary">ndcharles <span class="secondary">(you)</span></div>
+              <div class="secondary">nd@acme.co</div>
+            </div>
+            <button class="role-select">Owner <span class="chev">${ICONS.chevronDown}</span></button>
+            <button class="icon-btn" style="color:var(--subtle-foreground)">${ICONS.more}</button>
+          </div>
+          <div class="setting-list-row team-row">
+            <div class="team-avatar">JD</div>
+            <div>
+              <div class="primary">Jane Doe</div>
+              <div class="secondary">jane@acme.co</div>
+            </div>
+            <button class="role-select">Editor <span class="chev">${ICONS.chevronDown}</span></button>
+            <button class="icon-btn" style="color:var(--subtle-foreground)">${ICONS.more}</button>
+          </div>
+          <div class="setting-list-row team-row">
+            <div class="team-avatar">SO</div>
+            <div>
+              <div class="primary">Seun Ola</div>
+              <div class="secondary">seun@acme.co</div>
+            </div>
+            <button class="role-select">Editor <span class="chev">${ICONS.chevronDown}</span></button>
+            <button class="icon-btn" style="color:var(--subtle-foreground)">${ICONS.more}</button>
+          </div>
+          <div class="setting-list-row dashed">
+            ${ICONS.plus}<span style="margin-left:6px">Invite teammate by email</span>
+          </div>
+        </div>
+      `
+    });
+
+    const dangerCard = settingsCard({
+      danger: true,
+      title: 'Danger zone',
+      subtitle: 'Actions here are permanent and cannot be undone.',
+      body: `
+        ${settingsRow({
+          label: 'Transfer ownership',
+          help: 'Give another team member full control of this workspace. You will be downgraded to Editor.',
+          control: `<button class="btn-danger" data-dirty="false" onclick="event.preventDefault()">Transfer ownership</button>`
+        })}
+        ${settingsRow({
+          label: 'Delete workspace',
+          help: 'Permanently deletes this workspace, all its links, invoices, and campaigns.',
+          control: `<button class="btn-danger" data-dirty="false" onclick="event.preventDefault()">${ICONS.trash}<span style="margin-left:4px">Delete workspace</span></button>`
+        })}
+      `
+    });
+
+    const content = `
+      <div class="settings-layout">
+        ${renderSettingsNav('general')}
+        <div class="settings-main">
+          <div class="settings-hero">
+            <div>
+              <h1>General</h1>
+              <p>Workspace-wide settings and your personal profile.</p>
+            </div>
+          </div>
+          ${workspaceCard}
+          ${profileCard}
+          ${teamCard}
+          ${dangerCard}
+        </div>
+      </div>
+      ${renderSaveBar()}
+    `;
+    renderShell({ activeNav: 'settings', activeSub: '', children: content });
+    initSaveBar();
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

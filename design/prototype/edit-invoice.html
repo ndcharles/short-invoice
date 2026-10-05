@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Edit invoice · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    .edit-invoice-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 24px;
+      align-items: start;
+    }
+    .edit-invoice-layout .invoice-canvas { max-width: none; margin: 0; }
+    @media (max-width: 1200px) {
+      .edit-invoice-layout { grid-template-columns: 1fr; }
+      .right-rail { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    // Pick sample: use the partially-paid one so the rail's Log/Receipt buttons show
+    const invIdx = parseInt(new URLSearchParams(location.search).get('inv') || '2', 10);
+    const inv = SAMPLE_INVOICES[invIdx] || SAMPLE_INVOICES[0];
+
+    // ----- derive totals (same source of truth as the invoice canvas) -----
+    const c = inv.currency;
+    const { subtotal, salesTax, grand, paid, outstanding } = computeTotals(inv);
+    const hasPayments = (inv.payments || []).length > 0;
+
+    const openSendModalId = 'openSendModal';
+
+    // ----- right rail -----
+    const rightRail = `
+      <aside class="right-rail">
+        <div class="rail-card">
+          <div class="rail-title">
+            <span>Invoice summary</span>
+            ${invoiceStatusPill(inv.status)}
+          </div>
+
+          <div class="rail-section">
+            <div class="rail-section-label">Client</div>
+            <div class="rail-client-name">${inv.client}</div>
+            <div class="rail-client-line">Contact person</div>
+            <div class="rail-client-line">Street address</div>
+            <div class="rail-client-line">City, State, Postal code</div>
+            <div class="rail-client-line">client@company.com</div>
+          </div>
+
+          <div class="rail-section">
+            <div class="rail-section-label">Payment breakdown</div>
+            <div class="rail-kv"><span>Subtotal</span><span>${fmtMoney(subtotal, c)}</span></div>
+            <div class="rail-kv"><span>Discount</span><span>${fmtMoney(0, c)}</span></div>
+            <div class="rail-kv"><span>Tax (7.5%)</span><span>${fmtMoney(salesTax, c)}</span></div>
+            <div class="rail-kv"><span>Additional charges</span><span>${fmtMoney(0, c)}</span></div>
+            <div class="rail-kv rail-kv-total"><span>Invoice total</span><span>${fmtMoney(grand, c)}</span></div>
+            ${paid > 0 ? `
+              <div class="rail-kv"><span>Amount paid</span><span class="rail-paid">− ${fmtMoney(paid, c)}</span></div>
+              <div class="rail-kv rail-kv-balance ${outstanding <= 0 ? 'is-cleared' : ''}">
+                <span>${outstanding <= 0 ? 'Balance' : 'Balance due'}</span>
+                <span>${fmtMoney(outstanding, c)}</span>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="rail-section rail-actions">
+            ${(inv.status === 'sent' || inv.status === 'overdue' || inv.status === 'partially-paid') ? `
+              <button class="btn btn-primary rail-btn" onclick="openLogPayment(event)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                <span>Log Payment</span>
+              </button>
+            ` : ''}
+            ${hasPayments ? `
+              <button class="btn btn-outline rail-btn" onclick="toggleReceiptMode(event)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6M9 11h6"/></svg>
+                <span>View Receipt</span>
+              </button>
+            ` : ''}
+          </div>
+
+          ${hasPayments ? `
+            <div class="rail-section">
+              <div class="rail-section-label">Payments (${inv.payments.length})</div>
+              ${inv.payments.map((p, i) => `
+                <div class="rail-payment">
+                  <span class="rail-payment-idx">${i+1}</span>
+                  <div>
+                    <div class="rail-payment-amt">${fmtMoney(p.amount, c)}</div>
+                    <div class="rail-payment-sub">${p.date} · ${p.method}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </aside>
+    `;
+
+    const content = `
+      <div class="crumb-bar">
+        <div class="crumbs">
+          <a href="invoices.html">Invoices</a>
+          ${ICONS.chevronRight}
+          <span class="current">
+            <span class="favicon inv-favicon" style="width:20px;height:20px">${ICONS.invoice}</span>
+            ${inv.number}
+            ${ICONS.chevronDown}
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="click-stat-large">${ICONS.cursor}<strong>${fmtMoney(grand, c)}</strong></div>
+          <button class="btn btn-outline btn-sm" onclick="openSendModal(event)">${ICONS.send}<span>Send</span></button>
+          <button class="btn btn-outline btn-sm">${ICONS.copy}<span>Copy link</span></button>
+          <button class="icon-btn">${ICONS.more}</button>
+        </div>
+      </div>
+
+      <div class="edit-invoice-layout">
+        ${renderInvoiceCanvas(inv)}
+        ${rightRail}
+      </div>
+    `;
+
+    renderShell({ activeNav: 'invoice', activeSub: 'invoices', children: content });
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

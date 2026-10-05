@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>New invoice · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    .modal.invoice-modal {
+      width: min(1000px, calc(100vw - 40px));
+      max-height: calc(100vh - 20px);
+    }
+    .modal.invoice-modal .modal-body {
+      display: block;
+      overflow: auto;
+      padding: 24px 24px 12px;
+      background: var(--muted-2);
+    }
+    .modal.invoice-modal .invoice-canvas {
+      max-width: none;
+      margin: 0;
+    }
+    .modal.invoice-modal .inv-footer-bar { position: static; box-shadow: none; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    // Background list stays visible under the modal
+    const bg = `
+      <div class="page-header">
+        <div class="page-title">
+          <span>Invoices</span>
+          <a href="invoice-guide.html" class="how-to-btn" title="How to Guide">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>How to Guide</span>
+          </a>
+        </div>
+        <a href="create-invoice.html" class="btn btn-primary">${ICONS.plus}<span>Create invoice</span><kbd>C</kbd></a>
+      </div>
+      <div class="list-tabs">
+        <a class="list-tab active">All invoices <span class="list-tab-count">${countByStatus('all')}</span></a>
+        <a class="list-tab">Draft <span class="list-tab-count">${countByStatus('draft')}</span></a>
+        <a class="list-tab">Sent <span class="list-tab-count">${countByStatus('sent')}</span></a>
+        <a class="list-tab">Overdue <span class="list-tab-count">${countByStatus('overdue')}</span></a>
+        <a class="list-tab">Partially paid <span class="list-tab-count">${countByStatus('partially-paid')}</span></a>
+        <a class="list-tab">Paid <span class="list-tab-count">${countByStatus('paid')}</span></a>
+        <a class="list-tab">Cancelled <span class="list-tab-count">${countByStatus('cancelled')}</span></a>
+      </div>
+      <div class="toolbar">
+        ${renderFolderFilter('Invoices', 'green')}
+        <button class="btn btn-outline btn-sm">${ICONS.filter}<span>Filter</span>${ICONS.chevronDown}</button>
+        <button class="btn btn-outline btn-sm">${ICONS.sort}<span>Sort</span>${ICONS.chevronDown}</button>
+        <div class="toolbar-spacer"></div>
+        <div class="search">${ICONS.search}<input placeholder="Search by number or client" /></div>
+      </div>
+      ${renderInvoiceList('all')}
+    `;
+
+    // Fresh invoice with a generated number, NGN default
+    const draft = {
+      number: 'INV-435425',
+      currency: 'NGN',
+      status: 'sent',
+    };
+
+    const modal = `
+      <div class="modal-backdrop" onclick="if(event.target===this) window.location.href='invoices.html'">
+        <div class="modal invoice-modal" role="dialog" aria-label="New invoice">
+          <div class="modal-header">
+            <div class="modal-title">
+              <a href="invoices.html" style="color:var(--muted-foreground);text-decoration:none">Invoices</a>
+              <span class="breadcrumb-chev">${ICONS.chevronRight}</span>
+              ${ICONS.invoice}
+              <span>New invoice</span>
+              <span class="draft-saved">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                Draft saved
+              </span>
+            </div>
+            <a href="invoices.html" class="modal-close">${ICONS.x}</a>
+          </div>
+
+          <div class="modal-body">
+            ${renderInvoiceCanvas(draft)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    renderShell({ activeNav: 'invoice', activeSub: 'invoices', children: bg, modal });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.location.href = 'invoices.html';
+    });
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

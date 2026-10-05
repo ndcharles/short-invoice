@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "short-invoice",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+
+  // The UI is a static Next.js export (`out/`). Only API and short-link paths
+  // run the Worker; everything else is served as a static asset, which is
+  // free and does not count toward the 100k requests/day free-plan limit.
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "/s/*"]
+  },
+
+  // All persistent state lives in D1. No KV: its free tier allows only
+  // 1,000 writes/day. database_id is filled in by `wrangler d1 create`
+  // (or by Wrangler's automatic provisioning on first deploy).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "short-invoice",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "observability": { "enabled": true }
+}

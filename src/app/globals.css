@@ -1,0 +1,771 @@
+/* Basecoat UI — precompiled bundle (Basecoat's source ships Tailwind `@apply`,
+   so we consume the prebuilt CDN build instead of compiling it ourselves). */
+@import "basecoat-css/base.cdn.css";
+
+/* Design-system tokens + component styles from the handoff
+   (design/prototype/shared.css).
+   Kept unlayered so it takes precedence over Basecoat's layered defaults. */
+@import "./shared.css";
+
+/* ---------------------------------------------------------------------------
+   Basecoat containment.
+   Basecoat ships a `.sidebar` component that assumes it is a fixed drawer and
+   pushes whatever element follows it:  .sidebar + * { margin-left: var(--sidebar-width) }
+   with --sidebar-width: 16rem (256px). Our shell owns its layout through
+   .app { grid-template-columns: 240px 1fr } in shared.css, so that inherited
+   margin opened a 256px dead band between the sidebar and <main class="main">.
+   These rules sit outside Basecoat's @layer and use a higher-specificity
+   selector, so they win regardless of import order.
+   --------------------------------------------------------------------------- */
+.app > .sidebar + .main {
+  margin-left: 0;
+  margin-right: 0;
+  position: static;
+}
+.app > .sidebar {
+  display: flex;
+  position: sticky;
+  inset: auto;
+  width: auto;
+  z-index: auto;
+  background: var(--muted-2);
+}
+.app > .sidebar nav {
+  position: static;
+  inset: auto;
+  z-index: auto;
+}
+
+/* .field collides with Basecoat's .field, which stamps `width: 100%` on every
+   child (`& > *`). Our row-layout fields (e.g. the Cloak toggle row) then get a
+   full-width label that wraps and squeezes the control. */
+.field-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.field-row > * { width: auto; }
+
+/* .empty collides with Basecoat's .empty (flex:1 + text-wrap:balance).
+   The design's empty state is a bordered block, not a flex filler. */
+.empty {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  text-wrap: initial;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Link Analytics — page-local styles lifted from the design prototype
+   (design/prototype/analytics.html)
+   --------------------------------------------------------------------------- */
+.analytics-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0 16px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.stat-card .stat-label {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.stat-card .stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 6px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.stat-card .stat-delta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+.chart-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 12px;
+}
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.chart-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.chart-placeholder {
+  height: 220px;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent 79px,
+    var(--border) 79px,
+    var(--border) 80px
+  );
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+.chart-placeholder svg {
+  width: 100%;
+  height: 100%;
+}
+.split {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.split + .split { margin-top: 12px; }
+.split-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.split-card h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 40px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+}
+.bar-row + .bar-row { border-top: 1px solid var(--border); }
+.bar-flag { font-size: 12px; }
+.bar-track {
+  background: var(--muted);
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+.bar-fill {
+  background: var(--foreground);
+  height: 100%;
+  border-radius: 3px;
+}
+.bar-count {
+  text-align: right;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.placeholder-veil {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+/* Tabs + toolbar dim when the list is empty (design: links-empty.html) */
+.list-tabs.is-dim,
+.toolbar.is-dim { opacity: 0.5; }
+
+/* Toolbar overflow menu anchor */
+.toolbar-menu { position: relative; }
+
+/* ---------------------------------------------------------------------------
+   Advanced-option popups (UTM, Password, Expiration, Link Preview).
+   Small centred cards that stack above the create/edit surfaces.
+   --------------------------------------------------------------------------- */
+.popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 16px;
+}
+.popup {
+  background: white;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  border-radius: 14px;
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.popup.wide { width: min(560px, calc(100vw - 32px)); }
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 20px 12px;
+}
+.popup-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.popup-title .field-hint { color: var(--subtle-foreground); }
+.popup-kbd {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.popup-body {
+  padding: 0 20px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: auto;
+}
+.popup-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px 18px;
+}
+.popup-footer-right { display: flex; gap: 8px; margin-left: auto; }
+
+/* Icon + label cell beside an inline input, as in the handoff popups */
+.popup-field {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.popup-field:focus-within {
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05);
+}
+.popup-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  background: var(--muted-2);
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  min-width: 138px;
+}
+.popup-field-label svg { color: var(--muted-foreground); flex-shrink: 0; }
+.popup-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--foreground);
+  background: transparent;
+}
+.popup-field input::placeholder { color: var(--subtle-foreground); }
+.popup-field input:disabled { color: var(--muted-foreground); background: var(--muted-2); }
+.popup-field-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.popup-field-action:hover { color: var(--foreground); }
+
+/* Section label + stacked control (Expiration, Link Preview) */
+.popup-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 6px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.popup-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 0;
+}
+.popup-label-row .popup-label { margin: 0; }
+.popup-label-actions { display: flex; align-items: center; gap: 8px; }
+.popup-counter {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.popup-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--foreground);
+  background: white;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.popup-input::placeholder { color: var(--subtle-foreground); }
+.popup-input:focus { border-color: var(--foreground); box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05); }
+textarea.popup-input { min-height: 84px; resize: none; line-height: 1.5; }
+.popup-input-wrap { position: relative; display: flex; align-items: center; }
+.popup-input-wrap .popup-input { padding-right: 38px; }
+.popup-input-affix {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.popup-input-affix:hover { background: var(--muted); color: var(--foreground); }
+.popup-hint { font-size: 12px; color: var(--muted-foreground); }
+
+/* Custom calendar popover — anchored to its input, never the viewport edge */
+.popup-calendar {
+  position: fixed;
+  z-index: 400;
+  width: 288px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 10px;
+}
+.popup-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.popup-calendar-title { font-size: 13px; font-weight: 600; }
+.popup-calendar-nav { display: flex; gap: 2px; }
+.popup-calendar-nav .icon-btn { width: 24px; height: 24px; }
+.popup-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.popup-calendar-dow {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  text-align: center;
+  padding: 3px 0 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+.popup-calendar-day {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.popup-calendar-day:hover { background: var(--muted); }
+.popup-calendar-day.is-muted { color: var(--subtle-foreground); }
+.popup-calendar-day.is-today { border-color: var(--border-strong); }
+.popup-calendar-day.is-selected,
+.popup-calendar-day.is-selected:hover { background: var(--foreground); color: white; }
+.popup-calendar-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.popup-calendar-time .popup-input { flex: 1; padding: 6px 8px; }
+.popup-calendar-time-label { font-size: 12px; color: var(--muted-foreground); }
+.popup-calendar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.popup-calendar-foot .popup-link-btn { color: var(--muted-foreground); }
+
+
+.popup-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.popup-link-btn:hover { color: var(--foreground); }
+.popup-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.popup-icon-btn:hover { background: var(--muted); color: var(--foreground); }
+
+/* Composed URL readout inside the UTM popup */
+.popup-url-preview {
+  margin-top: 2px;
+  background: var(--muted-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--foreground);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  max-height: 88px;
+  overflow: auto;
+}
+.popup-url-preview .param-key { color: #1e40af; }
+.popup-url-preview .param-val { color: #854d0e; }
+.popup-url-preview .sep { color: var(--subtle-foreground); }
+
+/* Link preview image slot */
+.popup-image {
+  aspect-ratio: 1.91 / 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtle-foreground);
+  overflow: hidden;
+}
+.popup-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Folder swatch. shared.css scopes .fs-swatch to the toolbar's .folder-filter,
+   so settings rows and dropdowns need the base rules too. */
+.fs-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.fs-swatch.green { background: var(--accent-green); color: var(--accent-green-fg); }
+.fs-swatch.blue { background: var(--accent-blue); color: var(--accent-blue-fg); }
+.fs-swatch.yellow { background: var(--accent-yellow); color: var(--accent-yellow-fg); }
+.fs-swatch svg { width: 10px; height: 10px; }
+
+/* ---------------------------------------------------------------------------
+   App shell height.
+   The design's .app uses min-height:100vh, so a page taller than the viewport
+   stretched the grid row while .sidebar stayed 100vh — leaving the profile row
+   stranded mid-page. Pinning the shell to the viewport and scrolling .main
+   internally keeps the sidebar footer at the bottom on every page length.
+   --------------------------------------------------------------------------- */
+.app {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  align-items: stretch;
+}
+.sidebar {
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--muted-2);
+  z-index: 2;
+}
+.main {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   Settings gets more horizontal room: the main sidebar collapses to icons.
+   --------------------------------------------------------------------------- */
+.app-collapsed { grid-template-columns: 64px 1fr; }
+.app-collapsed .sidebar { padding: 14px 8px; }
+.app-collapsed .workspace { justify-content: center; padding: 8px 0 10px; }
+.app-collapsed .nav-section-label { display: none; }
+.app-collapsed .nav-item { justify-content: center; padding: 7px 0; }
+.app-collapsed .nav-item span,
+.app-collapsed .workspace-name,
+.app-collapsed .workspace-chevron,
+.app-collapsed .user-meta,
+.app-collapsed .user-row svg { display: none; }
+.app-collapsed .user-row { justify-content: center; padding: 6px 0; }
+
+/* Responsive settings: stack label/control and never let rows overflow. */
+.settings-row-control { min-width: 0; }
+.settings-row > div { min-width: 0; }
+.setting-list-row { min-width: 0; }
+.setting-list-row > div { min-width: 0; }
+.setting-seg { flex-wrap: wrap; }
+.setting-select { min-width: 0; }
+.setting-select select { min-width: 0; }
+
+@media (max-width: 1100px) {
+  .settings-layout { grid-template-columns: 180px minmax(0, 1fr); gap: 20px; }
+  .settings-row { grid-template-columns: 150px minmax(0, 1fr); gap: 16px; }
+}
+
+@media (max-width: 860px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .settings-nav-title { width: 100%; padding: 0 0 2px; }
+  .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .setting-list-row.domain-row,
+  .setting-list-row.account-row,
+  .setting-list-row.method-row,
+  .setting-list-row.team-row,
+  .setting-list-row.preset-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The whole "Custom Link Preview" row opens the editor, so the switch inside it
+   must never swallow that click — it is a state indicator, not a control. */
+.custom-preview-row { cursor: pointer; }
+.custom-preview-row:hover { border-color: var(--border-strong); }
+.custom-preview-row .toggle { pointer-events: none; }
+
+/* Live OG preview (web / X / LinkedIn / Facebook) */
+.og-preview {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.og-preview .og-image {
+  aspect-ratio: 1.91 / 1;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtle-foreground);
+  overflow: hidden;
+}
+.og-preview .og-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.og-preview .og-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.og-preview .og-site {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.og-preview .og-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.og-preview .og-desc {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.og-preview.is-empty .og-title,
+.og-preview.is-empty .og-desc { color: var(--subtle-foreground); font-weight: 400; }
+/* Platform chrome */
+.og-preview.x { border-radius: 14px; }
+.og-preview.x .og-image { border-radius: 12px; margin: 10px 10px 0; border: 1px solid var(--border); }
+.og-preview.x .og-body { padding: 8px 12px 12px; }
+.og-preview.linkedin .og-image { border-radius: 0; }
+.og-preview.facebook .og-body { background: var(--muted-2); }
+
+
+/* ---------------------------------------------------------------------------
+   UTM Builder — page-local styles lifted from create-utm.html / edit-utm.html
+   --------------------------------------------------------------------------- */
+.modal-body.utm {
+  grid-template-columns: 1fr;
+  overflow: visible;
+}
+.modal-body.utm .utm-layout { min-height: 0; }
+
+.utm-edit-body {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  max-width: 1000px;
+}
+.utm-edit-body .utm-preview-col { padding: 22px 20px; }
+.creator-note-inline {
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  background: white;
+}
+
+/* The preview card's base URL and hint line */
+.utm-preview-col .preview-card .base { color: white; }
+.utm-preview-col .preview-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 900px) {
+  .utm-layout { grid-template-columns: minmax(0, 1fr); }
+  .utm-layout > .utm-form-col { border-right: none; border-bottom: 1px solid var(--border); }
+  .utm-form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+   Invoice create modal + edit layout (create-invoice.html / edit-invoice.html)
+   --------------------------------------------------------------------------- */
+.modal.invoice-modal {
+  width: min(1000px, calc(100vw - 40px));
+  max-height: calc(100vh - 20px);
+}
+.modal.invoice-modal .modal-body {
+  display: block;
+  overflow: auto;
+  padding: 24px 24px 12px;
+  background: var(--muted-2);
+}
+.modal.invoice-modal .invoice-canvas {
+  max-width: none;
+  margin: 0;
+}
+.modal.invoice-modal .inv-footer-bar { position: static; box-shadow: none; }
+
+.edit-invoice-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 24px;
+  align-items: start;
+}
+.edit-invoice-layout .invoice-canvas { max-width: none; margin: 0; }
+@media (max-width: 1200px) {
+  .edit-invoice-layout { grid-template-columns: minmax(0, 1fr); }
+  .right-rail { position: static; }
+}
+
+/* ---------------------------------------------------------------------------
+   Form control widths — the design never lets a control stretch the card.
+   --------------------------------------------------------------------------- */
+.settings-row-control > .input,
+.settings-row-control > .setting-select,
+.settings-row-control > textarea.input {
+  max-width: 420px;
+}
+.settings-row-control > .setting-seg { max-width: 100%; }
+.setting-field > .input { max-width: 200px; }
+.inv-account-grid input { max-width: 100%; }
+.modal-body .field > .input { max-width: 100%; }
+
+/* Invoice footer strip: wrap instead of overflowing on narrow screens */
+.inv-footer-bar { flex-wrap: wrap; row-gap: 8px; }
+@media (max-width: 900px) {
+  .inv-footer-bar { position: static; box-shadow: none; }
+  .inv-footer-bar .inv-brand-mini { width: 100%; }
+}
+
+/* Equivalent-currency line under the invoice total */
+.inv-totals-row.inv-equivalent { background: var(--muted-2); }
+.inv-totals-row.inv-equivalent .tot-label { font-weight: 400; color: var(--muted-foreground); }
+.inv-totals-row.inv-equivalent .tot-value { color: var(--muted-foreground); font-size: 12px; }
+
+/* Overpayment credit row on the invoice */
+.inv-totals-row.inv-overpaid .tot-label { font-weight: 400; color: var(--muted-foreground); }
+.inv-totals-row.inv-overpaid .tot-value { color: var(--accent-green-fg); }

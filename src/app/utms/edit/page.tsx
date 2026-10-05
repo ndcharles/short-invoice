@@ -1,0 +1,267 @@
+'use client';
+
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { Shell } from '@/components/layout/shell';
+import { UtmForm } from '@/components/utms/utm-form';
+import type { UtmCampaign } from '@/lib/types';
+import { Archive, ChevronDown, ChevronRight, Copy, Cursor, Duplicate, Info, More, Trash } from '@/components/icons';
+import { useCollections, useSettings } from '@/lib/collections';
+import {
+  buildCampaignUrl,
+  formatOptionsFromSettings,
+  UtmFields,
+  validateUtmFields,
+} from '@/lib/utm-builder';
+
+// Edit pages take the id as `?id=` because a static export cannot
+// prerender a dynamic `[id]` segment for ids that do not exist yet.
+export default function EditUtmPage() {
+  return (
+    <Suspense>
+      <EditUtmPageInner />
+    </Suspense>
+  );
+}
+
+function EditUtmPageInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const id = searchParams.get('id') ?? '';
+
+  const settings = useSettings();
+  const format = useMemo(() => formatOptionsFromSettings(settings), [settings]);
+  const { items: folders } = useCollections('folders');
+
+  const [campaign, setCampaign] = useState<UtmCampaign | null>(null);
+  const [baseline, setBaseline] = useState<UtmFields | null>(null);
+  const [fields, setFields] = useState<UtmFields | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/utms/${id}`);
+        if (res.status === 404) {
+          if (!cancelled) setNotFound(true);
+          return;
+        }
+        const data = await res.json();
+        if (cancelled || !data.campaign) return;
+        const c = data.campaign as UtmCampaign;
+        const loaded: UtmFields = {
+          website: c.website,
+          source: c.source ?? '',
+          medium: c.medium ?? '',
+          campaign: c.campaign ?? '',
+          campaign_id: c.campaign_id ?? '',
+          term: c.term ?? '',
+          content: c.content ?? '',
+          comments: c.comments ?? '',
+          folder: c.folder,
+        };
+        setCampaign(c);
+        setBaseline(loaded);
+        setFields(loaded);
+      } catch (err) {
+        console.error('Failed to load campaign:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const dirty = useMemo(
+    () => !!baseline && !!fields && JSON.stringify(baseline) !== JSON.stringify(fields),
+    [baseline, fields]
+  );
+
+  const url = fields ? buildCampaignUrl(fields, format) : '';
+
+  const copyUrl = () => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSave = async () => {
+    if (!fields || !campaign) return;
+    const validation = validateUtmFields(fields);
+    if (validation) {
+      setError(validation);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/utms/${campaign.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save campaign');
+      setCampaign(data.campaign);
+      setBaseline(fields);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save campaign');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleArchive = async () => {
+    if (!campaign) return;
+    await fetch(`/api/utms/${campaign.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: campaign.archived !== 1 }),
+    });
+    router.push('/utms');
+  };
+
+  const handleDelete = async () => {
+    if (!campaign) return;
+    if (!confirm('Delete this campaign?')) return;
+    await fetch(`/api/utms/${campaign.id}`, { method: 'DELETE' });
+    router.push('/utms');
+  };
+
+  const handleDuplicate = async () => {
+    if (!campaign || !fields) return;
+    await fetch('/api/utms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...fields, campaign: fields.campaign ? `${fields.campaign}_copy` : null }),
+    });
+    router.push('/utms');
+  };
+
+  if (loading) {
+    return (
+      <Shell>
+        <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading campaign…</div>
+      </Shell>
+    );
+  }
+
+  if (notFound || !campaign || !fields) {
+    return (
+      <Shell>
+        <div className="empty">
+          <div className="empty-icon">
+            <Info width="24" height="24" />
+          </div>
+          <h3>Campaign not found</h3>
+          <p>This campaign may have been deleted.</p>
+          <button className="btn btn-primary" onClick={() => router.push('/utms')}>
+            Back to UTM Builder
+          </button>
+        </div>
+      </Shell>
+    );
+  }
+
+  const dateStr = new Date(campaign.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const label = fields.campaign || fields.campaign_id || '(no campaign)';
+
+  return (
+    <Shell>
+      <div className="crumb-bar">
+        <div className="crumbs">
+          <Link href="/utms">UTM Builder</Link>
+          <ChevronRight />
+          <span className="current">
+            <span className="favicon utm-favicon" style={{ width: '20px', height: '20px' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6h16" />
+                <path d="M4 12h10" />
+                <path d="M4 18h16" />
+                <circle cx="18" cy="12" r="2" />
+              </svg>
+            </span>
+            {label}
+            <ChevronDown />
+          </span>
+          {dirty && <span className="draft-saved" style={{ marginLeft: 0 }}>Unsaved changes</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className="click-stat-large">
+            <Cursor />
+            <strong>{campaign.clicks.toLocaleString()}</strong>{' '}
+            <span style={{ color: 'var(--muted-foreground)' }}>clicks</span>
+          </div>
+          <button className="btn btn-outline btn-sm" onClick={copyUrl}>
+            <Copy />
+            <span>{copied ? 'Copied' : 'Copy URL'}</span>
+          </button>
+          <div className="toolbar-menu">
+            <button className="icon-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="More">
+              <More />
+            </button>
+            {menuOpen && (
+              <div className="dropdown" style={{ top: 'calc(100% + 4px)', right: 0 }}>
+                <div className="dropdown-item" onClick={() => { setMenuOpen(false); copyUrl(); }}>
+                  <Copy />
+                  <span>Copy URL</span>
+                </div>
+                <div className="dropdown-item" onClick={() => { setMenuOpen(false); handleDuplicate(); }}>
+                  <Duplicate />
+                  <span>Duplicate</span>
+                </div>
+                <div className="dropdown-item" onClick={() => { setMenuOpen(false); handleArchive(); }}>
+                  <Archive />
+                  <span>{campaign.archived === 1 ? 'Unarchive' : 'Archive'}</span>
+                </div>
+                <div className="dropdown-sep" />
+                <div className="dropdown-item destructive" onClick={() => { setMenuOpen(false); handleDelete(); }}>
+                  <Trash />
+                  <span>Delete</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="utm-edit-body">
+        <UtmForm
+          fields={fields}
+          onChange={(patch) => setFields((prev) => (prev ? { ...prev, ...patch } : prev))}
+          format={format}
+          folders={folders}
+          previewLabel="Generated URL"
+        />
+
+        <div className="creator-note-inline">
+          <div className="avatar" style={{ width: '20px', height: '20px', fontSize: '10px' }}>{campaign.avatar}</div>
+          <span>
+            Created by <strong style={{ color: 'var(--foreground)' }}>ndcharles</strong> · {dateStr}
+          </span>
+        </div>
+      </div>
+
+      <div className={`save-bar ${dirty ? 'visible' : ''}`}>
+        <span className="save-bar-dot" />
+        <span>{error ?? (saving ? 'Saving…' : 'Unsaved changes')}</span>
+        <button className="btn btn-outline" onClick={() => { if (baseline) setFields(baseline); setError(null); }} disabled={saving}>
+          Discard
+        </button>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </Shell>
+  );
+}

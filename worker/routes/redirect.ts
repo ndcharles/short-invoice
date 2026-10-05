@@ -1,0 +1,183 @@
+import { Hono, type Context } from 'hono';
+import type { AppEnv } from '../env';
+import type { LinkItem } from '../../src/lib/types';
+import { verifyPassword } from '../lib/password';
+import { withUtm, pickUtm } from '../../src/lib/links/utm';
+import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
+
+const DOMAIN = '4th.link';
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+/** Minimal page shell reusing the workspace's design tokens. */
+function htmlPage(title: string, body: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${escapeHtml(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --border:#e5e5e5; --muted:#f5f5f5; --muted-2:#fafafa; --muted-foreground:#737373; --foreground:#0a0a0a; --destructive:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--muted-2); color:var(--foreground);
+         font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; font-size:13px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .card { width:min(420px, calc(100vw - 40px)); background:#fff; border:1px solid var(--border); border-radius:10px; padding:28px 26px; text-align:center; }
+  .icon { width:48px; height:48px; margin:0 auto 14px; border-radius:50%; background:var(--muted); display:flex; align-items:center; justify-content:center; color:var(--muted-foreground); }
+  h1 { margin:0 0 6px; font-size:16px; font-weight:600; }
+  p { margin:0 0 18px; color:var(--muted-foreground); }
+  .field { display:flex; flex-direction:column; gap:6px; text-align:left; margin-bottom:14px; }
+  label { font-size:12px; font-weight:500; }
+  input { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:inherit; color:var(--foreground); outline:none; }
+  input:focus { border-color:var(--foreground); box-shadow:0 0 0 3px rgba(0,0,0,.05); }
+  button { width:100%; padding:8px 12px; border:1px solid var(--foreground); border-radius:6px; background:var(--foreground); color:#fff; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; }
+  button:hover { background:#262626; }
+  .error { color:var(--destructive); font-size:12px; margin:0 0 12px; }
+  .meta { font-family:'SFMono-Regular', ui-monospace, monospace; font-size:12px; color:var(--muted-foreground); word-break:break-all; }
+</style>
+</head>
+<body><div class="card">${body}</div></body>
+</html>`;
+}
+
+type RedirectContext = Context<AppEnv>;
+type LinkRecord = Pick<
+  LinkItem,
+  'id' | 'dest' | 'cloak' | 'password_hash' | 'expires_at' | 'expires_url' |
+  'utm_source' | 'utm_medium' | 'utm_campaign' | 'utm_term' | 'utm_content' | 'utm_referral'
+>;
+
+/**
+ * One rollup upsert plus one counter update per human click (bots skipped),
+ * run after the response is sent so the redirect never waits on a write.
+ */
+function logClick(c: RedirectContext, linkId: string) {
+  const ua = c.req.header('user-agent') ?? '';
+  if (isBot(ua)) return;
+
+  const now = Date.now();
+  const country = (c.req.raw.cf?.country as string | undefined) ?? c.req.header('cf-ipcountry') ?? 'XX';
+  const db = c.env.DB;
+
+  c.executionCtx.waitUntil(
+    db
+      .batch([
+        db.prepare('UPDATE links SET clicks = clicks + 1, last_clicked_at = ?1 WHERE id = ?2').bind(now, linkId),
+        db
+          .prepare(
+            `INSERT INTO link_clicks_daily (link_id, day, country, device, browser, os, referer, clicks)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
+             ON CONFLICT DO UPDATE SET clicks = clicks + 1`
+          )
+          .bind(
+            linkId,
+            new Date(now).toISOString().slice(0, 10),
+            country,
+            deviceOf(ua),
+            browserOf(ua),
+            osOf(ua),
+            refererHost(c.req.header('referer') ?? null)
+          ),
+      ])
+      .catch((err) => console.error('click logging failed', err))
+  );
+}
+
+function passwordPage(alias: string, wrong: boolean) {
+  return htmlPage('Password required', `
+    <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+    <h1>This link is password protected</h1>
+    <p>Enter the password to continue.</p>
+    ${wrong ? '<p class="error">Incorrect password. Try again.</p>' : ''}
+    <form method="POST" action="/s/${encodeURIComponent(alias)}">
+      <div class="field">
+        <label for="pw">Password</label>
+        <input id="pw" type="password" name="pw" placeholder="Enter password" autofocus required />
+      </div>
+      <button type="submit">Unlock link</button>
+    </form>`);
+}
+
+async function resolve(c: RedirectContext, supplied: string | null) {
+  const alias = c.req.param('alias') ?? '';
+  const record = await c.env.DB.prepare(
+    `SELECT id, dest, cloak, password_hash, expires_at, expires_url,
+            utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral
+     FROM links WHERE domain = ?1 AND alias = ?2 AND archived = 0`
+  )
+    .bind(DOMAIN, alias)
+    .first<LinkRecord>();
+
+  if (!record) {
+    return c.html(
+      htmlPage('Link not found', `
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="2" y1="2" x2="22" y2="22"/></svg></div>
+        <h1>Link not found</h1>
+        <p>This short link does not exist or has been removed.</p>
+        <div class="meta">${DOMAIN}/${escapeHtml(alias)}</div>`),
+      404
+    );
+  }
+
+  // Expiration wins over everything else.
+  if (record.expires_at && Date.now() > record.expires_at) {
+    if (record.expires_url) return c.redirect(record.expires_url, 302);
+    return c.html(
+      htmlPage('Link expired', `
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <h1>This link has expired</h1>
+        <p>The owner set an expiration date and it has passed.</p>
+        <div class="meta">${DOMAIN}/${escapeHtml(alias)}</div>`),
+      410
+    );
+  }
+
+  // Password gate. The password arrives as a POST body so it never lands in
+  // URLs, logs or Referer headers.
+  if (record.password_hash) {
+    if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
+      return c.html(passwordPage(alias, supplied !== null), 401);
+    }
+  }
+
+  const target = withUtm(record.dest, pickUtm(record));
+  logClick(c, record.id);
+
+  if (record.cloak) {
+    return c.html(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(alias)}</title>
+  <style>
+    body, html { margin:0; padding:0; height:100%; overflow:hidden; }
+    iframe { border:none; width:100%; height:100%; }
+  </style>
+</head>
+<body>
+  <iframe src="${escapeHtml(target)}"></iframe>
+</body>
+</html>`);
+  }
+
+  // 303 after a POST so the browser follows with a GET.
+  return c.redirect(target, c.req.method === 'POST' ? 303 : 302);
+}
+
+const redirect = new Hono<AppEnv>();
+
+redirect.get('/:alias', (c) => resolve(c, null));
+redirect.post('/:alias', async (c) => {
+  const form = await c.req.parseBody();
+  return resolve(c, typeof form.pw === 'string' ? form.pw : '');
+});
+
+export default redirect;

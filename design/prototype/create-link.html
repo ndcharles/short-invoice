@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>New link · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    const bgContent = `
+      <div class="page-header">
+        <div class="page-title">
+          <span>Links</span>
+          <svg class="page-title-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <a href="create-link.html" class="btn btn-primary">${ICONS.plus}<span>Create link</span><kbd>C</kbd></a>
+      </div>
+      <div class="toolbar">
+        ${renderFolderFilter('Links', 'green')}
+        <button class="btn btn-outline btn-sm">${ICONS.filter}<span>Filter</span>${ICONS.chevronDown}</button>
+        <button class="btn btn-outline btn-sm">${ICONS.display}<span>Display</span>${ICONS.chevronDown}</button>
+        <div class="toolbar-spacer"></div>
+        <div class="search">${ICONS.search}<input placeholder="Search by short link or URL" /></div>
+      </div>
+      ${renderLinkList()}
+    `;
+
+    const modal = `
+      <div class="modal-backdrop" onclick="if(event.target===this) window.location.href='links.html'">
+        <div class="modal" role="dialog" aria-label="New link">
+          <div class="modal-header">
+            <div class="modal-title">
+              <a href="links.html" style="color:var(--muted-foreground);text-decoration:none">Links</a>
+              <span class="breadcrumb-chev">${ICONS.chevronRight}</span>
+              ${ICONS.globe}
+              <span>New link</span>
+              <span class="draft-saved">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                Draft saved
+              </span>
+            </div>
+            <a href="links.html" class="modal-close">${ICONS.x}</a>
+          </div>
+
+          <div class="modal-body">
+            <div class="modal-left">
+              <div class="field">
+                <label class="field-label">Destination URL <span class="field-hint">${ICONS.info}</span></label>
+                <input class="input" placeholder="https://dub.co/help/article/dub-links" />
+              </div>
+
+              <div class="field">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <label class="field-label" style="flex:1">Short Link <span class="field-hint">${ICONS.info}</span></label>
+                  <span class="field-action" style="display:inline-flex;gap:10px">
+                    <span style="cursor:pointer" title="Randomize">${ICONS.shuffle}</span>
+                    <span style="cursor:pointer" title="AI suggest">${ICONS.wand}</span>
+                  </span>
+                </div>
+                <div class="alias-constructor">
+                  <div class="alias-domain">
+                    <span>4th.link</span>
+                    ${ICONS.chevronDown}
+                  </div>
+                  <input class="alias-input" placeholder="Nk6EwSL" />
+                </div>
+              </div>
+
+              <div class="field">
+                <div style="display:flex;align-items:center">
+                  <label class="field-label" style="flex:1">Tags <span class="field-hint">${ICONS.info}</span></label>
+                  <span class="field-action">Manage</span>
+                </div>
+                <div class="input" style="color:var(--subtle-foreground);display:flex;align-items:center;gap:6px">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                  <span>Select tags…</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Comments <span class="field-hint">${ICONS.info}</span></label>
+                <textarea class="input" placeholder="Add comments"></textarea>
+              </div>
+
+              <div class="field" style="flex-direction:row;align-items:center;justify-content:space-between">
+                <label class="field-label" style="margin:0">Cloak link <span class="field-hint">${ICONS.info}</span></label>
+                <div class="toggle" onclick="this.classList.toggle('on')">
+                  <div class="toggle-switch"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-right">
+              <div>
+                <div class="right-panel-title" style="margin-bottom:8px">
+                  <span style="display:inline-flex;align-items:center;gap:4px">Folder <span class="field-hint">${ICONS.info}</span></span>
+                </div>
+                <div class="input" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                  <span style="width:16px;height:16px;background:var(--accent-green);border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:var(--accent-green-fg)">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  </span>
+                  <span style="flex:1">Links</span>
+                  ${ICONS.chevronDown}
+                </div>
+              </div>
+
+              <div>
+                <div class="right-panel-title" style="margin-bottom:8px">
+                  <span style="display:inline-flex;align-items:center;gap:4px">QR Code <span class="field-hint">${ICONS.info}</span></span>
+                </div>
+                <div class="qr-card">
+                  <button class="icon-btn qr-edit" title="Edit QR">${ICONS.edit}</button>
+                  <div class="qr">${ICONS.qr}</div>
+                </div>
+              </div>
+
+              <div>
+                <div class="custom-preview-row">
+                  <span>Custom Link Preview</span>
+                  <div class="toggle" onclick="this.classList.toggle('on')"><div class="toggle-switch"></div></div>
+                </div>
+                <div class="og-tabs" style="margin-bottom:8px">
+                  <div class="og-tab active" title="Web">${ICONS.globe}</div>
+                  <div class="og-tab" title="X">${ICONS.xLogo}</div>
+                  <div class="og-tab" title="LinkedIn">${ICONS.linkedin}</div>
+                  <div class="og-tab" title="Facebook">${ICONS.facebook}</div>
+                </div>
+                <div class="og-preview-card">
+                  <div class="og-image">
+                    <button class="icon-btn edit-dot" title="Edit preview image" style="background:white;box-shadow:var(--shadow-sm)">${ICONS.edit}</button>
+                    ${ICONS.image}
+                  </div>
+                  <div class="og-body">
+                    <div class="og-title-placeholder">Enter a title…</div>
+                    <div class="og-desc-placeholder">Enter a description…</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <div class="tools-bar">
+              <button class="tool-btn">${ICONS.utm}<span>UTM</span></button>
+              <button class="tool-btn">${ICONS.lock}<span>Password</span></button>
+              <button class="tool-btn">${ICONS.clock}<span>Expiration</span></button>
+            </div>
+            <a href="links.html" class="btn btn-primary">
+              <span>Create link</span>
+              <kbd>↵</kbd>
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    renderShell({ activeNav: 'links', activeSub: 'links', children: bgContent, modal });
+
+    // Esc closes
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.location.href = 'links.html';
+    });
+
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

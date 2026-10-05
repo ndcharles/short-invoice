@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>UTM Builder · Action menu</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const rowIdx = parseInt(params.get('row') || '1', 10);
+
+    const content = `
+      <div class="page-header">
+        <div class="page-title">
+          <span>UTM Builder</span>
+          <span class="title-count">${SAMPLE_UTMS.length} total</span>
+          <svg class="page-title-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <a href="create-utm.html" class="btn btn-primary">${ICONS.plus}<span>Create campaign</span><kbd>C</kbd></a>
+      </div>
+
+      <div class="list-tabs">
+        <button class="list-tab active">All Active <span class="list-tab-count">${SAMPLE_UTMS.length}</span></button>
+        <button class="list-tab">Archived <span class="list-tab-count">0</span></button>
+      </div>
+
+      <div class="toolbar">
+        ${renderFolderFilter('Campaigns', 'green')}
+        <button class="btn btn-outline btn-sm">${ICONS.filter}<span>Filter</span>${ICONS.chevronDown}</button>
+        <button class="btn btn-outline btn-sm">${ICONS.sort}<span>Sort</span>${ICONS.chevronDown}</button>
+        <div class="toolbar-spacer"></div>
+        <div class="search">${ICONS.search}<input placeholder="Search by campaign or source" /></div>
+        <button class="icon-btn">${ICONS.more}</button>
+      </div>
+
+      ${renderUtmList()}
+    `;
+    renderShell({ activeNav: 'utm', activeSub: '', children: content });
+
+    requestAnimationFrame(() => {
+      const cards = document.querySelectorAll('.link-card');
+      const target = cards[rowIdx] || cards[1];
+      if (!target) return;
+      target.style.background = 'var(--muted-2)';
+      target.style.boxShadow = 'var(--shadow-sm)';
+      target.style.borderColor = 'var(--border-strong)';
+      const btn = target.querySelector('.icon-btn');
+      if (btn) {
+        btn.style.background = 'var(--muted)';
+        btn.style.color = 'var(--foreground)';
+        const rect = btn.getBoundingClientRect();
+        const dd = document.createElement('div');
+        dd.className = 'dropdown';
+        dd.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+        dd.style.left = (rect.right + window.scrollX - 170) + 'px';
+        dd.innerHTML = `
+          <div class="dropdown-item">${ICONS.edit}<span>Edit</span><span class="kbd-hint">E</span></div>
+          <div class="dropdown-item">${ICONS.duplicate}<span>Duplicate</span><span class="kbd-hint">D</span></div>
+          <div class="dropdown-item">${ICONS.copy}<span>Copy URL</span><span class="kbd-hint">⌘C</span></div>
+          <div class="dropdown-item">${ICONS.archive}<span>Archive</span><span class="kbd-hint">A</span></div>
+          <div class="dropdown-sep"></div>
+          <div class="dropdown-item destructive">${ICONS.trash}<span>Delete</span><span class="kbd-hint">⌫</span></div>
+        `;
+        document.body.appendChild(dd);
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.dropdown') && !e.target.closest('.icon-btn')) {
+        window.location.href = 'utms.html';
+      }
+    }, { capture: true });
+
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>

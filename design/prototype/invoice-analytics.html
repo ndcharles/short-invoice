@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Invoice Analytics · 4th.link</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    /* --- Analytics-specific --- */
+    .ia-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 0 16px;
+    }
+    .ia-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .ia-kpi {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .ia-kpi-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .ia-kpi-value {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--foreground);
+      font-variant-numeric: tabular-nums;
+      margin-top: 6px;
+    }
+    .ia-kpi-value.small { font-size: 18px; }
+    .ia-kpi-delta {
+      font-size: 11px;
+      color: var(--muted-foreground);
+      margin-top: 2px;
+    }
+    .ia-kpi-delta.up { color: var(--accent-green-fg); }
+    .ia-kpi-delta.down { color: #991b1b; }
+
+    /* Tabs (analytics section switcher) */
+    .ia-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      border-bottom: 1px solid var(--border);
+      padding: 6px 0 0;
+      margin-bottom: 16px;
+    }
+    .ia-tab {
+      position: relative;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+    .ia-tab:hover { color: var(--foreground); }
+    .ia-tab.active { color: var(--foreground); }
+    .ia-tab.active::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: -1px;
+      height: 2px;
+      background: var(--foreground);
+      border-radius: 2px 2px 0 0;
+    }
+
+    /* Chart cards */
+    .ia-grid { display: grid; gap: 12px; }
+    .ia-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+    .ia-grid.cols-3 { grid-template-columns: 1.4fr 1fr; }
+    .ia-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .ia-card-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .ia-card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+    .ia-card-sub {
+      font-size: 11px;
+      color: var(--muted-foreground);
+      margin-top: 2px;
+    }
+
+    /* Bar charts */
+    .ia-bars { display: flex; flex-direction: column; gap: 8px; }
+    .ia-bar-row {
+      display: grid;
+      grid-template-columns: 130px 1fr 80px;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+    }
+    .ia-bar-label {
+      color: var(--foreground);
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ia-bar-track {
+      background: var(--muted);
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .ia-bar-fill {
+      background: var(--foreground);
+      height: 100%;
+      border-radius: 4px;
+    }
+    .ia-bar-fill.blue    { background: #3b82f6; }
+    .ia-bar-fill.green   { background: #22c55e; }
+    .ia-bar-fill.orange  { background: #f97316; }
+    .ia-bar-fill.red     { background: #ef4444; }
+    .ia-bar-fill.purple  { background: #a855f7; }
+    .ia-bar-count {
+      text-align: right;
+      color: var(--muted-foreground);
+      font-variant-numeric: tabular-nums;
+    }
+    .ia-bar-count strong { color: var(--foreground); font-weight: 600; }
+
+    /* Donut */
+    .ia-donut-wrap {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+    .ia-donut {
+      width: 200px; height: 200px;
+    }
+    .ia-donut-center {
+      pointer-events: none;
+    }
+    .ia-legend { display: flex; flex-direction: column; gap: 6px; }
+    .ia-legend-row {
+      display: grid;
+      grid-template-columns: 12px 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      padding: 5px 0;
+    }
+    .ia-legend-row + .ia-legend-row { border-top: 1px solid var(--border); }
+    .ia-legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+    .ia-legend-label { color: var(--foreground); font-weight: 500; }
+    .ia-legend-value { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+    .ia-legend-pct { color: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+
+    /* Stacked bar (mom trend) */
+    .ia-stack-chart { width: 100%; height: auto; display: block; }
+    .ia-stack-legend {
+      display: flex; flex-wrap: wrap; gap: 12px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .ia-stack-legend-item {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--muted-foreground);
+    }
+    .ia-stack-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+    /* Client-by-status stacked table */
+    .ia-client-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .ia-client-table th {
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted-foreground);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .ia-client-table th:not(:first-child) { text-align: right; }
+    .ia-client-table td {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .ia-client-table td:first-child { font-weight: 500; color: var(--foreground); }
+    .ia-client-stack {
+      display: flex;
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--muted);
+    }
+    .ia-client-stack > span { display: block; height: 100%; }
+    .ia-client-total { text-align: right; color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shell.js"></script>
+  <script>
+    // ------- Aggregations -------
+    const invs = SAMPLE_INVOICES;
+
+    // Approx FX rates for a rough single-currency view (demo only).
+    // Real app would normalise via a live rate.
+    const FX = { NGN: 1/1650, USD: 1, EUR: 1.09, GBP: 1.27 }; // to USD
+    const toUsd = (v, c) => v * (FX[c] || 1);
+
+    // Total invoice value (in USD equivalent, then formatted)
+    let totalValueUsd = 0;
+    invs.forEach(i => { totalValueUsd += toUsd(computeTotals(i).grand, i.currency); });
+
+    // Unique clients
+    const clientSet = new Set(invs.map(i => i.client));
+
+    // Avg days to payment (paid invoices with payments)
+    function daysBetween(issued, paidDate) {
+      const a = new Date(issued + ' 2026'); // sample uses month names
+      const b = new Date(paidDate + ' 2026');
+      return Math.max(1, Math.round((b - a) / (1000 * 60 * 60 * 24)));
+    }
+    const paidWithDates = invs.filter(i => i.status === 'paid' && i.payments && i.payments.length);
+    const avgDays = paidWithDates.length
+      ? Math.round(paidWithDates.reduce((s, i) => s + daysBetween(i.issued, i.payments[i.payments.length-1].date), 0) / paidWithDates.length)
+      : 0;
+
+    // Status breakdown (for donut + tab counts)
+    const statuses = ['draft', 'sent', 'overdue', 'partially-paid', 'paid', 'cancelled'];
+    const statusColors = {
+      draft:          '#a3a3a3',
+      sent:           '#3b82f6',
+      overdue:        '#ef4444',
+      'partially-paid': '#f97316',
+      paid:           '#22c55e',
+      cancelled:      '#525252',
+    };
+    const statusLabels = {
+      draft: 'Draft', sent: 'Sent', overdue: 'Overdue',
+      'partially-paid': 'Partially paid', paid: 'Paid', cancelled: 'Cancelled',
+    };
+    const statusCounts = Object.fromEntries(statuses.map(s => [s, invs.filter(i => i.status === s).length]));
+
+    // Payment methods (count + value)
+    const methodCounts = {}, methodValueUsd = {};
+    invs.forEach(i => (i.payments || []).forEach(p => {
+      methodCounts[p.method] = (methodCounts[p.method] || 0) + 1;
+      methodValueUsd[p.method] = (methodValueUsd[p.method] || 0) + toUsd(p.amount, i.currency);
+    }));
+
+    // Invoices per client (count + summed value)
+    const perClient = {};
+    invs.forEach(i => {
+      if (!perClient[i.client]) perClient[i.client] = { count: 0, valueUsd: 0, byStatus: {} };
+      perClient[i.client].count += 1;
+      perClient[i.client].valueUsd += toUsd(computeTotals(i).grand, i.currency);
+      perClient[i.client].byStatus[i.status] = (perClient[i.client].byStatus[i.status] || 0) + 1;
+    });
+
+    // Month-on-month (fake series from sample dates; group by month)
+    const momMonths = ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
+    // Distribute across months (demo). Real app queries by createdAt.
+    const momData = [
+      { m: 'Dec', draft: 0, sent: 0, overdue: 0, 'partially-paid': 0, paid: 1, cancelled: 0 },
+      { m: 'Jan', draft: 0, sent: 0, overdue: 0, 'partially-paid': 0, paid: 0, cancelled: 1 },
+      { m: 'Feb', draft: 0, sent: 0, overdue: 0, 'partially-paid': 1, paid: 1, cancelled: 0 },
+      { m: 'Mar', draft: 0, sent: 1, overdue: 0, 'partially-paid': 0, paid: 1, cancelled: 0 },
+      { m: 'Apr', draft: 0, sent: 0, overdue: 0, 'partially-paid': 0, paid: 0, cancelled: 0 },
+      { m: 'May', draft: 0, sent: 0, overdue: 0, 'partially-paid': 0, paid: 0, cancelled: 0 },
+      { m: 'Jun', draft: 0, sent: 0, overdue: 0, 'partially-paid': 0, paid: 0, cancelled: 0 },
+      { m: 'Jul', draft: 0, sent: 0, overdue: 1, 'partially-paid': 0, paid: 0, cancelled: 0 },
+      { m: 'Aug', draft: 0, sent: 0, overdue: 1, 'partially-paid': 0, paid: 0, cancelled: 0 },
+      { m: 'Sep', draft: 1, sent: 0, overdue: 0, 'partially-paid': 0, paid: 0, cancelled: 0 },
+    ];
+
+    const activeTab = new URLSearchParams(location.search).get('tab') || 'overview';
+
+    // ------- Chart renderers -------
+    const usd = v => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    const usdDetail = v => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function donutSvg(size = 200, thickness = 26) {
+      const cx = size / 2, cy = size / 2;
+      const outerR = size / 2 - 2;
+      const innerR = outerR - thickness;
+      const totalInv = invs.length;
+      let angle = -Math.PI / 2; // start at top
+      const paths = statuses.filter(s => statusCounts[s] > 0).map(s => {
+        const count = statusCounts[s];
+        const sweep = (count / totalInv) * Math.PI * 2;
+        const x1 = cx + outerR * Math.cos(angle);
+        const y1 = cy + outerR * Math.sin(angle);
+        const x2 = cx + outerR * Math.cos(angle + sweep);
+        const y2 = cy + outerR * Math.sin(angle + sweep);
+        const xi2 = cx + innerR * Math.cos(angle + sweep);
+        const yi2 = cy + innerR * Math.sin(angle + sweep);
+        const xi1 = cx + innerR * Math.cos(angle);
+        const yi1 = cy + innerR * Math.sin(angle);
+        const large = sweep > Math.PI ? 1 : 0;
+        const d = `M ${x1} ${y1} A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${innerR} ${innerR} 0 ${large} 0 ${xi1} ${yi1} Z`;
+        angle += sweep;
+        return `<path d="${d}" fill="${statusColors[s]}" />`;
+      }).join('');
+      return `
+        <svg class="ia-donut" viewBox="0 0 ${size} ${size}">
+          ${paths}
+          <g class="ia-donut-center" text-anchor="middle" font-family="Inter, sans-serif">
+            <text x="${cx}" y="${cy - 4}" font-size="12" fill="#737373">Total</text>
+            <text x="${cx}" y="${cy + 18}" font-size="22" font-weight="600" fill="#0a0a0a">${totalInv}</text>
+          </g>
+        </svg>
+      `;
+    }
+
+    // Grouped bar chart: each month has one bar per status side-by-side.
+    // Only statuses that appear in the data are drawn (keeps clusters tight).
+    function momBarSvg() {
+      const activeStatuses = statuses.filter(k => momData.some(d => (d[k] || 0) > 0));
+      const W = 960, H = 220, padL = 32, padR = 12, padT = 10, padB = 28;
+      const chartW = W - padL - padR;
+      const chartH = H - padT - padB;
+      const maxV = Math.max(...momData.flatMap(d => activeStatuses.map(k => d[k] || 0)), 1);
+      const gap = chartW / momData.length;
+      const groupW = gap * 0.95;            // cluster fills nearly the whole slot
+      const barW = groupW / activeStatuses.length;
+      const scale = chartH / maxV;
+
+      const yTicks = maxV;
+      let grid = '';
+      for (let i = 0; i <= yTicks; i++) {
+        const y = padT + chartH * (1 - i / yTicks);
+        grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e5e5e5" stroke-width="1" />
+                 <text x="${padL - 6}" y="${y + 3}" font-size="9" fill="#737373" text-anchor="end">${i}</text>`;
+      }
+
+      const bars = momData.map((d, i) => {
+        const groupX = padL + gap * i + (gap - groupW) / 2;
+        const cells = activeStatuses.map((k, j) => {
+          const v = d[k] || 0;
+          const x = groupX + barW * j;
+          const h = v * scale;
+          const y = padT + chartH - h;
+          if (v === 0) return '';
+          return `<rect x="${x + 1}" y="${y}" width="${Math.max(6, barW - 2)}" height="${h}" fill="${statusColors[k]}" rx="2" />`;
+        }).join('');
+        const label = `<text x="${groupX + groupW/2}" y="${H - 10}" font-size="10" fill="#737373" text-anchor="middle">${d.m}</text>`;
+        return cells + label;
+      }).join('');
+
+      return `<svg class="ia-stack-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+        ${grid}${bars}
+      </svg>
+      <div class="ia-stack-legend">
+        ${activeStatuses.map(s => `
+          <span class="ia-stack-legend-item"><span class="ia-stack-legend-dot" style="background:${statusColors[s]}"></span>${statusLabels[s]}</span>
+        `).join('')}
+      </div>`;
+    }
+
+    // ------- Tab bodies -------
+
+    function tabOverview() {
+      const totalInv = invs.length;
+      return `
+        <div class="ia-grid cols-3">
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Invoices by status</div>
+                <div class="ia-card-sub">Distribution of all ${totalInv} invoices</div>
+              </div>
+            </div>
+            <div class="ia-donut-wrap">
+              ${donutSvg(180, 24)}
+              <div class="ia-legend">
+                ${statuses.filter(s => statusCounts[s] > 0).map(s => `
+                  <div class="ia-legend-row">
+                    <span class="ia-legend-dot" style="background:${statusColors[s]}"></span>
+                    <span class="ia-legend-label">${statusLabels[s]}</span>
+                    <span class="ia-legend-value">${statusCounts[s]}</span>
+                    <span class="ia-legend-pct">${Math.round(statusCounts[s]/totalInv*100)}%</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Invoice value by status</div>
+                <div class="ia-card-sub">Total ${usd(totalValueUsd)} (USD equivalent)</div>
+              </div>
+            </div>
+            <div class="ia-bars">
+              ${statuses.filter(s => statusCounts[s] > 0).map(s => {
+                const val = invs.filter(i => i.status === s).reduce((sum, i) => sum + toUsd(computeTotals(i).grand, i.currency), 0);
+                const pct = Math.round(val / totalValueUsd * 100);
+                return `
+                  <div class="ia-bar-row">
+                    <span class="ia-bar-label">${statusLabels[s]}</span>
+                    <div class="ia-bar-track"><div class="ia-bar-fill" style="width:${pct}%;background:${statusColors[s]}"></div></div>
+                    <span class="ia-bar-count"><strong>${usd(val)}</strong></span>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="ia-card" style="margin-top:12px">
+          <div class="ia-card-head">
+            <div>
+              <div class="ia-card-title">Invoices processed month on month</div>
+              <div class="ia-card-sub">Grouped by status · last 10 months</div>
+            </div>
+          </div>
+          ${momBarSvg()}
+        </div>
+      `;
+    }
+
+    function tabPayments() {
+      const methodsByCount = Object.entries(methodCounts).sort((a,b) => b[1] - a[1]);
+      const methodsByValue = Object.entries(methodValueUsd).sort((a,b) => b[1] - a[1]);
+      const maxCount = Math.max(...methodsByCount.map(m => m[1]), 1);
+      const maxValue = Math.max(...methodsByValue.map(m => m[1]), 1);
+      const totalPayments = Object.values(methodCounts).reduce((s, v) => s + v, 0);
+      const totalPaymentsValue = Object.values(methodValueUsd).reduce((s, v) => s + v, 0);
+
+      return `
+        <div class="ia-card">
+          <div class="ia-card-head">
+            <div>
+              <div class="ia-card-title">Payment velocity</div>
+              <div class="ia-card-sub">Average days from invoice issue to full payment</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px">
+            <div>
+              <div class="ia-kpi-label">Overall avg</div>
+              <div class="ia-kpi-value">${avgDays}<span style="font-size:13px;color:var(--muted-foreground);font-weight:400;margin-left:6px">days</span></div>
+            </div>
+            <div>
+              <div class="ia-kpi-label">Fastest</div>
+              <div class="ia-kpi-value">3<span style="font-size:13px;color:var(--muted-foreground);font-weight:400;margin-left:6px">days</span></div>
+              <div class="ia-kpi-delta">Brightline Media · Bank transfer</div>
+            </div>
+            <div>
+              <div class="ia-kpi-label">Slowest</div>
+              <div class="ia-kpi-value">41<span style="font-size:13px;color:var(--muted-foreground);font-weight:400;margin-left:6px">days</span></div>
+              <div class="ia-kpi-delta">Payflow Labs · Wire transfer</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ia-grid cols-2" style="margin-top:12px">
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Payment methods by count</div>
+                <div class="ia-card-sub">${totalPayments} payments recorded</div>
+              </div>
+            </div>
+            <div class="ia-bars">
+              ${methodsByCount.map(([m, c], i) => `
+                <div class="ia-bar-row">
+                  <span class="ia-bar-label">${m}</span>
+                  <div class="ia-bar-track"><div class="ia-bar-fill ${['blue','green','orange','purple','red'][i%5]}" style="width:${c/maxCount*100}%"></div></div>
+                  <span class="ia-bar-count"><strong>${c}</strong> ${c === 1 ? 'payment' : 'payments'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Payment methods by value</div>
+                <div class="ia-card-sub">${usd(totalPaymentsValue)} collected (USD equivalent)</div>
+              </div>
+            </div>
+            <div class="ia-bars">
+              ${methodsByValue.map(([m, v], i) => `
+                <div class="ia-bar-row">
+                  <span class="ia-bar-label">${m}</span>
+                  <div class="ia-bar-track"><div class="ia-bar-fill ${['blue','green','orange','purple','red'][i%5]}" style="width:${v/maxValue*100}%"></div></div>
+                  <span class="ia-bar-count"><strong>${usd(v)}</strong></span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function tabClients() {
+      const clientEntries = Object.entries(perClient);
+      const byCount  = [...clientEntries].sort((a,b) => b[1].count - a[1].count);
+      const byValue  = [...clientEntries].sort((a,b) => b[1].valueUsd - a[1].valueUsd);
+      const maxCount = Math.max(...byCount.map(([,d]) => d.count), 1);
+      const maxValue = Math.max(...byValue.map(([,d]) => d.valueUsd), 1);
+
+      return `
+        <div class="ia-grid cols-2">
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Invoices processed per client</div>
+                <div class="ia-card-sub">${clientSet.size} unique clients · ${invs.length} total invoices</div>
+              </div>
+            </div>
+            <div class="ia-bars">
+              ${byCount.map(([name, d], i) => `
+                <div class="ia-bar-row">
+                  <span class="ia-bar-label">${name}</span>
+                  <div class="ia-bar-track"><div class="ia-bar-fill ${['blue','green','orange','purple','red'][i%5]}" style="width:${d.count/maxCount*100}%"></div></div>
+                  <span class="ia-bar-count"><strong>${d.count}</strong></span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="ia-card">
+            <div class="ia-card-head">
+              <div>
+                <div class="ia-card-title">Client by invoice amount</div>
+                <div class="ia-card-sub">Summed value across all statuses</div>
+              </div>
+            </div>
+            <div class="ia-bars">
+              ${byValue.map(([name, d], i) => `
+                <div class="ia-bar-row">
+                  <span class="ia-bar-label">${name}</span>
+                  <div class="ia-bar-track"><div class="ia-bar-fill ${['blue','green','orange','purple','red'][i%5]}" style="width:${d.valueUsd/maxValue*100}%"></div></div>
+                  <span class="ia-bar-count"><strong>${usd(d.valueUsd)}</strong></span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="ia-card" style="margin-top:12px">
+          <div class="ia-card-head">
+            <div>
+              <div class="ia-card-title">Client by invoice status</div>
+              <div class="ia-card-sub">Distribution of statuses per client</div>
+            </div>
+          </div>
+          <table class="ia-client-table">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th style="width:55%">Status split</th>
+                <th>Total invoices</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${clientEntries.map(([name, d]) => `
+                <tr>
+                  <td>${name}</td>
+                  <td>
+                    <div class="ia-client-stack">
+                      ${statuses.map(s => {
+                        const c = d.byStatus[s] || 0;
+                        if (!c) return '';
+                        const pct = c / d.count * 100;
+                        return `<span title="${statusLabels[s]}: ${c}" style="width:${pct}%;background:${statusColors[s]}"></span>`;
+                      }).join('')}
+                    </div>
+                  </td>
+                  <td class="ia-client-total">${d.count}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="ia-stack-legend">
+            ${statuses.map(s => `
+              <span class="ia-stack-legend-item"><span class="ia-stack-legend-dot" style="background:${statusColors[s]}"></span>${statusLabels[s]}</span>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // ------- Render -------
+    const tabBody = activeTab === 'payments' ? tabPayments() : activeTab === 'clients' ? tabClients() : tabOverview();
+
+    const content = `
+      <div class="ia-toolbar">
+        <div class="page-title" style="padding:0">
+          <span>Analytics</span>
+          <svg class="page-title-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div style="display:flex;gap:8px">
+          ${renderFolderFilter('Invoices', 'green')}
+          <button class="btn btn-outline btn-sm">${ICONS.clock}<span>Last 12 months</span>${ICONS.chevronDown}</button>
+          <button class="btn btn-outline btn-sm">${ICONS.externalLink}<span>Export</span></button>
+        </div>
+      </div>
+
+      <div class="ia-kpis">
+        <div class="ia-kpi">
+          <div class="ia-kpi-label">${ICONS.cursor}<span>Total invoice value</span></div>
+          <div class="ia-kpi-value">${usd(totalValueUsd)}</div>
+          <div class="ia-kpi-delta up">+18.4% vs last period</div>
+        </div>
+        <div class="ia-kpi">
+          <div class="ia-kpi-label">${ICONS.invoice}<span>Total invoices</span></div>
+          <div class="ia-kpi-value">${invs.length}</div>
+          <div class="ia-kpi-delta up">+2 new this month</div>
+        </div>
+        <div class="ia-kpi">
+          <div class="ia-kpi-label">${ICONS.eye}<span>Unique clients</span></div>
+          <div class="ia-kpi-value">${clientSet.size}</div>
+          <div class="ia-kpi-delta">${invs.length} invoices total</div>
+        </div>
+        <div class="ia-kpi">
+          <div class="ia-kpi-label">${ICONS.clock}<span>Avg days to payment</span></div>
+          <div class="ia-kpi-value">${avgDays}<span style="font-size:13px;color:var(--muted-foreground);font-weight:400;margin-left:4px">days</span></div>
+          <div class="ia-kpi-delta down">+3 days vs last period</div>
+        </div>
+      </div>
+
+      <div class="ia-tabs">
+        <a class="ia-tab ${activeTab === 'overview' ? 'active' : ''}" href="?tab=overview">Overview</a>
+        <a class="ia-tab ${activeTab === 'payments' ? 'active' : ''}" href="?tab=payments">Payments</a>
+        <a class="ia-tab ${activeTab === 'clients'  ? 'active' : ''}" href="?tab=clients">Clients</a>
+      </div>
+
+      ${tabBody}
+    `;
+
+    renderShell({ activeNav: 'invoice', activeSub: 'invoice-analytics', children: content });
+    function toggleActionMenu(){}
+  </script>
+</body>
+</html>
