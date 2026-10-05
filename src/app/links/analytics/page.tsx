@@ -2,39 +2,44 @@
 
 import React, { useState, useEffect } from 'react';
 import { Shell } from '@/components/layout/shell';
-import {
-  Clock,
-  Cursor,
-  ExternalLink,
-  Eye,
-  Filter,
-  Globe,
-  LinkIcon,
-} from '@/components/icons';
+import { Clock, Cursor, ExternalLink, Eye, Globe, LinkIcon } from '@/components/icons';
+import { useSettings } from '@/lib/collections';
+import { useShortUrls } from '@/lib/use-short-url';
+
+type Range = '7d' | '30d' | '90d';
+const RANGE_LABELS: Record<Range, string> = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days' };
 
 interface AnalyticsData {
   summary: {
     totalClicks: number;
+    rangeClicks: number;
+    previousClicks: number;
     uniqueVisitors: number;
     activeLinks: number;
     topReferrer: string;
     lastClick: string;
   };
   timeSeries: { date: string; clicks: number }[];
-  topLinks: { alias: string; dest: string; clicks: number; tag: string | null }[];
+  topLinks: { id: string; domain: string; alias: string; dest: string; clicks: number; tag: string | null }[];
   topCountries: { country: string; code: string; count: number; pct: string }[];
+  referrers: { name: string; count: number; pct: string }[];
   devices: { name: string; pct: string }[];
   browsers: { name: string; pct: string }[];
   os: { name: string; pct: string }[];
 }
 
-const FLAGS: Record<string, string> = {
-  US: '🇺🇸',
-  NG: '🇳🇬',
-  GB: '🇬🇧',
-  CA: '🇨🇦',
-  OT: '🌍',
-};
+/** Regional-indicator flag for an ISO country code; a globe for unknown/other. */
+function flagOf(code: string): string {
+  if (!/^[A-Z]{2}$/.test(code) || code === 'XX' || code === 'OT') return '🌍';
+  return String.fromCodePoint(...[...code].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
+}
+
+/** "+12% vs previous 30 days", or a plain note when there is nothing to compare. */
+function changeLabel(current: number, previous: number, days: number): string {
+  if (!previous) return current ? `No clicks in the previous ${days} days` : 'No clicks yet';
+  const change = Math.round(((current - previous) / previous) * 100);
+  return `${change >= 0 ? '+' : ''}${change}% vs previous ${days} days`;
+}
 
 const DEVICE_GLYPHS: Record<string, string> = {
   Desktop: '💻',
@@ -49,12 +54,6 @@ const BROWSER_GLYPHS: Record<string, string> = {
   Edge: '🅴',
 };
 
-const REFERRERS = [
-  { name: 'slack.com', count: 412 },
-  { name: 'Direct / none', count: 289 },
-  { name: 'x.com', count: 187 },
-  { name: 'linkedin.com', count: 116 },
-];
 
 function pctWidth(value: number, max: number) {
   if (!max) return '0%';
@@ -63,9 +62,11 @@ function pctWidth(value: number, max: number) {
 
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
-  const [range, setRange] = useState<'7d' | '30d'>('30d');
-  const [timeView, setTimeView] = useState<'day' | 'week' | 'month'>('week');
+  const [range, setRange] = useState<Range>('30d');
   const [loading, setLoading] = useState(true);
+  const settings = useSettings();
+  const { urlFor } = useShortUrls(settings);
+  const days = Number(range.replace('d', ''));
 
   useEffect(() => {
     async function load() {
@@ -123,27 +124,48 @@ export default function AnalyticsPage() {
 
   const maxTopLink = Math.max(...(data?.topLinks ?? []).map((l) => l.clicks), 1);
   const maxCountry = Math.max(...(data?.topCountries ?? []).map((c) => c.count), 1);
-  const maxReferrer = Math.max(...REFERRERS.map((r) => r.count), 1);
+  const maxReferrer = Math.max(...(data?.referrers ?? []).map((r) => r.count), 1);
+
+  const exportCsv = () => {
+    if (!data) return;
+    const rows = [['date', 'clicks'], ...data.timeSeries.map((p) => [p.date, String(p.clicks)])];
+    rows.push([], ['short link', 'destination', 'all-time clicks']);
+    for (const l of data.topLinks) rows.push([urlFor(l).url, l.dest, String(l.clicks)]);
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `link-analytics-${range}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <Shell>
       <div className="page-header">
         <div className="page-title">
           <span>Analytics</span>
-          <span className="placeholder-veil" style={{ marginLeft: '6px' }}>Preview</span>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-outline btn-sm">
-            <Filter />
-            <span>Filter</span>
-          </button>
-          <button className="btn btn-outline btn-sm" onClick={() => setRange(range === '30d' ? '7d' : '30d')}>
+          <label className="btn btn-outline btn-sm" style={{ position: 'relative' }}>
             <Clock />
-            <span>{range === '30d' ? 'Last 30 days' : 'Last 7 days'}</span>
-          </button>
-          <button className="btn btn-outline btn-sm">
+            <span>{RANGE_LABELS[range]}</span>
+            <select
+              aria-label="Date range"
+              value={range}
+              onChange={(e) => setRange(e.target.value as Range)}
+              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+            >
+              {(Object.keys(RANGE_LABELS) as Range[]).map((r) => (
+                <option key={r} value={r}>
+                  {RANGE_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="btn btn-outline btn-sm" onClick={exportCsv} disabled={!data}>
             <ExternalLink />
-            <span>Export</span>
+            <span>Export CSV</span>
           </button>
         </div>
       </div>
@@ -156,18 +178,20 @@ export default function AnalyticsPage() {
           <div className="stat-grid">
             <div className="stat-card">
               <div className="stat-label"><Cursor /><span>Clicks</span></div>
-              <div className="stat-value">{data?.summary.totalClicks.toLocaleString()}</div>
-              <div className="stat-delta">+12.4% vs last period</div>
+              <div className="stat-value">{(data?.summary.rangeClicks ?? 0).toLocaleString()}</div>
+              <div className="stat-delta">
+                {data ? changeLabel(data.summary.rangeClicks, data.summary.previousClicks, days) : ''}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Eye /><span>Unique visitors</span></div>
               <div className="stat-value">{data?.summary.uniqueVisitors.toLocaleString()}</div>
-              <div className="stat-delta">+8.1% vs last period</div>
+              <div className="stat-delta">Estimated, {RANGE_LABELS[range].toLowerCase()}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><LinkIcon width="11" height="11" /><span>Active links</span></div>
               <div className="stat-value">{data?.summary.activeLinks}</div>
-              <div className="stat-delta">{data?.summary.activeLinks} live destinations</div>
+              <div className="stat-delta">{(data?.summary.totalClicks ?? 0).toLocaleString()} clicks all time</div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Globe /><span>Top referring channel</span></div>
@@ -177,7 +201,7 @@ export default function AnalyticsPage() {
             <div className="stat-card">
               <div className="stat-label"><Clock /><span>Last click</span></div>
               <div className="stat-value" style={{ fontSize: '18px' }}>{data?.summary.lastClick}</div>
-              <div className="stat-delta">{data?.topLinks[0] ? `4th.link/${data.topLinks[0].alias}` : 'No clicks yet'}</div>
+              <div className="stat-delta">{data?.topLinks[0] ? `Top link: ${urlFor(data.topLinks[0]).label}` : 'No clicks yet'}</div>
             </div>
           </div>
 
@@ -185,18 +209,7 @@ export default function AnalyticsPage() {
           <div className="chart-card">
             <div className="chart-header">
               <div className="chart-title">Clicks over time</div>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                {(['day', 'week', 'month'] as const).map((v) => (
-                  <button
-                    key={v}
-                    className={`btn btn-sm ${timeView === v ? 'btn-outline' : 'btn-ghost'}`}
-                    onClick={() => setTimeView(v)}
-                    style={{ textTransform: 'capitalize' }}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
+              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>{RANGE_LABELS[range]}, per day (UTC)</div>
             </div>
             <div className="chart-placeholder">{renderChart()}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--muted-foreground)', marginTop: '6px' }}>
@@ -209,12 +222,12 @@ export default function AnalyticsPage() {
           {/* Split row */}
           <div className="split">
             <div className="split-card">
-              <h4><span>Top links</span><span className="placeholder-veil">Coming soon</span></h4>
+              <h4><span>Top links</span><span className="placeholder-veil">All time</span></h4>
               {data?.topLinks.slice(0, 4).map((l, i) => (
-                <div className="bar-row" key={l.alias}>
+                <div className="bar-row" key={l.id}>
                   <div>{i + 1}</div>
                   <div>
-                    <div style={{ fontWeight: 500 }}>4th.link/{l.alias}</div>
+                    <div style={{ fontWeight: 500 }}>{urlFor(l).label}</div>
                     <div className="bar-track" style={{ marginTop: '4px' }}>
                       <div className="bar-fill" style={{ width: pctWidth(l.clicks, maxTopLink) }} />
                     </div>
@@ -228,10 +241,10 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="split-card">
-              <h4><span>Top countries</span><span className="placeholder-veil">Coming soon</span></h4>
+              <h4><span>Top countries</span><span className="placeholder-veil">{RANGE_LABELS[range]}</span></h4>
               {data?.topCountries.map((c) => (
                 <div className="bar-row" key={c.code}>
-                  <div className="bar-flag">{FLAGS[c.code] ?? '🌍'}</div>
+                  <div className="bar-flag">{flagOf(c.code)}</div>
                   <div>
                     <div style={{ fontWeight: 500 }}>{c.country}</div>
                     <div className="bar-track" style={{ marginTop: '4px' }}>
@@ -244,8 +257,11 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="split-card">
-              <h4><span>Referrers</span><span className="placeholder-veil">Coming soon</span></h4>
-              {REFERRERS.map((r) => (
+              <h4><span>Referrers</span><span className="placeholder-veil">{RANGE_LABELS[range]}</span></h4>
+              {(data?.referrers ?? []).length === 0 && (
+                <div className="bar-row"><div /><div style={{ color: 'var(--muted-foreground)' }}>No data yet</div><div /></div>
+              )}
+              {(data?.referrers ?? []).map((r) => (
                 <div className="bar-row" key={r.name}>
                   <div className="bar-flag"><Globe /></div>
                   <div>
@@ -263,7 +279,7 @@ export default function AnalyticsPage() {
           {/* Devices & browsers */}
           <div className="split" style={{ gridTemplateColumns: '1fr' }}>
             <div className="split-card">
-              <h4><span>Devices &amp; browsers</span><span className="placeholder-veil">Coming soon</span></h4>
+              <h4><span>Devices &amp; browsers</span><span className="placeholder-veil">{RANGE_LABELS[range]}</span></h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
                 <div>
                   <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', fontWeight: 500 }}>Device</div>
@@ -296,7 +312,7 @@ export default function AnalyticsPage() {
                   ))}
                 </div>
                 <div>
-                  <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', fontWeight: 500 }}>Engine · OS</div>
+                  <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', fontWeight: 500 }}>Operating system</div>
                   {data?.os.map((o) => (
                     <div className="bar-row" key={o.name}>
                       <div>⚙️</div>

@@ -769,3 +769,7 @@ textarea.popup-input { min-height: 84px; resize: none; line-height: 1.5; }
 /* Overpayment credit row on the invoice */
 .inv-totals-row.inv-overpaid .tot-label { font-weight: 400; color: var(--muted-foreground); }
 .inv-totals-row.inv-overpaid .tot-value { color: var(--accent-green-fg); }
+
+/* Sidebar workspace and profile rows are links to Settings */
+a.workspace,
+a.user-row { color: inherit; text-decoration: none; }

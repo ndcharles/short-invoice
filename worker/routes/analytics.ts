@@ -49,11 +49,13 @@ const pct = (part: number, whole: number) => `${whole ? Math.round((part / whole
  * one GROUP BY per dimension would read the same rows five times.
  */
 analytics.get('/links', async (c) => {
-  const days = c.req.query('range') === '7d' ? 7 : 30;
+  const range = c.req.query('range');
+  const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
   const since = dayKey(Date.now() - (days - 1) * DAY_MS);
+  const prevSince = dayKey(Date.now() - (2 * days - 1) * DAY_MS);
   const db = c.env.DB;
 
-  const [summaryRes, rollupRes, topRes] = await db.batch([
+  const [summaryRes, rollupRes, topRes, prevRes] = await db.batch([
     db.prepare(
       `SELECT COALESCE(SUM(clicks), 0) AS totalClicks, COUNT(*) AS activeLinks, MAX(last_clicked_at) AS lastClickedAt
        FROM links WHERE archived = 0`
@@ -65,8 +67,13 @@ analytics.get('/links', async (c) => {
          GROUP BY day, country, device, browser, os, referer`
       )
       .bind(since),
-    db.prepare('SELECT alias, dest, clicks, avatar, tag FROM links WHERE archived = 0 ORDER BY clicks DESC LIMIT 5'),
+    db.prepare('SELECT id, domain, alias, dest, clicks, avatar, tag FROM links WHERE archived = 0 ORDER BY clicks DESC LIMIT 5'),
+    // Previous period total only (one SUM), for the change indicator.
+    db
+      .prepare('SELECT COALESCE(SUM(clicks), 0) AS clicks FROM link_clicks_daily WHERE day >= ?1 AND day < ?2')
+      .bind(prevSince, since),
   ]);
+  const previousClicks = (prevRes.results[0] as { clicks: number }).clicks;
 
   const summary = summaryRes.results[0] as { totalClicks: number; activeLinks: number; lastClickedAt: number | null };
   const rows = rollupRes.results as RollupRow[];
@@ -97,9 +104,17 @@ analytics.get('/links', async (c) => {
   const share = (dim: 'device' | 'browser' | 'os') =>
     tally(rows, dim).map(([name, n]) => ({ name, pct: pct(n, rangeClicks) }));
 
+  const referrers = tally(rows, 'referer');
+  const topReferrers = referrers.slice(0, 5).map(([name, count]) => ({ name, count, pct: pct(count, rangeClicks) }));
+  const otherReferrers = referrers.slice(5).reduce((sum, [, n]) => sum + n, 0);
+  if (otherReferrers) topReferrers.push({ name: 'Others', count: otherReferrers, pct: pct(otherReferrers, rangeClicks) });
+
   return c.json({
+    range: `${days}d`,
     summary: {
       totalClicks: summary.totalClicks,
+      rangeClicks,
+      previousClicks,
       // Approximation: there are no visitor ids, so distinct
       // day/country/device/browser/os combinations stand in for visitors.
       uniqueVisitors: new Set(rows.map((r) => `${r.day}|${r.country}|${r.device}|${r.browser}|${r.os}`)).size,
@@ -110,6 +125,7 @@ analytics.get('/links', async (c) => {
     timeSeries,
     topLinks: topRes.results,
     topCountries,
+    referrers: topReferrers,
     devices: share('device'),
     browsers: share('browser'),
     os: share('os'),

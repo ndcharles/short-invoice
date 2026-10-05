@@ -24,7 +24,6 @@ const MANAGED_KEYS = new Set(['shortener_domains', 'default_domain']);
 
 const BOOLEAN_KEYS = new Set([
   'default_cloak',
-  'custom_preview_fallback',
   'utm_lowercase',
   'utm_strip_existing',
   'inv_tagline_on',

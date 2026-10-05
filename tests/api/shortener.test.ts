@@ -83,6 +83,23 @@ describe('shorten and redirect', () => {
     expect(stats.body.devices.map((d: { name: string }) => d.name)).toEqual(expect.arrayContaining(['Mobile', 'Desktop']));
   });
 
+  it('reports referrers, countries and the previous period in analytics', async () => {
+    const link = await create({ dest: 'https://example.com' });
+    await raw(`/s/${link.alias}`, {
+      headers: { 'user-agent': 'Mozilla/5.0 Firefox/120', referer: 'https://news.example.org/item?id=1', 'cf-ipcountry': 'NG' },
+    });
+    await clicksOf(link.id, 1);
+    for (const range of ['7d', '30d', '90d']) {
+      const stats = await api('GET', `/api/analytics/links?range=${range}`);
+      expect(stats.status).toBe(200);
+      expect(stats.body.range).toBe(range);
+      expect(stats.body.timeSeries).toHaveLength(Number(range.replace('d', '')));
+      expect(stats.body.referrers.map((r: { name: string }) => r.name)).toContain('news.example.org');
+      expect(typeof stats.body.summary.previousClicks).toBe('number');
+      expect(stats.body.topLinks[0]).toHaveProperty('domain');
+    }
+  });
+
   it('returns a 404 page for unknown aliases', async () => {
     const res = await raw('/s/does-not-exist-xyz');
     expect(res.status).toBe(404);

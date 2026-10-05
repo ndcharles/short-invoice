@@ -31,17 +31,19 @@ import {
   UtmValues,
 } from '@/components/links/link-popups';
 import { hasUtm, pickUtm } from '@/lib/links/utm';
-import { useCollections } from '@/lib/collections';
+import { useCollections, useSettings } from '@/lib/collections';
+import { useShortUrls } from '@/lib/use-short-url';
+import { DomainPicker } from '@/components/links/domain-picker';
 import { usePopoverDismiss } from '@/lib/popover';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
 
-const TAGS_FALLBACK = ['Client', 'Campaign', 'Internal'];
 
 type ActivePopup = 'utm' | 'password' | 'expiration' | 'preview' | null;
 
 interface LinkDraft {
   dest: string;
+  domain: string;
   alias: string;
   folder: string;
   tag: string | null;
@@ -60,6 +62,7 @@ function draftFromLink(link: LinkItem): LinkDraft {
   const utm = pickUtm(link);
   return {
     dest: link.dest,
+    domain: link.domain,
     alias: link.alias,
     folder: link.folder,
     tag: link.tag,
@@ -124,6 +127,8 @@ function EditLinkPageInner() {
   const { remote, loading: ogLoading } = useOgMetadata(draft?.dest ?? '');
   const { items: folders } = useCollections('folders');
   const { items: tags, create: createTag } = useCollections('tags');
+  const settings = useSettings();
+  const { urlFor, domains } = useShortUrls(settings);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [creatingTag, setCreatingTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
@@ -182,6 +187,7 @@ function EditLinkPageInner() {
     try {
       const body: Record<string, unknown> = {
         dest: draft.dest,
+        domain: draft.domain,
         alias: draft.alias,
         folder: draft.folder,
         tag: draft.tag,
@@ -253,8 +259,9 @@ function EditLinkPageInner() {
     );
   }
 
-  const fullUrl = `https://${link.domain}/${draft.alias}`;
-  const shorthand = `${link.domain}/${draft.alias}`;
+  const short = urlFor({ domain: draft.domain, alias: draft.alias });
+  const fullUrl = short.url;
+  const shorthand = short.label;
   const dateStr = new Date(link.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
   const preview = resolveOg({
@@ -274,19 +281,32 @@ function EditLinkPageInner() {
   };
 
   const handleDuplicate = async () => {
-    await fetch('/api/links', {
+    const res = await fetch('/api/links', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // A fresh random alias; the password does not carry over.
         dest: draft.dest,
-        alias: `${draft.alias}-copy`,
+        domain: draft.domain,
         tag: draft.tag,
-        folder: link.folder,
+        folder: draft.folder,
         comments: draft.comments,
         cloak: draft.cloak,
+        expires_at: draft.expiresAt,
+        expires_url: draft.expiresUrl,
+        custom_preview: draft.customPreview,
+        og_title: draft.ogTitle,
+        og_description: draft.ogDescription,
+        og_image: draft.ogImage,
+        ...draft.utm,
       }),
     });
-    router.push('/links');
+    const data = await res.json();
+    if (!res.ok) {
+      setSaveError(data.error || 'Could not duplicate the link');
+      return;
+    }
+    router.push(`/links/edit?id=${encodeURIComponent(data.link.id)}`);
   };
 
   const handleArchive = async () => {
@@ -299,7 +319,7 @@ function EditLinkPageInner() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this link? This will also remove it from KV.')) return;
+    if (!confirm('Delete this link? It stops redirecting immediately and its click history is removed.')) return;
     await fetch(`/api/links/${link.id}`, { method: 'DELETE' });
     router.push('/links');
   };
@@ -406,10 +426,7 @@ function EditLinkPageInner() {
               </span>
             </div>
             <div className="alias-constructor" style={aliasLocked ? { background: 'var(--muted-2)' } : undefined}>
-              <div className="alias-domain">
-                <span>{link.domain}</span>
-                <ChevronDown />
-              </div>
+              <DomainPicker value={draft.domain} domains={domains} onChange={(domain) => patch({ domain })} />
               <input
                 className="alias-input"
                 value={draft.alias}
@@ -449,10 +466,7 @@ function EditLinkPageInner() {
                 <div className={`dropdown-item${draft.tag === null ? ' is-current' : ''}`} onClick={() => { patch({ tag: null }); setOpenPicker(null); }}>
                   <span>No tag</span>
                 </div>
-                {(tags.length
-                  ? tags
-                  : TAGS_FALLBACK.map((name, i) => ({ id: name, name, color: ['yellow', 'blue', 'green'][i] ?? 'blue' }))
-                ).map((t) => (
+                {tags.map((t) => (
                   <div
                     key={t.id}
                     className={`dropdown-item${draft.tag === t.name ? ' is-current' : ''}`}
@@ -496,7 +510,7 @@ function EditLinkPageInner() {
                     <span>＋ Create tag</span>
                   </div>
                 )}
-                <Link href="/settings/shortener" className="dropdown-item">
+                <Link href="/settings" className="dropdown-item">
                   <span>Manage tags…</span>
                 </Link>
               </div>
@@ -592,7 +606,7 @@ function EditLinkPageInner() {
                   </div>
                 ))}
                 <div className="dropdown-sep" />
-                <Link href="/settings/shortener" className="dropdown-item">
+                <Link href="/settings" className="dropdown-item">
                   <span>Manage folders…</span>
                 </Link>
               </div>

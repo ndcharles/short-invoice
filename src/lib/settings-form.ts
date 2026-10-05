@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { primeSettings } from '@/lib/collections';
 
 export interface SettingsForm {
   draft: Record<string, string> | null;
@@ -11,6 +12,7 @@ export interface SettingsForm {
   savedAt: number | null;
   save: () => Promise<void>;
   discard: () => void;
+  adopt: (patch: Record<string, string>) => void;
 }
 
 /**
@@ -33,6 +35,7 @@ export function useSettingsForm(): SettingsForm {
         if (cancelled) return;
         if (!res.ok) throw new Error(data.error || 'Could not load settings');
         const loaded = (data.settings ?? {}) as Record<string, string>;
+        primeSettings(loaded);
         setBaseline(loaded);
         setDraft(loaded);
       } catch (err) {
@@ -66,6 +69,7 @@ export function useSettingsForm(): SettingsForm {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save');
       const saved = (data.settings ?? {}) as Record<string, string>;
+      primeSettings(saved);
       setBaseline(saved);
       setDraft(saved);
       setSavedAt(Date.now());
@@ -81,5 +85,11 @@ export function useSettingsForm(): SettingsForm {
     setError(null);
   }, [baseline]);
 
-  return { draft, set, dirty, saving, error, savedAt, save, discard };
+  /** Adopt values saved elsewhere (e.g. the domains API) without marking the form dirty. */
+  const adopt = useCallback((patch: Record<string, string>) => {
+    setBaseline((prev) => (prev ? { ...prev, ...patch } : prev));
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  return { draft, set, dirty, saving, error, savedAt, save, discard, adopt };
 }

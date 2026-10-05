@@ -1,37 +1,203 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
-import { SaveBar, SettingsCard, SettingsLayout, SettingsRow, SettingSelect, SettingToggle } from '@/components/settings/settings-ui';
+import {
+  Code,
+  SaveBar,
+  SettingsCard,
+  SettingsLayout,
+  SettingsRow,
+  SettingSelect,
+  SettingToggle,
+} from '@/components/settings/settings-ui';
 import { useSettingsForm } from '@/lib/settings-form';
-import { useCollections } from '@/lib/collections';
-import { newId, parseList, serializeList } from '@/lib/settings-json';
-import { Edit, Trash } from '@/components/icons';
+import { primeSettings, useCollections, useSettings } from '@/lib/collections';
+import { EXPIRATION_OPTIONS } from '@/lib/links/defaults';
+import { parseHostname } from '@/lib/validate';
+import { formatDate } from '@/lib/dates';
+import { Plus, Refresh, Trash } from '@/components/icons';
+import type { ShortDomain } from '@/lib/short-url';
 
-const EXPIRATIONS = ['Never expire', '7 days', '30 days', '90 days', '1 year', 'Custom'];
+interface DomainRow extends ShortDomain {
+  links: number;
+  is_default: boolean;
+}
 
-interface ShortDomain {
-  id: string;
-  initial: string;
-  name: string;
-  meta: string;
-  status: string;
-  added: string;
+interface DomainsState {
+  domains: DomainRow[];
+  default_domain: string;
+  verify_path: string;
+}
+
+async function domainsApi(path: string, method = 'GET', body?: unknown) {
+  const res = await fetch(`/api/domains${path}`, {
+    method,
+    headers: method === 'GET' ? undefined : { 'Content-Type': 'application/json' },
+    body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body ?? {}),
+  });
+  const data = await res.json();
+  return { ok: res.ok, data };
+}
+
+/** Domains are saved immediately through /api/domains (not the save bar). */
+function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) => void }) {
+  const [state, setState] = useState<DomainsState | null>(null);
+  const [newDomain, setNewDomain] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
+  const [appHost, setAppHost] = useState('');
+  const settings = useSettings();
+
+  useEffect(() => {
+    queueMicrotask(() => setAppHost(window.location.host));
+    domainsApi('').then(({ ok, data }) => ok && setState(data));
+  }, []);
+
+  const apply = useCallback(
+    (data: DomainsState) => {
+      setState(data);
+      onDefaultChange(data.default_domain);
+      if (settings) {
+        primeSettings({
+          ...settings,
+          default_domain: data.default_domain,
+          shortener_domains: JSON.stringify(data.domains.map(({ id, name, status, added, verified_at }) => ({ id, name, status, added, verified_at }))),
+        });
+      }
+    },
+    [onDefaultChange, settings]
+  );
+
+  const run = async (key: string, action: () => Promise<{ ok: boolean; data: DomainsState & { error?: string; reason?: string; verified?: boolean } }>, success?: string) => {
+    setBusy(key);
+    setMessage(null);
+    try {
+      const { ok, data } = await action();
+      if (data.domains) apply(data);
+      if (!ok) setMessage({ tone: 'error', text: data.reason || data.error || 'Something went wrong' });
+      else if (success) setMessage({ tone: 'ok', text: success });
+    } catch {
+      setMessage({ tone: 'error', text: 'Network error, try again.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addDomain = () => {
+    const parsed = parseHostname(newDomain);
+    if (!parsed.ok) {
+      setMessage({ tone: 'error', text: parsed.error });
+      return;
+    }
+    void run('add', () => domainsApi('', 'POST', { name: parsed.value }), `${parsed.value} added. Attach it to the Worker, then press Verify.`).then(() =>
+      setNewDomain('')
+    );
+  };
+
+  return (
+    <SettingsCard
+      title="Domains"
+      subtitle="Short-link domains. Until a domain is verified, its links work at this app's /s/ address."
+      foot={
+        <span>
+          To attach a domain: Cloudflare dashboard → Workers &amp; Pages → <strong>short-invoice</strong> → Settings → Domains &amp;
+          Routes → Add → Custom domain. The domain must be on your Cloudflare account. Then press Verify.
+        </span>
+      }
+    >
+      <div className="setting-list">
+        {!state && <div className="setting-list-row" style={{ color: 'var(--muted-foreground)' }}>Loading domains…</div>}
+        {state?.domains.map((domain) => (
+          <div
+            className="setting-list-row domain-row"
+            key={domain.id}
+            style={{ alignItems: 'center', gridTemplateColumns: '24px minmax(0, 1fr) auto auto' }}
+          >
+            <div className="domain-favicon">{domain.name.charAt(0).toUpperCase()}</div>
+            <div>
+              <div className="primary">
+                {domain.name}
+                {domain.is_default && <span className="secondary" style={{ marginLeft: 6 }}>· default</span>}
+              </div>
+              <div className="secondary">
+                {domain.links} link{domain.links === 1 ? '' : 's'}
+                {domain.status === 'active' && domain.verified_at
+                  ? ` · verified ${formatDate(domain.verified_at, settings?.date_format)}`
+                  : domain.is_default && appHost
+                    ? ` · links work at ${appHost}/s/… until verified`
+                    : ' · not attached yet'}
+              </div>
+            </div>
+            <span className={`tag ${domain.status === 'active' ? 'green' : 'yellow'}`}>
+              {domain.status === 'active' ? 'Active' : 'Pending'}
+            </span>
+            <div className="row-actions">
+              <button
+                className="btn btn-outline btn-sm"
+                disabled={busy !== null}
+                onClick={() =>
+                  run(`verify-${domain.name}`, () => domainsApi(`/${encodeURIComponent(domain.name)}/verify`, 'POST'), `${domain.name} is verified and live.`)
+                }
+              >
+                <Refresh />
+                <span>{busy === `verify-${domain.name}` ? 'Checking…' : 'Verify'}</span>
+              </button>
+              {!domain.is_default && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={busy !== null}
+                  onClick={() => run(`default-${domain.name}`, () => domainsApi(`/${encodeURIComponent(domain.name)}/default`, 'POST'))}
+                >
+                  Make default
+                </button>
+              )}
+              {!domain.is_default && (
+                <button
+                  className="icon-btn"
+                  title={domain.links ? 'Move or delete its links first' : 'Remove domain'}
+                  disabled={busy !== null || domain.links > 0}
+                  style={{ color: 'var(--destructive)' }}
+                  onClick={() => {
+                    if (!confirm(`Remove ${domain.name}?`)) return;
+                    void run(`remove-${domain.name}`, () => domainsApi(`/${encodeURIComponent(domain.name)}`, 'DELETE'));
+                  }}
+                >
+                  <Trash />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        <div className="setting-list-row dashed" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            className="input"
+            placeholder="links.example.com"
+            value={newDomain}
+            onChange={(e) => setNewDomain(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addDomain()}
+            style={{ maxWidth: 280 }}
+          />
+          <button className="btn btn-outline btn-sm" onClick={addDomain} disabled={busy !== null || !newDomain.trim()}>
+            <Plus />
+            <span>Add domain</span>
+          </button>
+        </div>
+      </div>
+      {message && (
+        <div style={{ marginTop: 10, fontSize: 12, color: message.tone === 'error' ? 'var(--destructive)' : 'var(--accent-green-fg)' }}>
+          {message.text}
+        </div>
+      )}
+    </SettingsCard>
+  );
 }
 
 export default function ShortenerSettingsPage() {
-  const { draft, set, dirty, saving, error, savedAt, save, discard } = useSettingsForm();
+  const { draft, set, dirty, saving, error, savedAt, save, discard, adopt } = useSettingsForm();
   const { items: folders } = useCollections('folders');
   const { items: tags } = useCollections('tags');
-  const [editingDomain, setEditingDomain] = useState<string | null>(null);
-
-  const domains = parseList<ShortDomain>(draft?.shortener_domains, []);
-  const setDomains = (list: ShortDomain[]) => set('shortener_domains', serializeList(list));
-  const updateDomain = (id: string, patch: Partial<ShortDomain>) =>
-    setDomains(domains.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-
-  const defaultDomain = draft?.default_domain ?? '4th.link';
-  const domainOptions = Array.from(new Set([defaultDomain, ...domains.map((d) => d.name)]));
+  const onDefaultChange = useCallback((domain: string) => adopt({ default_domain: domain }), [adopt]);
 
   const defaultTags: string[] = (() => {
     try {
@@ -42,23 +208,13 @@ export default function ShortenerSettingsPage() {
     }
   })();
 
-  const toggleDefaultTag = (name: string) => {
-    const next = defaultTags.includes(name)
-      ? defaultTags.filter((t) => t !== name)
-      : [...defaultTags, name];
-    set('default_tags', JSON.stringify(next));
-  };
-
   return (
     <Shell>
-      <SettingsLayout
-        title="URL Shortener"
-        subtitle="Domains, root redirection, folders, tags and defaults for every new short link."
-      >
+      <SettingsLayout title="URL Shortener" subtitle="Domains, root redirect and defaults for new short links.">
         {!draft ? (
           <div className="settings-card">
             <div className="settings-card-body" style={{ color: 'var(--muted-foreground)' }}>
-              Loading settings…
+              {error ?? 'Loading settings…'}
             </div>
           </div>
         ) : (
@@ -69,211 +225,61 @@ export default function ShortenerSettingsPage() {
               </div>
             )}
 
-            <SettingsCard
-              title="Domains"
-              subtitle="Manage the short-link domains your team can use."
-            >
-              <SettingsRow label="Default domain" help="New short links use this domain unless overridden.">
-                <SettingSelect
-                  value={defaultDomain}
-                  onChange={(v) => set('default_domain', v)}
-                  options={domainOptions}
-                />
-              </SettingsRow>
+            <DomainsCard onDefaultChange={onDefaultChange} />
 
-              <SettingsRow label="Custom domains" help="Add and verify your own domains via CNAME / A records.">
-                <div className="setting-list">
-                  {domains.map((domain) => (
-                    <div
-                      className="setting-list-row domain-row"
-                      key={domain.id}
-                      style={{ alignItems: 'start', gridTemplateColumns: '24px minmax(0, 1fr) auto auto' }}
-                    >
-                      <div className="domain-favicon">{domain.initial}</div>
-                      {editingDomain === domain.id ? (
-                        <div style={{ display: 'grid', gap: '8px' }}>
-                          <input
-                            className="input"
-                            value={domain.name}
-                            placeholder="example.com"
-                            onChange={(e) => updateDomain(domain.id, { name: e.target.value })}
-                          />
-                          <input
-                            className="input"
-                            value={domain.meta}
-                            placeholder="SSL enabled / verification note"
-                            onChange={(e) => updateDomain(domain.id, { meta: e.target.value })}
-                          />
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <input
-                              className="input"
-                              style={{ maxWidth: '70px' }}
-                              maxLength={2}
-                              value={domain.initial}
-                              placeholder="4"
-                              onChange={(e) => updateDomain(domain.id, { initial: e.target.value.toUpperCase() })}
-                            />
-                            <SettingSelect
-                              value={domain.status}
-                              onChange={(v) => updateDomain(domain.id, { status: v })}
-                              options={['Active', 'Pending']}
-                            />
-                            <button className="btn btn-primary btn-sm" onClick={() => setEditingDomain(null)}>
-                              Done
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="primary">{domain.name}</div>
-                          <div className="secondary">
-                            {domain.meta.includes('Verify CNAME:') ? (
-                              <>
-                                Verify CNAME:{' '}
-                                <code style={{ background: 'var(--muted)', padding: '1px 5px', borderRadius: '3px' }}>
-                                  {domain.meta.replace('Verify CNAME: ', '')}
-                                </code>
-                              </>
-                            ) : (
-                              domain.meta
-                            )}
-                            <span style={{ marginLeft: '6px' }}>· {domain.added}</span>
-                          </div>
-                        </div>
-                      )}
-                      <span className={`tag ${domain.status === 'Active' ? 'green' : 'yellow'}`}>
-                        {domain.status}
-                      </span>
-                      <div className="row-actions">
-                        <button
-                          className="icon-btn"
-                          title="Edit domain"
-                          onClick={() => setEditingDomain(editingDomain === domain.id ? null : domain.id)}
-                        >
-                          <Edit />
-                        </button>
-                        <button
-                          className="icon-btn"
-                          title="Remove domain"
-                          style={{ color: 'var(--destructive)' }}
-                          onClick={() => setDomains(domains.filter((d) => d.id !== domain.id))}
-                        >
-                          <Trash />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  <div
-                    className="setting-list-row dashed"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() =>
-                      setDomains([
-                        ...domains,
-                        {
-                          id: newId('dom'),
-                          initial: 'N',
-                          name: 'newdomain.link',
-                          meta: 'Verify CNAME: cname.4th.link',
-                          status: 'Pending',
-                          added: 'Added today',
-                        },
-                      ])
-                    }
-                  >
-                    <span>+</span>
-                    <span style={{ marginLeft: '6px' }}>Add custom domain</span>
-                  </div>
-                </div>
-              </SettingsRow>
-
+            <SettingsCard title="Root redirect" subtitle="Where visitors go when they open a short domain without an alias.">
               <SettingsRow
-                label="Root domain redirection"
+                label="Redirect URL"
                 help={
                   <>
-                    When someone visits the domain root (e.g. <strong>{defaultDomain}</strong>) instead of a short
-                    link, send them to this URL.
+                    For example <Code>https://{draft.default_domain}</Code> → your website. Leave empty to show a
+                    &ldquo;link not found&rdquo; page.
                   </>
                 }
               >
                 <input
                   className="input"
-                  placeholder="https://acme.co"
+                  placeholder="https://yourcompany.com"
                   value={draft.root_redirect ?? ''}
                   onChange={(e) => set('root_redirect', e.target.value)}
                 />
-                <div style={{ fontSize: '11px', color: 'var(--muted-foreground)' }}>
-                  Leave empty to show a 404. Applies per domain — configure other domains from the list above.
-                </div>
               </SettingsRow>
             </SettingsCard>
 
-            <SettingsCard
-              title="Link defaults"
-              subtitle="Values pre-filled on the Create Link modal. Individual links can still override any of these."
-            >
+            <SettingsCard title="Link defaults" subtitle="Pre-filled on the Create link form. Each link can still change them.">
               <SettingsRow label="Default folder">
                 <SettingSelect
-                  value={draft.default_folder ?? 'Links'}
+                  value={draft.default_folder || 'Links'}
                   onChange={(v) => set('default_folder', v)}
-                  options={['None', ...(folders.length ? folders.map((f) => f.name) : ['Links'])]}
+                  options={folders.length ? folders.map((f) => f.name) : ['Links']}
                 />
               </SettingsRow>
 
-              <SettingsRow label="Default expiration" help="How long new links stay active before returning a 404.">
+              <SettingsRow label="Default tag">
                 <SettingSelect
-                  value={draft.default_expiration ?? 'Never expire'}
+                  value={defaultTags[0] ?? 'None'}
+                  onChange={(v) => set('default_tags', JSON.stringify(v === 'None' ? [] : [v]))}
+                  options={['None', ...tags.map((t) => t.name)]}
+                />
+              </SettingsRow>
+
+              <SettingsRow label="Default expiration" help="New links stop working after this long.">
+                <SettingSelect
+                  value={draft.default_expiration || 'Never expire'}
                   onChange={(v) => set('default_expiration', v)}
-                  options={EXPIRATIONS}
+                  options={[...EXPIRATION_OPTIONS]}
                   maxWidth={200}
                 />
               </SettingsRow>
 
-              <SettingsRow label="Default tags" help="Auto-applied to every new link. Users can remove them on create.">
-                <div className="setting-toggle-list">
-                  {tags.map((tag) => {
-                    const on = defaultTags.includes(tag.name);
-                    return (
-                      <button
-                        key={tag.id}
-                        className={`setting-chip${on ? ' on' : ''}`}
-                        onClick={() => toggleDefaultTag(tag.name)}
-                      >
-                        <span>{tag.name}</span>
-                        <span className="x">{on ? '×' : '+'}</span>
-                      </button>
-                    );
-                  })}
-                  {tags.length === 0 && (
-                    <span className="row-help">Create a tag below to set defaults.</span>
-                  )}
-                </div>
-              </SettingsRow>
-
               <SettingsRow
-                label="Cloak link (default)"
-                help="When on, the destination URL is hidden behind a proxy page so the short link stays visible in the browser bar."
+                label="Cloak new links"
+                help="Shows the destination inside a frame so the short link stays in the address bar. Many sites (Google, banks, social networks) refuse to be framed, so use it sparingly."
               >
                 <SettingToggle
                   on={draft.default_cloak === 'true'}
                   onToggle={() => set('default_cloak', draft.default_cloak === 'true' ? 'false' : 'true')}
                   label={draft.default_cloak === 'true' ? 'On' : 'Off'}
-                />
-              </SettingsRow>
-
-              <SettingsRow
-                label="Custom preview fallback"
-                help="Use a saved custom OG preview when the destination page has no OG tags, or when you explicitly turn off the fetched preview."
-              >
-                <SettingToggle
-                  on={draft.custom_preview_fallback === 'true'}
-                  onToggle={() =>
-                    set(
-                      'custom_preview_fallback',
-                      draft.custom_preview_fallback === 'true' ? 'false' : 'true'
-                    )
-                  }
-                  label={draft.custom_preview_fallback === 'true' ? 'On' : 'Off'}
                 />
               </SettingsRow>
             </SettingsCard>

@@ -3,6 +3,13 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSettings } from '@/lib/collections';
+
+function initialsOf(name: string, fallback: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] ?? '').slice(0, 2);
+  return (letters || fallback).toUpperCase();
+}
 
 export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
@@ -11,28 +18,26 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const isUtm = pathname.startsWith('/utms');
   const isInvoice = pathname.startsWith('/invoices');
   const isSettings = pathname.startsWith('/settings');
+  const settings = useSettings();
+  const workspaceName = settings?.workspace_name || 'Workspace';
+  const workspaceLogo = settings?.workspace_logo || '';
+  const profileName = settings?.profile_name || '';
+  const profileEmail = settings?.profile_email || '';
 
   return (
     <aside className="sidebar" data-collapsed={collapsed ? 'true' : undefined}>
-      {/* Workspace Switcher */}
-      <div className="workspace">
-        <div className="workspace-avatar">A</div>
-        <div className="workspace-name">Acme Inc.</div>
-        <svg
-          className="workspace-chevron"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m7 15 5 5 5-5" />
-          <path d="m7 9 5-5 5 5" />
-        </svg>
-      </div>
+      {/* Workspace (name and logo from Settings → General) */}
+      <Link href="/settings" className="workspace" title="Workspace settings">
+        <div className="workspace-avatar" style={workspaceLogo ? { overflow: 'hidden', padding: 0 } : undefined}>
+          {workspaceLogo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={workspaceLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            initialsOf(workspaceName, 'W').slice(0, 1)
+          )}
+        </div>
+        <div className="workspace-name">{workspaceName}</div>
+      </Link>
 
       <div className="nav-section-label">Workspace</div>
 
@@ -222,28 +227,13 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
 
       {/* Footer */}
       <div className="sidebar-footer">
-        <div className="user-row">
-          <div className="avatar">NC</div>
+        <Link href="/settings" className="user-row" title="Your profile">
+          <div className="avatar">{initialsOf(profileName, 'ME')}</div>
           <div className="user-meta">
-            <div className="user-name">ndcharles</div>
-            <div className="user-email">nd@acme.co</div>
+            <div className="user-name">{profileName || 'Your name'}</div>
+            <div className="user-email">{profileEmail || 'Set your profile in Settings'}</div>
           </div>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ color: 'var(--muted-foreground)' }}
-          >
-            <circle cx="12" cy="12" r="1" />
-            <circle cx="12" cy="5" r="1" />
-            <circle cx="12" cy="19" r="1" />
-          </svg>
-        </div>
+        </Link>
       </div>
     </aside>
   );

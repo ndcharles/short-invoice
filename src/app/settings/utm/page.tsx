@@ -52,7 +52,6 @@ function presetSummary(preset: Preset): string {
 export default function UtmSettingsPage() {
   const { draft, set, dirty, saving, error, savedAt, save, discard } = useSettingsForm();
   const { items: folders } = useCollections('folders');
-  const { items: tags } = useCollections('tags');
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const presets = parseList<Preset>(draft?.utm_presets, []);
@@ -97,7 +96,7 @@ export default function UtmSettingsPage() {
 
             <SettingsCard
               title="Default parameter values"
-              subtitle="Pre-populated when someone opens the Create Campaign modal. Blank = leave the field empty."
+              subtitle="Pre-filled when you open the Create campaign form. Leave blank for an empty field."
             >
               <SettingsRow
                 label="Default source"
@@ -131,31 +130,21 @@ export default function UtmSettingsPage() {
               </SettingsRow>
               <SettingsRow label="Default folder" help="Where new campaigns land.">
                 <SettingSelect
-                  value={draft.utm_default_folder ?? 'Campaigns'}
+                  value={draft.utm_default_folder && draft.utm_default_folder !== 'None' ? draft.utm_default_folder : 'Campaigns'}
                   onChange={(v) => set('utm_default_folder', v)}
-                  options={['None', ...folderOptions]}
-                />
-              </SettingsRow>
-              <SettingsRow label="Default tag" help="Applied to every new campaign. Choose None for no tag.">
-                <SettingSelect
-                  value={draft.utm_default_tag ?? 'None'}
-                  onChange={(v) => set('utm_default_tag', v)}
-                  options={['None', ...(tags.length ? tags.map((t) => t.name) : [])]}
+                  options={folderOptions}
                 />
               </SettingsRow>
             </SettingsCard>
 
             <SettingsCard
               title="Presets & templates"
-              subtitle="One-click parameter combos users can pick from when creating a campaign."
+              subtitle="Shown as one-click chips at the top of the Create campaign form. Blank values leave a field as it is."
               foot={
-                <>
-                  <span>
-                    Tokens like <Code>{'{name}'}</Code>, <Code>{'{ad_id}'}</Code>, <Code>{'{position}'}</Code> are
-                    prompted at create time.
-                  </span>
-                  <span style={{ color: 'var(--foreground)', fontWeight: 500 }}>Token reference ↗</span>
-                </>
+                <span>
+                  Placeholders such as <Code>{'{ad_id}'}</Code> are filled in as written; replace them in the form before
+                  creating the campaign.
+                </span>
               }
             >
               <div className="setting-list">

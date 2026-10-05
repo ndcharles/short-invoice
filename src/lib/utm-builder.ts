@@ -41,6 +41,38 @@ export const EMPTY_UTM_FIELDS: UtmFields = {
   folder: 'Campaigns',
 };
 
+/** Blank form pre-filled from Settings → UTM Builder defaults. */
+export function newUtmFields(settings: Record<string, string> | null): UtmFields {
+  const folder = settings?.utm_default_folder;
+  return {
+    ...EMPTY_UTM_FIELDS,
+    source: settings?.utm_default_source ?? '',
+    medium: settings?.utm_default_medium ?? '',
+    campaign: settings?.utm_default_campaign ?? '',
+    folder: folder && folder !== 'None' ? folder : EMPTY_UTM_FIELDS.folder,
+  };
+}
+
+export interface UtmPreset {
+  id: string;
+  badge: string;
+  color: string;
+  name: string;
+  source: string;
+  medium: string;
+  campaign: string;
+  content: string;
+}
+
+/** Fields a preset fills in; blank preset values leave the form untouched. */
+export function applyPreset(preset: UtmPreset): Partial<UtmFields> {
+  const patch: Partial<UtmFields> = {};
+  for (const key of ['source', 'medium', 'campaign', 'content'] as const) {
+    if (preset[key]?.trim()) patch[key] = preset[key].trim();
+  }
+  return patch;
+}
+
 export const UTM_PARAM_KEYS = [
   ['source', 'utm_source'],
   ['medium', 'utm_medium'],

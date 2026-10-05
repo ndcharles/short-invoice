@@ -8,6 +8,7 @@ import settings from './routes/settings';
 import metadata from './routes/metadata';
 import analytics from './routes/analytics';
 import domains, { VERIFY_PATH, verifyToken } from './routes/domains';
+import exporter from './routes/export';
 import redirect, { notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
 import { isAppHost, readShortDomainConfig } from './lib/domains';
 import { parseAlias, parseHttpUrl } from '../src/lib/validate';
@@ -60,6 +61,7 @@ app.route('/api/settings', settings);
 app.route('/api/metadata', metadata);
 app.route('/api/analytics', analytics);
 app.route('/api/domains', domains);
+app.route('/api/export', exporter);
 app.route('/s', redirect);
 
 app.get('/api/health', (c) => c.json({ ok: true }));

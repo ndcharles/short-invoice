@@ -31,6 +31,9 @@ import { hasUtm } from '@/lib/links/utm';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
 import { useCollections, useSettings } from '@/lib/collections';
+import { useShortUrls } from '@/lib/use-short-url';
+import { DomainPicker } from '@/components/links/domain-picker';
+import { expirationFromSetting } from '@/lib/links/defaults';
 import { usePopoverDismiss } from '@/lib/popover';
 
 interface CreateLinkModalProps {
@@ -39,7 +42,6 @@ interface CreateLinkModalProps {
   onSuccess: () => void;
 }
 
-const TAGS_FALLBACK = ['Client', 'Campaign', 'Internal'];
 
 export function CreateLinkModal({ isOpen, onClose, onSuccess }: CreateLinkModalProps) {
   if (!isOpen) return null;
@@ -69,26 +71,9 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   const { items: folders } = useCollections('folders');
   const { items: tags, create: createTag } = useCollections('tags');
   const settings = useSettings();
+  const { urlFor, domains } = useShortUrls(settings);
   const defaultsApplied = useRef(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
-
-  // Pre-fill from the workspace defaults once settings arrive. Deferred a tick
-  // so we never set state synchronously inside the effect.
-  useEffect(() => {
-    if (!settings || defaultsApplied.current) return;
-    defaultsApplied.current = true;
-    queueMicrotask(() => {
-      if (settings.default_domain) setDomain(settings.default_domain);
-      if (settings.default_folder) setFolder(settings.default_folder);
-      if (settings.default_cloak === 'true') setCloak(true);
-      try {
-        const defaults = JSON.parse(settings.default_tags || '[]');
-        if (Array.isArray(defaults) && defaults.length > 0) setTag(defaults[0]);
-      } catch {
-        /* ignore malformed defaults */
-      }
-    });
-  }, [settings]);
 
   // Advanced options
   const [utm, setUtm] = useState<UtmValues>(EMPTY_UTM);
@@ -99,6 +84,27 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   const [ogTitle, setOgTitle] = useState('');
   const [ogDescription, setOgDescription] = useState('');
   const [ogImage, setOgImage] = useState('');
+
+  // Pre-fill from the workspace defaults once settings arrive. Deferred a tick
+  // so we never set state synchronously inside the effect.
+  useEffect(() => {
+    if (!settings || defaultsApplied.current) return;
+    defaultsApplied.current = true;
+    queueMicrotask(() => {
+      if (settings.default_domain) setDomain(settings.default_domain);
+      if (settings.default_folder && settings.default_folder !== 'None') setFolder(settings.default_folder);
+      if (settings.default_cloak === 'true') setCloak(true);
+      const expiry = expirationFromSetting(settings.default_expiration, Date.now());
+      if (expiry) setExpiresAt(expiry);
+      try {
+        const defaults = JSON.parse(settings.default_tags || '[]');
+        if (Array.isArray(defaults) && defaults.length > 0) setTag(defaults[0]);
+      } catch {
+        /* ignore malformed defaults */
+      }
+    });
+  }, [settings]);
+
 
   const [previewTab, setPreviewTab] = useState<OgPlatform>('web');
   const [activePopup, setActivePopup] = useState<ActivePopup>(null);
@@ -146,7 +152,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
     }
   };
 
-  const fullShortUrl = `https://${domain}/${alias || 'link'}`;
+  const fullShortUrl = urlFor({ domain, alias: alias || 'link' }).url;
   const { remote, loading: ogLoading } = useOgMetadata(dest);
   const preview = resolveOg({
     dest,
@@ -289,10 +295,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                 </span>
               </div>
               <div className="alias-constructor" style={aliasLocked ? { background: 'var(--muted-2)' } : undefined}>
-                <div className="alias-domain">
-                  <span>{domain}</span>
-                  <ChevronDown />
-                </div>
+                <DomainPicker value={domain} domains={domains} onChange={setDomain} />
                 <input
                   className="alias-input"
                   placeholder="Nk6EwSL"
@@ -340,14 +343,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                   >
                     <span>No tag</span>
                   </div>
-                  {(tags.length
-                    ? tags
-                    : TAGS_FALLBACK.map((name, i) => ({
-                        id: name,
-                        name,
-                        color: ['yellow', 'blue', 'green'][i] ?? 'blue',
-                      }))
-                  ).map((t) => (
+                  {tags.map((t) => (
                     <div
                       key={t.id}
                       className={`dropdown-item${tag === t.name ? ' is-current' : ''}`}
@@ -394,7 +390,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                       <span>＋ Create tag</span>
                     </div>
                   )}
-                  <Link href="/settings/shortener" className="dropdown-item">
+                  <Link href="/settings" className="dropdown-item">
                     <span>Manage tags…</span>
                   </Link>
                 </div>
@@ -478,7 +474,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                     </div>
                   ))}
                   <div className="dropdown-sep" />
-                  <Link href="/settings/shortener" className="dropdown-item">
+                  <Link href="/settings" className="dropdown-item">
                     <span>Manage folders…</span>
                   </Link>
                 </div>

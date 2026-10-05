@@ -103,24 +103,41 @@ export interface WorkspaceSettings {
   [key: string]: string;
 }
 
-/** Reads workspace settings; used for defaults and the sidebar label. */
+// One settings fetch per page load, shared by every component (sidebar,
+// forms, canvases). Saving settings primes the cache so all of them update.
+let settingsCache: WorkspaceSettings | null = null;
+let settingsRequest: Promise<WorkspaceSettings | null> | null = null;
+const settingsListeners = new Set<(settings: WorkspaceSettings) => void>();
+
+function loadSettings(): Promise<WorkspaceSettings | null> {
+  settingsRequest ??= fetch('/api/settings')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (data?.settings) primeSettings(data.settings);
+      return settingsCache;
+    })
+    .catch(() => null)
+    .finally(() => {
+      settingsRequest = null;
+    });
+  return settingsRequest;
+}
+
+/** Replace the cached settings (after a save) and notify every useSettings(). */
+export function primeSettings(settings: WorkspaceSettings) {
+  settingsCache = settings;
+  for (const listener of settingsListeners) listener(settings);
+}
+
+/** Workspace settings, or null while loading. */
 export function useSettings() {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  const [settings, setSettings] = useState<WorkspaceSettings | null>(settingsCache);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/settings');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setSettings(data.settings ?? {});
-      } catch {
-        /* keep defaults */
-      }
-    })();
+    settingsListeners.add(setSettings);
+    if (!settingsCache) void loadSettings();
     return () => {
-      cancelled = true;
+      settingsListeners.delete(setSettings);
     };
   }, []);
 
