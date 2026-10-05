@@ -15,13 +15,14 @@
     "run_worker_first": ["/api/*", "/s/*"]
   },
 
-  // All persistent state lives in D1. No KV: its free tier allows only
-  // 1,000 writes/day. database_id is filled in by `wrangler d1 create`
-  // (or by Wrangler's automatic provisioning on first deploy).
+  // All persistent state lives in D1 (created in WEUR, closest region to
+  // Lagos). No KV: its free tier allows only 1,000 writes/day and changes
+  // take up to 60s to propagate.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "short-invoice",
+      "database_id": "9abe67c0-db3b-402f-80dc-fa0e2557a953",
       "migrations_dir": "migrations"
     }
   ],

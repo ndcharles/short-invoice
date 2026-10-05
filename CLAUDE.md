@@ -78,6 +78,15 @@ npm run deploy
 
 From CI or a cloud session, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
+## Latency notes (measured 2026-10-06, after first deploy)
+
+From Nigeria, the free plan routes traffic to the London colo (LHR), next to
+the D1 primary (WEUR). A redirect that reads D1 measured ~398 ms TTFB vs
+~383 ms for an endpoint with no DB call: D1 adds ~15 ms. Nearly all latency
+is the network path and TLS handshake to London. A per-colo cache would
+save about 15 ms, so it is not worth the complexity yet. KV was rejected: its
+changes take up to 60 s to propagate and links must update instantly.
+
 ## Known gaps (next steps)
 
 - **No authentication.** Put Cloudflare Access (free up to 50 users) in front
