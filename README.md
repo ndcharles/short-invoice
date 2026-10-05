@@ -35,6 +35,7 @@ npm run dev             # http://localhost:3000
 ```bash
 npx wrangler d1 create short-invoice   # put the database_id in wrangler.jsonc
 npm run db:migrate
+npx wrangler secret put LINK_COOKIE_SECRET   # signs password-link unlock cookies
 npm run deploy
 ```
 

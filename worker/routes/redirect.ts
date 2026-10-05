@@ -1,7 +1,9 @@
 import { Hono, type Context } from 'hono';
 import type { AppEnv } from '../env';
 import type { LinkItem } from '../../src/lib/types';
+import { getCookie, setCookie } from 'hono/cookie';
 import { verifyPassword } from '../lib/password';
+import { signUnlock, unlockCookieName, UNLOCK_TTL_SECONDS, verifyUnlock } from '../lib/unlock';
 import { withUtm, pickUtm } from '../../src/lib/links/utm';
 import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
 
@@ -141,10 +143,25 @@ async function resolve(c: RedirectContext, supplied: string | null) {
   }
 
   // Password gate. The password arrives as a POST body so it never lands in
-  // URLs, logs or Referer headers.
+  // URLs, logs or Referer headers. A valid unlock cookie skips PBKDF2.
   if (record.password_hash) {
-    if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
-      return c.html(passwordPage(alias, supplied !== null), 401);
+    const secret = c.env.LINK_COOKIE_SECRET;
+    const cookieName = unlockCookieName(record.id);
+    const unlocked =
+      !!secret && (await verifyUnlock(secret, record.id, record.password_hash, getCookie(c, cookieName)));
+    if (!unlocked) {
+      if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
+        return c.html(passwordPage(alias, supplied !== null), 401);
+      }
+      if (secret) {
+        setCookie(c, cookieName, await signUnlock(secret, record.id, record.password_hash), {
+          path: c.req.path,
+          maxAge: UNLOCK_TTL_SECONDS,
+          httpOnly: true,
+          secure: new URL(c.req.url).protocol === 'https:',
+          sameSite: 'Lax',
+        });
+      }
     }
   }
 

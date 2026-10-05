@@ -56,7 +56,9 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
   every extra GROUP BY over the same rows is billed again.
 - **Every index costs writes.** Only add an index that backs a real query.
 - **CPU budget.** Link passwords use PBKDF2 via WebCrypto (`worker/lib/password.ts`),
-  not scrypt. Avoid heavy per-request work in the Worker.
+  not scrypt. After one correct entry the visitor gets a 12 h HMAC-signed
+  per-link cookie (`worker/lib/unlock.ts`, keyed by the `LINK_COOKIE_SECRET`
+  secret), so PBKDF2 runs once per visitor. Avoid heavy per-request work in the Worker.
 - Multi-statement writes use `db.batch([...])` (one round trip, atomic).
 - SQL uses bound placeholders (`?1`); never interpolate request input.
   Table names only from fixed maps (see `worker/lib/collections.ts`).
@@ -73,8 +75,12 @@ Settings UI. **The repo is public; never commit them.**
 ```bash
 npx wrangler d1 create short-invoice   # paste database_id into wrangler.jsonc
 npm run db:migrate
+npx wrangler secret put LINK_COOKIE_SECRET   # e.g. `openssl rand -base64 32`
 npm run deploy
 ```
+
+Locally, copy `.dev.vars.example` to `.dev.vars`. Without the secret, password
+links still work but ask for the password on every click.
 
 From CI or a cloud session, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
