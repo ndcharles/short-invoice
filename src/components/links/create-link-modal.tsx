@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
-import { nanoid } from 'nanoid';
+import { randomAlias } from '@/lib/links/fields';
 import {
   ChevronDown,
   ChevronRight,
@@ -55,7 +55,7 @@ type ActivePopup = 'utm' | 'password' | 'expiration' | 'preview' | null;
 
 function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   const [dest, setDest] = useState('');
-  const [alias, setAlias] = useState(() => nanoid(7));
+  const [alias, setAlias] = useState(() => randomAlias());
   const [aliasLocked, setAliasLocked] = useState(true);
   const [domain, setDomain] = useState('4th.link');
   const [tag, setTag] = useState<string | null>(null);
@@ -123,11 +123,11 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   }, []);
   usePopoverDismiss(openPicker !== null || openFolderPicker, closePickers);
 
-  const randomizeAlias = () => setAlias(nanoid(7));
+  const randomizeAlias = () => setAlias(randomAlias());
 
   const suggestAlias = () => {
     if (!dest) {
-      setAlias(nanoid(7));
+      setAlias(randomAlias());
       return;
     }
     try {
@@ -139,10 +139,10 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
       } else {
         const hostParts = url.hostname.split('.');
         const name = hostParts.length > 1 ? hostParts[hostParts.length - 2] : hostParts[0];
-        setAlias(`${name}-${nanoid(4)}`);
+        setAlias(`${name}-${randomAlias().slice(0, 4)}`);
       }
     } catch {
-      setAlias(nanoid(7));
+      setAlias(randomAlias());
     }
   };
 

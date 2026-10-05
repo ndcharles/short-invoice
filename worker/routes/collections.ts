@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { getSettings } from '../lib/settings';
+import { readJsonObject } from '../lib/request';
 import {
   createCollection,
   deleteCollection,
@@ -15,6 +16,10 @@ import {
 
 const collections = new Hono<AppEnv>();
 
+/** Each module's fallback folder; renaming or deleting one would strand new records. */
+const BUILT_IN_FOLDERS = new Set(['links', 'campaigns', 'invoices']);
+const isBuiltIn = (kind: string, name: string) => kind === 'folders' && BUILT_IN_FOLDERS.has(name.toLowerCase());
+
 /** GET /api/collections?kind=folders|tags */
 collections.get('/', async (c) => {
   const kind = parseKind(c.req.query('kind') ?? '');
@@ -24,8 +29,9 @@ collections.get('/', async (c) => {
 
 /** POST /api/collections — body: { kind, name, color } */
 collections.post('/', async (c) => {
-  const body = await c.req.json();
-  const kind = parseKind(body.kind ?? '');
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  const kind = parseKind(String(body.kind ?? ''));
   if (!kind) return c.json({ error: 'kind must be folders or tags' }, 400);
 
   const name = normalizeName(body.name);
@@ -41,8 +47,9 @@ collections.post('/', async (c) => {
 
 collections.patch('/:id', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
-  const kind = parseKind(body.kind ?? c.req.query('kind') ?? '');
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  const kind = parseKind(String(body.kind ?? c.req.query('kind') ?? ''));
   if (!kind) return c.json({ error: 'kind must be folders or tags' }, 400);
 
   const existing = await getCollectionItem(c.env.DB, kind, id);
@@ -50,6 +57,9 @@ collections.patch('/:id', async (c) => {
 
   const name = body.name === undefined ? undefined : normalizeName(body.name);
   if (body.name !== undefined && !name) return c.json({ error: 'A name is required' }, 400);
+  if (name && name !== existing.name && isBuiltIn(kind, existing.name)) {
+    return c.json({ error: `"${existing.name}" is a built-in folder and cannot be renamed.` }, 409);
+  }
   if (name && name.toLowerCase() !== existing.name.toLowerCase()) {
     const clash = await findByName(c.env.DB, kind, name);
     if (clash && clash.id !== id) return c.json({ error: `"${name}" already exists` }, 409);
@@ -68,6 +78,9 @@ collections.delete('/:id', async (c) => {
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   // The default folder is the fallback target, so it cannot be removed.
+  if (isBuiltIn(kind, existing.name)) {
+    return c.json({ error: `"${existing.name}" is a built-in folder and cannot be deleted.` }, 409);
+  }
   const settings = await getSettings(c.env.DB);
   if (kind === 'folders' && existing.name === settings.default_folder) {
     return c.json({ error: `"${existing.name}" is the default folder. Change the default first.` }, 409);

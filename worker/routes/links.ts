@@ -1,15 +1,26 @@
 import { Hono } from 'hono';
-import { nanoid } from 'nanoid';
 import type { AppEnv } from '../env';
 import type { LinkItem } from '../../src/lib/types';
 import { hashPassword } from '../lib/password';
 import { pickUtm } from '../../src/lib/links/utm';
-import { asBooleanish, asText, normalizeAlias, normalizeDest, parseExpiresAt } from '../../src/lib/links/fields';
+import { randomAlias } from '../../src/lib/links/fields';
+import { parseLinkInput } from '../lib/link-input';
+import { getSettings } from '../lib/settings';
+import { knownDomains } from '../lib/domains';
+import { readJsonObject } from '../lib/request';
+import { initials } from '../lib/initials';
 
 const links = new Hono<AppEnv>();
 
+/** Never send password hashes to the browser; the UI only needs to know one is set. */
+function publicLink(link: LinkItem | null) {
+  if (!link) return null;
+  const { password_hash, ...rest } = link;
+  return { ...rest, password_hash: null, has_password: !!password_hash };
+}
+
 links.get('/', async (c) => {
-  const search = c.req.query('search')?.trim() || '';
+  const search = c.req.query('search')?.trim().slice(0, 200) || '';
   const archived = c.req.query('archived') === '1' ? 1 : 0;
   const folder = c.req.query('folder')?.trim() || '';
 
@@ -30,7 +41,7 @@ links.get('/', async (c) => {
     c.env.DB.prepare(sql).bind(...params),
     c.env.DB.prepare('SELECT archived, COUNT(*) AS count FROM links GROUP BY archived'),
   ]);
-  const list = rows.results as LinkItem[];
+  const list = (rows.results as LinkItem[]).map(publicLink);
   const grouped = counts.results as { archived: number; count: number }[];
 
   return c.json({
@@ -44,26 +55,31 @@ links.get('/', async (c) => {
 });
 
 links.post('/', async (c) => {
-  const body = await c.req.json();
-  const domain = asText(body.domain) ?? '4th.link';
-
-  if (!body.dest || typeof body.dest !== 'string') {
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  if (body.dest === undefined || body.dest === null || body.dest === '') {
     return c.json({ error: 'Destination URL is required' }, 400);
   }
-  const dest = normalizeDest(body.dest);
-  const alias =
-    typeof body.alias === 'string' && body.alias.trim() ? normalizeAlias(body.alias) : nanoid(7);
+  const parsed = parseLinkInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const input = parsed.value;
 
   const db = c.env.DB;
+  const settings = await getSettings(db);
+  const domain = input.domain ?? settings.default_domain;
+  if (!knownDomains(settings).includes(domain)) {
+    return c.json({ error: `"${domain}" is not one of your domains. Add it in Settings → URL Shortener first.` }, 400);
+  }
+  const alias = input.alias ?? randomAlias();
+
   const existing = await db.prepare('SELECT id FROM links WHERE domain = ?1 AND alias = ?2').bind(domain, alias).first();
   if (existing) {
     return c.json({ error: 'This short link alias is already in use.' }, 409);
   }
 
-  const id = `lnk_${nanoid(10)}`;
+  const id = `lnk_${randomAlias()}${randomAlias().slice(0, 3)}`;
   const now = Date.now();
-  const password = asText(body.password);
-  const utm = pickUtm(body);
+  const utm = pickUtm(input.utm ?? {});
 
   await db
     .prepare(
@@ -76,42 +92,51 @@ links.post('/', async (c) => {
       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?23)`
     )
     .bind(
-      id, domain, alias, dest, body.tag ?? null, body.folder ?? 'Links', body.comments ?? '', body.cloak ? 1 : 0,
-      password ? await hashPassword(password) : null,
-      parseExpiresAt(body.expires_at ?? body.expiresAt),
-      asText(body.expires_url ?? body.expiresUrl),
+      id, domain, alias, input.dest, input.tag ?? null, input.folder ?? settings.default_folder ?? 'Links',
+      input.comments ?? '', input.cloak ?? 0,
+      input.password ? await hashPassword(input.password) : null,
+      input.expires_at ?? null,
+      input.expires_url ?? null,
       utm.utm_source, utm.utm_medium, utm.utm_campaign, utm.utm_term, utm.utm_content, utm.utm_referral,
-      asBooleanish(body.custom_preview ?? body.customPreview) ? 1 : 0,
-      asText(body.og_title ?? body.ogTitle),
-      asText(body.og_description ?? body.ogDescription),
-      asText(body.og_image ?? body.ogImage),
-      'NC', now
+      input.custom_preview ?? 0,
+      input.og_title ?? null,
+      input.og_description ?? null,
+      input.og_image ?? null,
+      initials(settings.profile_name), now
     )
     .run();
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
-  return c.json({ link }, 201);
+  return c.json({ link: publicLink(link) }, 201);
 });
 
 links.get('/:id', async (c) => {
   const link = await c.env.DB.prepare('SELECT * FROM links WHERE id = ?1').bind(c.req.param('id')).first<LinkItem>();
   if (!link) return c.json({ error: 'Link not found' }, 404);
-  return c.json({ link });
+  return c.json({ link: publicLink(link) });
 });
 
 links.patch('/:id', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  const parsed = parseLinkInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const input = parsed.value;
   const db = c.env.DB;
 
   const existing = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
   if (!existing) return c.json({ error: 'Link not found' }, 404);
 
-  const has = (...keys: string[]) => keys.some((k) => body[k] !== undefined);
-  const domain = body.domain ?? existing.domain;
-  const alias = normalizeAlias(body.alias ?? existing.alias);
-  const dest = normalizeDest(body.dest ?? existing.dest);
+  const domain = input.domain ?? existing.domain;
+  const alias = input.alias ?? existing.alias;
 
+  if (domain !== existing.domain) {
+    const settings = await getSettings(db);
+    if (!knownDomains(settings).includes(domain)) {
+      return c.json({ error: `"${domain}" is not one of your domains.` }, 400);
+    }
+  }
   if (alias !== existing.alias || domain !== existing.domain) {
     const conflict = await db
       .prepare('SELECT id FROM links WHERE domain = ?1 AND alias = ?2 AND id != ?3')
@@ -120,17 +145,12 @@ links.patch('/:id', async (c) => {
     if (conflict) return c.json({ error: 'Alias already in use' }, 409);
   }
 
-  // Password: undefined = leave as-is, null/'' = clear, string = set
+  // Password: absent = leave as-is, null/'' = clear, string = set.
   let passwordHash = existing.password_hash;
-  if (body.password !== undefined) {
-    const password = asText(body.password);
-    passwordHash = password ? await hashPassword(password) : null;
-  }
+  if (input.password !== undefined) passwordHash = input.password ? await hashPassword(input.password) : null;
 
-  const utm =
-    body.utm !== undefined || Object.keys(body).some((k) => k.startsWith('utm_'))
-      ? pickUtm({ ...existing, ...body })
-      : pickUtm(existing);
+  const utm = pickUtm({ ...pickUtm(existing), ...(input.utm ?? {}) });
+  const keep = <K extends keyof LinkItem>(key: K, next: LinkItem[K] | undefined) => (next === undefined ? existing[key] : next);
 
   await db
     .prepare(
@@ -143,27 +163,27 @@ links.patch('/:id', async (c) => {
        WHERE id = ?23`
     )
     .bind(
-      domain, alias, dest,
-      body.tag !== undefined ? body.tag : existing.tag,
-      body.folder ?? existing.folder,
-      body.comments ?? existing.comments,
-      body.cloak !== undefined ? (body.cloak ? 1 : 0) : existing.cloak,
+      domain, alias, keep('dest', input.dest),
+      keep('tag', input.tag),
+      input.folder === undefined ? existing.folder : input.folder ?? 'Links',
+      keep('comments', input.comments),
+      keep('cloak', input.cloak),
       passwordHash,
-      has('expires_at', 'expiresAt') ? parseExpiresAt(body.expires_at ?? body.expiresAt) : existing.expires_at,
-      has('expires_url', 'expiresUrl') ? asText(body.expires_url ?? body.expiresUrl) : existing.expires_url,
+      keep('expires_at', input.expires_at),
+      keep('expires_url', input.expires_url),
       utm.utm_source, utm.utm_medium, utm.utm_campaign, utm.utm_term, utm.utm_content, utm.utm_referral,
-      has('custom_preview', 'customPreview') ? ((body.custom_preview ?? body.customPreview) ? 1 : 0) : existing.custom_preview,
-      has('og_title', 'ogTitle') ? asText(body.og_title ?? body.ogTitle) : existing.og_title,
-      has('og_description', 'ogDescription') ? asText(body.og_description ?? body.ogDescription) : existing.og_description,
-      has('og_image', 'ogImage') ? asText(body.og_image ?? body.ogImage) : existing.og_image,
-      body.archived !== undefined ? (body.archived ? 1 : 0) : existing.archived,
+      keep('custom_preview', input.custom_preview),
+      keep('og_title', input.og_title),
+      keep('og_description', input.og_description),
+      keep('og_image', input.og_image),
+      keep('archived', input.archived),
       Date.now(),
       id
     )
     .run();
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
-  return c.json({ link });
+  return c.json({ link: publicLink(link) });
 });
 
 links.delete('/:id', async (c) => {

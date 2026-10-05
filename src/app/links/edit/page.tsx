@@ -305,7 +305,7 @@ function EditLinkPageInner() {
   };
 
   const utmActive = hasUtm(draft.utm);
-  const passwordActive = !!link.password_hash || pendingPassword !== null;
+  const passwordActive = !!link.has_password || pendingPassword !== null;
 
   return (
     <Shell>

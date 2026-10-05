@@ -14,6 +14,22 @@ export interface CollectionItem {
 const TABLE: Record<CollectionKind, 'folders' | 'tags'> = { folders: 'folders', tags: 'tags' };
 const PREFIX: Record<CollectionKind, string> = { folders: 'fld', tags: 'tag' };
 
+/** Which table/column pairs reference each kind. */
+const USES: Record<CollectionKind, [string, string][]> = {
+  folders: [
+    ['links', 'folder'],
+    ['utms', 'folder'],
+    ['invoices', 'folder'],
+  ],
+  tags: [
+    ['links', 'tag'],
+    ['invoices', 'tag'],
+  ],
+};
+
+/** Fallback folder per module when a folder is deleted. */
+const MODULE_FOLDER: Record<string, string> = { utms: 'Campaigns', invoices: 'Invoices' };
+
 export const COLLECTION_COLORS = ['green', 'blue', 'yellow'] as const;
 
 export function parseKind(value: string): CollectionKind | null {
@@ -23,7 +39,7 @@ export function parseKind(value: string): CollectionKind | null {
 export function normalizeName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const name = value.trim();
-  if (!name) return null;
+  if (!name || /[\u0000-\u001f\u007f]/.test(name)) return null;
   return name.slice(0, 40);
 }
 
@@ -69,17 +85,19 @@ export async function updateCollection(
   const now = Date.now();
   const stmts = [db.prepare(`UPDATE ${TABLE[kind]} SET name = ?1, color = ?2 WHERE id = ?3`).bind(name, color, existing.id)];
 
-  // Keep links pointing at the renamed item.
+  // Keep every record pointing at the renamed item. Column and table names
+  // come from the fixed USES map, never from input.
   if (name !== existing.name) {
-    const column = kind === 'folders' ? 'folder' : 'tag';
-    stmts.push(db.prepare(`UPDATE links SET ${column} = ?1, updated_at = ?2 WHERE ${column} = ?3`).bind(name, now, existing.name));
+    for (const [table, column] of USES[kind]) {
+      stmts.push(db.prepare(`UPDATE ${table} SET ${column} = ?1, updated_at = ?2 WHERE ${column} = ?3`).bind(name, now, existing.name));
+    }
   }
 
   await db.batch(stmts);
   return { ...existing, name, color };
 }
 
-/** Deletes the item and detaches it from any links that used it. */
+/** Deletes the item and detaches it from every record that used it. */
 export async function deleteCollection(
   db: D1Database,
   kind: CollectionKind,
@@ -87,12 +105,17 @@ export async function deleteCollection(
   fallbackFolder: string
 ): Promise<{ detached: number }> {
   const now = Date.now();
-  // Never leave links pointing at a folder that no longer exists.
-  const detach =
+  // Never leave a record pointing at a folder or tag that no longer exists:
+  // folders fall back to each module's own default, tags are cleared.
+  const detach = USES[kind].map(([table, column]) =>
     kind === 'folders'
-      ? db.prepare('UPDATE links SET folder = ?1, updated_at = ?2 WHERE folder = ?3').bind(fallbackFolder, now, existing.name)
-      : db.prepare('UPDATE links SET tag = NULL, updated_at = ?1 WHERE tag = ?2').bind(now, existing.name);
+      ? db
+          .prepare(`UPDATE ${table} SET ${column} = ?1, updated_at = ?2 WHERE ${column} = ?3`)
+          .bind(table === 'links' ? fallbackFolder : MODULE_FOLDER[table], now, existing.name)
+      : db.prepare(`UPDATE ${table} SET ${column} = NULL, updated_at = ?1 WHERE ${column} = ?2`).bind(now, existing.name)
+  );
 
-  const [detached] = await db.batch([detach, db.prepare(`DELETE FROM ${TABLE[kind]} WHERE id = ?1`).bind(existing.id)]);
-  return { detached: detached.meta.changes ?? 0 };
+  const results = await db.batch([...detach, db.prepare(`DELETE FROM ${TABLE[kind]} WHERE id = ?1`).bind(existing.id)]);
+  const detached = results.slice(0, -1).reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
+  return { detached };
 }

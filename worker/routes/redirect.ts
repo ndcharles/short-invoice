@@ -6,8 +6,16 @@ import { verifyPassword } from '../lib/password';
 import { signUnlock, unlockCookieName, UNLOCK_TTL_SECONDS, verifyUnlock } from '../lib/unlock';
 import { withUtm, pickUtm } from '../../src/lib/links/utm';
 import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
+import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
+import { parseHttpUrl } from '../../src/lib/validate';
 
-const DOMAIN = '4th.link';
+/**
+ * Which domain an alias is looked up on:
+ *  - `path`: `/s/:alias` on any host (the app host, before a custom domain is
+ *    attached) resolves against the configured default domain.
+ *  - `host`: `/:alias` on an attached custom domain resolves against that host.
+ */
+export type LinkScope = { kind: 'path' } | { kind: 'host'; host: string };
 
 function escapeHtml(value: string): string {
   return value
@@ -93,13 +101,13 @@ function logClick(c: RedirectContext, linkId: string) {
   );
 }
 
-function passwordPage(alias: string, wrong: boolean) {
+function passwordPage(action: string, wrong: boolean) {
   return htmlPage('Password required', `
     <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
     <h1>This link is password protected</h1>
     <p>Enter the password to continue.</p>
     ${wrong ? '<p class="error">Incorrect password. Try again.</p>' : ''}
-    <form method="POST" action="/s/${encodeURIComponent(alias)}">
+    <form method="POST" action="${escapeHtml(action)}">
       <div class="field">
         <label for="pw">Password</label>
         <input id="pw" type="password" name="pw" placeholder="Enter password" autofocus required />
@@ -108,36 +116,59 @@ function passwordPage(alias: string, wrong: boolean) {
     </form>`);
 }
 
-async function resolve(c: RedirectContext, supplied: string | null) {
-  const alias = c.req.param('alias') ?? '';
-  const record = await c.env.DB.prepare(
-    `SELECT id, dest, cloak, password_hash, expires_at, expires_url,
-            utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral
-     FROM links WHERE domain = ?1 AND alias = ?2 AND archived = 0`
-  )
-    .bind(DOMAIN, alias)
-    .first<LinkRecord>();
+const LINK_COLUMNS = `id, domain, dest, cloak, password_hash, expires_at, expires_url,
+  utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral`;
 
-  if (!record) {
-    return c.html(
-      htmlPage('Link not found', `
+/** One indexed lookup on UNIQUE(domain, alias); the default domain is read in the same query. */
+export function findLink(db: D1Database, scope: LinkScope, alias: string) {
+  if (scope.kind === 'host') {
+    return db
+      .prepare(`SELECT ${LINK_COLUMNS} FROM links WHERE domain = ?1 AND alias = ?2 AND archived = 0`)
+      .bind(scope.host, alias)
+      .first<LinkRecord & { domain: string }>();
+  }
+  return db
+    .prepare(
+      `SELECT ${LINK_COLUMNS} FROM links
+       WHERE domain = COALESCE((SELECT value FROM settings WHERE key = 'default_domain'), ?1)
+         AND alias = ?2 AND archived = 0`
+    )
+    .bind(DEFAULT_SETTINGS.default_domain, alias)
+    .first<LinkRecord & { domain: string }>();
+}
+
+export function notFoundPage(label: string) {
+  return htmlPage('Link not found', `
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="2" y1="2" x2="22" y2="22"/></svg></div>
         <h1>Link not found</h1>
         <p>This short link does not exist or has been removed.</p>
-        <div class="meta">${DOMAIN}/${escapeHtml(alias)}</div>`),
-      404
-    );
-  }
+        <div class="meta">${escapeHtml(label)}</div>`);
+}
+
+/**
+ * Serves one short link. Returns null when no link matches, so the caller
+ * decides which 404 to show (link-not-found vs. the app's own 404 page).
+ */
+export async function serveLink(
+  c: RedirectContext,
+  scope: LinkScope,
+  alias: string,
+  supplied: string | null
+): Promise<Response | null> {
+  const record = await findLink(c.env.DB, scope, alias);
+  if (!record) return null;
+  const label = `${record.domain}/${alias}`;
 
   // Expiration wins over everything else.
   if (record.expires_at && Date.now() > record.expires_at) {
-    if (record.expires_url) return c.redirect(record.expires_url, 302);
+    const fallback = record.expires_url ? parseHttpUrl(record.expires_url) : null;
+    if (fallback?.ok) return c.redirect(fallback.value, 302);
     return c.html(
       htmlPage('Link expired', `
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
         <h1>This link has expired</h1>
         <p>The owner set an expiration date and it has passed.</p>
-        <div class="meta">${DOMAIN}/${escapeHtml(alias)}</div>`),
+        <div class="meta">${escapeHtml(label)}</div>`),
       410
     );
   }
@@ -151,7 +182,7 @@ async function resolve(c: RedirectContext, supplied: string | null) {
       !!secret && (await verifyUnlock(secret, record.id, record.password_hash, getCookie(c, cookieName)));
     if (!unlocked) {
       if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
-        return c.html(passwordPage(alias, supplied !== null), 401);
+        return c.html(passwordPage(c.req.path, supplied !== null), 401);
       }
       if (secret) {
         setCookie(c, cookieName, await signUnlock(secret, record.id, record.password_hash), {
@@ -165,7 +196,19 @@ async function resolve(c: RedirectContext, supplied: string | null) {
     }
   }
 
-  const target = withUtm(record.dest, pickUtm(record));
+  // Rows are validated on write; this re-check means a bad row written before
+  // validation existed can never become a javascript:/data: redirect or iframe.
+  const checked = parseHttpUrl(withUtm(record.dest, pickUtm(record)));
+  if (!checked.ok) {
+    return c.html(
+      htmlPage('Link unavailable', `
+        <h1>This link is unavailable</h1>
+        <p>Its destination is not a valid web address.</p>
+        <div class="meta">${escapeHtml(label)}</div>`),
+      410
+    );
+  }
+  const target = checked.value;
   logClick(c, record.id);
 
   if (record.cloak) {
@@ -173,6 +216,8 @@ async function resolve(c: RedirectContext, supplied: string | null) {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
   <title>${escapeHtml(alias)}</title>
   <style>
     body, html { margin:0; padding:0; height:100%; overflow:hidden; }
@@ -189,12 +234,23 @@ async function resolve(c: RedirectContext, supplied: string | null) {
   return c.redirect(target, c.req.method === 'POST' ? 303 : 302);
 }
 
+async function suppliedPassword(c: RedirectContext): Promise<string> {
+  const form = await c.req.parseBody();
+  // Cap the length so an oversized post cannot make PBKDF2 hash megabytes.
+  return typeof form.pw === 'string' ? form.pw.slice(0, 1024) : '';
+}
+
+/** `/s/:alias`, available on every host. */
 const redirect = new Hono<AppEnv>();
 
-redirect.get('/:alias', (c) => resolve(c, null));
-redirect.post('/:alias', async (c) => {
-  const form = await c.req.parseBody();
-  return resolve(c, typeof form.pw === 'string' ? form.pw : '');
-});
+const servePath = async (c: RedirectContext, supplied: string | null) => {
+  const alias = c.req.param('alias') ?? '';
+  const res = await serveLink(c, { kind: 'path' }, alias, supplied);
+  return res ?? c.html(notFoundPage(`/s/${alias}`), 404);
+};
 
+redirect.get('/:alias', (c) => servePath(c, null));
+redirect.post('/:alias', async (c) => servePath(c, await suppliedPassword(c)));
+
+export { suppliedPassword };
 export default redirect;

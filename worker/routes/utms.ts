@@ -2,18 +2,52 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import type { AppEnv } from '../env';
 import type { UtmCampaign } from '../../src/lib/types';
-import { asText } from '../../src/lib/links/fields';
+import { LIMITS, parseHttpUrl, parseMultiline, parseText, type Result } from '../../src/lib/validate';
+import { readJsonObject } from '../lib/request';
+import { getSettings } from '../lib/settings';
+import { initials } from '../lib/initials';
 
 const utms = new Hono<AppEnv>();
 
-function normalizeWebsite(value: unknown): string | null {
-  const text = asText(value);
-  if (!text) return null;
-  return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+const TEXT_FIELDS = ['source', 'medium', 'campaign', 'campaign_id', 'term', 'content'] as const;
+type UtmInput = Partial<Record<(typeof TEXT_FIELDS)[number] | 'folder', string | null>> & {
+  website?: string;
+  comments?: string;
+  archived?: number;
+};
+
+/** Validates a campaign payload. Only keys present in the body are returned. */
+function parseUtmInput(body: Record<string, unknown>): Result<UtmInput> {
+  const out: UtmInput = {};
+  if (body.website !== undefined) {
+    const website = parseHttpUrl(body.website, 'Website URL');
+    if (!website.ok) return website;
+    out.website = website.value;
+  }
+  // The builder UI sends `utm_id`; the API name is `campaign_id`.
+  const source: Record<string, unknown> = { ...body, campaign_id: body.campaign_id ?? body.utm_id };
+  for (const key of TEXT_FIELDS) {
+    if (source[key] === undefined) continue;
+    const value = parseText(source[key], key, LIMITS.shortText);
+    if (!value.ok) return value;
+    out[key] = value.value;
+  }
+  if (body.folder !== undefined) {
+    const folder = parseText(body.folder, 'Folder', LIMITS.name);
+    if (!folder.ok) return folder;
+    out.folder = folder.value;
+  }
+  if (body.comments !== undefined) {
+    const comments = parseMultiline(body.comments, 'Comments');
+    if (!comments.ok) return comments;
+    out.comments = comments.value ?? '';
+  }
+  if (body.archived !== undefined) out.archived = body.archived ? 1 : 0;
+  return { ok: true, value: out };
 }
 
 utms.get('/', async (c) => {
-  const search = c.req.query('search')?.trim() || '';
+  const search = c.req.query('search')?.trim().slice(0, 200) || '';
   const archived = c.req.query('archived') === '1' ? 1 : 0;
   const folder = c.req.query('folder')?.trim() || '';
 
@@ -48,9 +82,13 @@ utms.get('/', async (c) => {
 });
 
 utms.post('/', async (c) => {
-  const body = await c.req.json();
-  const website = normalizeWebsite(body.website);
-  if (!website) return c.json({ error: 'A website URL is required' }, 400);
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  if (body.website === undefined || body.website === '') return c.json({ error: 'A website URL is required' }, 400);
+  const parsed = parseUtmInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const input = parsed.value;
+  const settings = await getSettings(c.env.DB);
 
   const id = `utm_${nanoid(10)}`;
   const now = Date.now();
@@ -60,17 +98,16 @@ utms.post('/', async (c) => {
   )
     .bind(
       id,
-      website,
-      asText(body.source),
-      asText(body.medium),
-      asText(body.campaign),
-      // Accepts `campaign_id` from the API and `utm_id` from the builder UI.
-      asText(body.campaign_id ?? body.utm_id),
-      asText(body.term),
-      asText(body.content),
-      body.comments ?? '',
-      asText(body.folder) ?? 'Campaigns',
-      asText(body.avatar) ?? 'NC',
+      input.website,
+      input.source ?? null,
+      input.medium ?? null,
+      input.campaign ?? null,
+      input.campaign_id ?? null,
+      input.term ?? null,
+      input.content ?? null,
+      input.comments ?? '',
+      input.folder ?? (settings.utm_default_folder && settings.utm_default_folder !== 'None' ? settings.utm_default_folder : 'Campaigns'),
+      initials(settings.profile_name),
       now
     )
     .run();
@@ -87,16 +124,18 @@ utms.get('/:id', async (c) => {
 
 utms.patch('/:id', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = await readJsonObject(c);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+  const parsed = parseUtmInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const input = parsed.value;
   const db = c.env.DB;
 
   const existing = await db.prepare('SELECT * FROM utms WHERE id = ?1').bind(id).first<UtmCampaign>();
   if (!existing) return c.json({ error: 'Campaign not found' }, 404);
 
-  const website = body.website === undefined ? existing.website : normalizeWebsite(body.website);
-  if (!website) return c.json({ error: 'A website URL is required' }, 400);
-
-  const pick = (key: keyof UtmCampaign, current: string | null) => (body[key] === undefined ? current : asText(body[key]));
+  const pick = <K extends keyof UtmInput & keyof UtmCampaign>(key: K) =>
+    input[key] === undefined ? existing[key] : input[key];
 
   await db
     .prepare(
@@ -106,16 +145,16 @@ utms.patch('/:id', async (c) => {
        WHERE id = ?12`
     )
     .bind(
-      website,
-      pick('source', existing.source),
-      pick('medium', existing.medium),
-      pick('campaign', existing.campaign),
-      pick('campaign_id', existing.campaign_id),
-      pick('term', existing.term),
-      pick('content', existing.content),
-      body.comments ?? existing.comments,
-      asText(body.folder) ?? existing.folder,
-      body.archived === undefined ? existing.archived : body.archived ? 1 : 0,
+      pick('website'),
+      pick('source'),
+      pick('medium'),
+      pick('campaign'),
+      pick('campaign_id'),
+      pick('term'),
+      pick('content'),
+      pick('comments'),
+      input.folder === undefined ? existing.folder : input.folder ?? 'Campaigns',
+      pick('archived'),
       Date.now(),
       id
     )
