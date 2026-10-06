@@ -211,7 +211,8 @@ export function renderInvoiceDocument(invoice: InvoiceView, profile: DocumentPro
   @media (max-width:640px) {
     .page { padding:24px 18px; } .meta, .summary { grid-template-columns:1fr; }
     header { flex-direction:column; } .doc { text-align:left; } .tagline { margin:24px -18px -24px; }
-    table.items .n, table.items th:first-child { display:none; }
+    table.items .n, table.items th:first-child, table.items .eq { display:none; }
+    table.items td, table.items th { padding:8px 6px; }
   }
   @page { size:A4; margin:12mm; }
   @media print {

@@ -900,9 +900,22 @@ select.ie-input { cursor: pointer; margin: 0; }
 .ie-payment { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 @media (max-width: 900px) {
   .ie-meta, .ie-summary { grid-template-columns: 1fr; }
-  .ie-row, .ie-items.has-eq .ie-row { grid-template-columns: minmax(0, 1fr) 56px 96px 96px; }
-  .ie-row > .ie-idx, .ie-row > .ie-row-actions, .ie-row-head > span:first-child, .ie-row-head > span:last-child { display: none; }
-  .ie-items.has-eq .ie-row > :nth-child(6) { display: none; }
+}
+/* Phones: each line stacks the description over qty | rate | amount | actions. */
+@media (max-width: 640px) {
+  .ie-row-head { display: none; }
+  .ie-row, .ie-items.has-eq .ie-row {
+    grid-template-columns: 48px minmax(84px, 1fr) auto auto;
+    grid-template-areas: 'desc desc desc desc' 'qty rate amount actions';
+    row-gap: 6px;
+  }
+  .ie-row > .ie-idx, .ie-items.has-eq .ie-row > :nth-child(6) { display: none; }
+  .ie-row > .ie-desc { grid-area: desc; }
+  .ie-row > :nth-child(3) { grid-area: qty; }
+  .ie-row > :nth-child(4) { grid-area: rate; }
+  .ie-row > .ie-amount { grid-area: amount; }
+  .ie-row > .ie-row-actions { grid-area: actions; opacity: 1; }
+  .ie-row:first-of-type { border-top: none; }
 }
 
 /* Invoice list summary strip */
@@ -914,3 +927,43 @@ select.ie-input { cursor: pointer; margin: 0; }
 .inv-kpi.is-alert .inv-kpi-value { color: #991b1b; }
 .inv-due-hint.is-overdue { color: #991b1b; font-weight: 500; }
 .inv-amount-sub { font-size: 11px; color: var(--muted-foreground); text-align: right; }
+
+/* ---------------------------------------------------------------------------
+   Phones: the main menu collapses to icons (as on Settings), padding shrinks,
+   and wide toolbars/cards wrap instead of overflowing.
+   --------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .app, .app-collapsed { grid-template-columns: 52px minmax(0, 1fr); }
+  .sidebar { padding: 12px 6px; }
+  .workspace { justify-content: center; padding: 8px 0 10px; }
+  .nav-section-label, .nav-sub { display: none; }
+  .nav-item { justify-content: center; padding: 7px 0; }
+  .nav-item span, .workspace-name, .workspace-chevron, .user-meta, .user-row svg { display: none; }
+  .user-row { justify-content: center; padding: 6px 0; }
+  .main-inner { padding: 14px 12px 32px; }
+  .page-header, .crumb-bar { flex-wrap: wrap; gap: 8px; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .search { width: 100%; }
+  .list-tabs { overflow-x: auto; }
+  .link-card {
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    grid-template-areas: 'icon info menu' 'icon right right';
+    gap: 6px 10px;
+  }
+  .link-card > .favicon { grid-area: icon; align-self: start; }
+  .link-card > .link-info { grid-area: info; }
+  .link-card > .link-meta-right { grid-area: right; justify-self: start; flex-wrap: wrap; }
+  .link-card > .icon-btn { grid-area: menu; align-self: start; }
+  .link-dest { flex-wrap: wrap; }
+  .link-dest .link-dest-url { max-width: 100%; }
+  .link-dest-meta { flex-wrap: wrap; border-left: none; padding-left: 0; margin-left: 0; }
+  .inv-amount-sub { text-align: left; }
+  .inv-kpis { grid-template-columns: 1fr 1fr; }
+  .inv-kpi-value { font-size: 15px; }
+  .invoice-canvas { padding: 18px 14px; }
+  .ie-head { flex-direction: column; }
+  .ie-doc { align-items: flex-start; }
+  .ie-facts label { grid-template-columns: 96px 1fr; }
+  .stat-grid, .split { grid-template-columns: minmax(0, 1fr) !important; }
+  .modal { width: calc(100vw - 16px) !important; max-height: calc(100dvh - 16px); }
+}
