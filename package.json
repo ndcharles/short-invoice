@@ -15,7 +15,11 @@
     "tail": "wrangler tail",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
-    "test:api": "vitest run --project api"
+    "test:api": "vitest run --project api",
+    "db:demo:invoices:local": "wrangler d1 execute short-invoice --local --file=seed/demo-invoices.sql",
+    "db:demo:invoices": "wrangler d1 execute short-invoice --remote --file=seed/demo-invoices.sql",
+    "db:demo:invoices:clean:local": "wrangler d1 execute short-invoice --local --file=seed/demo-invoices-clean.sql",
+    "db:demo:invoices:clean": "wrangler d1 execute short-invoice --remote --file=seed/demo-invoices-clean.sql"
   },
   "dependencies": {
     "basecoat-css": "^1.0.2",

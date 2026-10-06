@@ -7,6 +7,7 @@ import type { TestProject } from 'vitest/node';
 declare module 'vitest' {
   export interface ProvidedContext {
     baseUrl: string;
+    persistDir: string;
   }
 }
 
@@ -74,6 +75,7 @@ export async function setup(project: TestProject) {
   }
 
   project.provide('baseUrl', baseUrl);
+  project.provide('persistDir', persistDir);
 }
 
 export async function teardown() {

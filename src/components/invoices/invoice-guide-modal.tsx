@@ -3,37 +3,37 @@
 import React from 'react';
 import Link from 'next/link';
 import { ChevronRight, XIcon } from '@/components/icons';
-import { InvoiceStatus, invoiceStatusPill } from '@/lib/invoices';
+import { STATUS_META, type InvoiceStatus } from '@/lib/invoices';
 
 const STEPS: { id: InvoiceStatus; when: string; why: string }[] = [
   {
     id: 'draft',
-    when: 'While drafting, waiting for internal approval, or when work is still being tracked before issuing.',
+    when: 'Every new invoice starts here. Edit freely; nothing has gone to the client yet.',
     why: 'Avoids recognising revenue prematurely. Under accrual accounting, revenue should only be recognised when the obligation is finalised or the service/product is delivered and billed.',
   },
   {
     id: 'sent',
-    when: 'The moment an invoice is finalised and sent to the customer with an established due date (e.g. Net 30).',
+    when: 'Set automatically when you use Send, or choose Mark as sent if you delivered it another way (WhatsApp, printed copy).',
     why: 'Converts potential work into a legal claim for payment (Accounts Receivable). It allows you to track ageing invoices and manage collections.',
   },
   {
     id: 'overdue',
-    when: 'Applied automatically once the due date has passed without full payment. Prioritise collection activity for these.',
+    when: 'Automatic: a sent invoice with a balance becomes Overdue the day after its due date. You never set it by hand.',
     why: 'Surfaces ageing receivables that pose collection risk so they can be escalated (dunning, reminders, or renegotiation).',
   },
   {
     id: 'partially-paid',
-    when: "When the customer has settled part of the total due but a balance remains. Log each received amount against the invoice's open balance.",
+    when: 'Automatic: log a payment smaller than the balance. Each payment is listed on the invoice and the receipt.',
     why: 'Keeps the receivable open and auditable without misrepresenting the amount collected. Prevents premature revenue recognition on the outstanding portion.',
   },
   {
     id: 'paid',
-    when: 'Mark as paid immediately upon bank confirmation, payment gateway settlement, or cheque clearance. Only after the full amount is cleared.',
+    when: 'Automatic: once logged payments cover the total. Remove a payment and the status steps back on its own.',
     why: 'Closes the open receivable cycle, confirming that expected revenue has successfully converted into actual liquid cash.',
   },
   {
     id: 'cancelled',
-    when: 'When an invoice was issued by mistake, billing terms changed fundamentally, or the agreement was cancelled.',
+    when: 'Use Cancel invoice when it was issued by mistake or the deal fell through. You can re-open it later.',
     why: 'Never delete an invoice. Maintaining cancelled records preserves sequential invoice numbering (crucial for tax compliance and audit trails) while ensuring your balance sheet does not report revenue you will never receive.',
   },
 ];
@@ -60,7 +60,7 @@ export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
-            <span>How to Guide — Invoice statuses</span>
+            <span>How invoices work</span>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close guide">
             <XIcon />
@@ -69,32 +69,31 @@ export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
 
         <div className="modal-body guide-body">
           <div>
-            <div className="guide-section-title">Detailed Breakdown &amp; Guidelines</div>
+            <div className="guide-section-title">Statuses, payments and foreign clients</div>
             <div className="guide-intro">
-              When to use what invoice tags for appropriate accounting and reconciliation.
+              You only choose Draft, Sent or Cancelled. Paid, Partially paid and Overdue follow from the payments you log
+              and the due date, so the status is always right.
             </div>
           </div>
 
           <div className="guide-callout">
             <div className="guide-callout-icon">i</div>
             <div>
-              Every invoice starts as a <em>Draft</em>. When you send it, it becomes <em>Sent</em>. If the due date
-              passes without settlement, it flips to <em>Overdue</em>. On receiving payment, use <em>Log Payment</em> to
-              record it — the invoice moves to <em>Paid</em> or <em>Partially paid</em>. If a contract is terminated
-              before fulfilment or an error is made, transition directly to <em>Cancelled</em>.{' '}
-              <strong>Never delete the record.</strong>
+              <strong>Sending:</strong> Send opens your email app with the message and a private client link. The client
+              can view the invoice and download a PDF there; you see when they first open it. You can also download the
+              PDF yourself and send it any way you like.
             </div>
           </div>
 
           <div className="guide-warn">
-            <strong>Partial payments →</strong> Do not mark the invoice as <strong>Paid</strong> until the total amount
-            due is completely settled. Instead keep the status as <strong>Sent</strong> or switch to{' '}
-            <strong>Partially paid</strong> and log the received amount against the open balance.
+            <strong>Foreign clients →</strong> Keep the invoice in naira and tick <strong>Show USD equivalent</strong>, then
+            set the rate (₦ per $1). Every line and total gets a dollar column, labelled as a reference. To bill in
+            dollars instead, change the currency; the equivalent then shows naira.
           </div>
 
           <div className="guide-steps">
             {STEPS.map((step, index) => {
-              const pill = invoiceStatusPill(step.id);
+              const pill = STATUS_META[step.id];
               return (
                 <div className="guide-step" key={step.id}>
                   <div className="guide-step-head">
@@ -121,7 +120,7 @@ export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
 
         <div className="modal-footer">
           <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>
-            Tip: hover a status pill in the list to see this description as a tooltip.
+            Cancel instead of deleting sent invoices: it keeps your numbering continuous for tax records.
           </div>
           <button className="btn btn-primary" onClick={onClose}>
             <span>Got it</span>

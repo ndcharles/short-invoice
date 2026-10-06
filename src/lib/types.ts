@@ -60,21 +60,29 @@ export interface InvoiceRow {
   workspace_id: string;
   number: string;
   client_name: string;
+  client_contact: string;
   client_email: string;
   client_address: string;
+  reference: string;
   issued_at: number;
   due_at: number;
   currency: string;
+  /** Stored status: draft | sent | partially-paid | paid | cancelled. */
   status: string;
+  /** JSON array of InvoiceItem. */
   items: string;
+  /** JSON array of InvoicePayment. */
   payments: string;
   subtotal: number;
+  /** Fraction, e.g. 0.075. */
   tax_rate: number;
   discount: number;
   discount_type: string;
   charges: number;
   payment_method: string;
+  /** Unused since the equivalent is always derived from exchange_rate. */
   equivalent_amount: number;
+  /** Naira per 1 unit of the foreign currency; 0 = no equivalent shown. */
   exchange_rate: number;
   total: number;
   notes: string;
@@ -82,6 +90,26 @@ export interface InvoiceRow {
   folder: string;
   tag: string | null;
   avatar: string;
+  share_token: string | null;
+  sent_at: number | null;
+  viewed_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+/** An invoice as the API returns it: the row plus derived values. */
+export interface InvoiceView extends InvoiceRow {
+  display_status: 'draft' | 'sent' | 'partially-paid' | 'paid' | 'overdue' | 'cancelled';
+  totals: {
+    subtotal: number;
+    discount: number;
+    charges: number;
+    tax: number;
+    total: number;
+    paid: number;
+    balance: number;
+    overpaid: number;
+  };
+  /** Present when an exchange rate is set. */
+  equivalent: { currency: string; rate: number; total: number; balance: number } | null;
 }

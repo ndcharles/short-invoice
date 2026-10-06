@@ -2,179 +2,191 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
-import type { InvoiceRow } from '@/lib/types';
-import { ChevronDown, Clock, ExternalLink, Globe, LinkIcon } from '@/components/icons';
-import {
-  computeTotals,
-  CURRENCY_SYMBOLS,
-  fmtMoney,
-  formatDay,
-  INVOICE_STATUSES,
-  InvoiceStatus,
-  parsePayments,
-  STATUS_META,
-} from '@/lib/invoices';
+import type { InvoiceView } from '@/lib/types';
+import { Clock, ExternalLink, Globe, LinkIcon } from '@/components/icons';
+import { daysUntil, fmtMoney, INVOICE_STATUSES, parsePayments, STATUS_META, toNaira } from '@/lib/invoices';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const AGEING = [
+  { id: 'current', label: 'Not yet due', test: (d: number) => d >= 0 },
+  { id: '1-30', label: '1–30 days overdue', test: (d: number) => d < 0 && d >= -30 },
+  { id: '31-60', label: '31–60 days overdue', test: (d: number) => d < -30 && d >= -60 },
+  { id: '61-90', label: '61–90 days overdue', test: (d: number) => d < -60 && d >= -90 },
+  { id: '90+', label: 'Over 90 days overdue', test: (d: number) => d < -90 },
+];
 
 function pctWidth(value: number, max: number) {
-  if (!max) return '0%';
+  if (!max || value <= 0) return '0%';
   return `${Math.max(2, Math.round((value / max) * 100))}%`;
 }
 
+const naira = (amount: number) => fmtMoney(amount, 'NGN').replace(/\.\d\d$/, '');
+
 export default function InvoiceAnalyticsPage() {
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [months, setMonths] = useState<6 | 12>(12);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/invoices?status=all');
-        const data = await res.json();
-        if (!cancelled) setInvoices(data.invoices ?? []);
-      } catch (err) {
-        console.error('Failed to load invoice analytics:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    fetch('/api/invoices?status=all')
+      .then((res) => res.json())
+      .then((data) => !cancelled && setInvoices(data.invoices ?? []))
+      .catch((err) => console.error('Failed to load invoice analytics:', err))
+      .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
   }, []);
 
   const stats = useMemo(() => {
-    const totals = invoices.map((inv) => ({ inv, t: computeTotals(inv as never) }));
-    const totalValue = totals.reduce((sum, r) => sum + r.t.grand, 0);
-    const outstanding = totals.reduce((sum, r) => sum + Math.max(0, r.t.balance), 0);
-    const collected = totals.reduce((sum, r) => sum + r.t.paid, 0);
-    const clients = new Set(invoices.map((inv) => inv.client_name));
+    // Everything is reported in naira; foreign invoices need their exchange rate.
+    const live = invoices.filter((inv) => inv.display_status !== 'draft' && inv.display_status !== 'cancelled');
+    const convertible = live.filter((inv) => toNaira(1, inv.currency, inv.exchange_rate) !== null);
+    const skipped = live.length - convertible.length;
+    const ngn = (inv: InvoiceView, amount: number) => toNaira(amount, inv.currency, inv.exchange_rate) ?? 0;
 
-    // Payment velocity: days from issue to each payment date.
-    const speeds: number[] = [];
-    for (const inv of invoices) {
-      for (const payment of parsePayments(inv.payments)) {
-        const paidAt = Date.parse(payment.date);
-        if (!Number.isNaN(paidAt)) speeds.push((paidAt - inv.issued_at) / 86_400_000);
-      }
-    }
-    const avgDays = speeds.length ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
-    const fastest = speeds.length ? Math.min(...speeds) : 0;
-    const slowest = speeds.length ? Math.max(...speeds) : 0;
-
-    // Month on month counts over the last 8 months.
-    const now = new Date();
-    const months: { label: string; count: number; value: number }[] = [];
-    for (let i = 7; i >= 0; i -= 1) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const next = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      const rows = invoices.filter((inv) => inv.issued_at >= d.getTime() && inv.issued_at < next.getTime());
-      months.push({
-        label: MONTHS[d.getMonth()],
-        count: rows.length,
-        value: rows.reduce((sum, inv) => sum + computeTotals(inv as never).grand, 0),
-      });
-    }
-
-    // Per-status counts + value.
-    const byStatus = INVOICE_STATUSES.map((s) => {
-      const rows = invoices.filter((inv) => inv.status === s.id);
-      return {
-        ...s,
-        count: rows.length,
-        value: rows.reduce((sum, inv) => sum + computeTotals(inv as never).grand, 0),
-      };
-    });
-
-    // Clients by amount + their status mix.
-    const clientMap = new Map<string, { name: string; total: number; statuses: Record<string, number> }>();
-    for (const inv of invoices) {
-      const entry = clientMap.get(inv.client_name) ?? { name: inv.client_name, total: 0, statuses: {} };
-      entry.total += computeTotals(inv as never).grand;
-      entry.statuses[inv.status] = (entry.statuses[inv.status] ?? 0) + 1;
-      clientMap.set(inv.client_name, entry);
-    }
-    const clientsByAmount = [...clientMap.values()].sort((a, b) => b.total - a.total).slice(0, 6);
-
-    // Payment methods by count + value.
+    let invoiced = 0;
+    let collected = 0;
+    let outstanding = 0;
+    let overdue = 0;
+    const ageing = AGEING.map((b) => ({ ...b, value: 0, count: 0 }));
     const methodMap = new Map<string, { name: string; count: number; value: number }>();
-    for (const inv of invoices) {
-      for (const payment of parsePayments(inv.payments)) {
-        const entry = methodMap.get(payment.method) ?? { name: payment.method, count: 0, value: 0 };
-        entry.count += 1;
-        entry.value += Number(payment.amount || 0);
-        methodMap.set(payment.method, entry);
+    const clientMap = new Map<string, { name: string; total: number; balance: number; count: number }>();
+    const payDays: number[] = [];
+
+    const now = new Date();
+    const series = Array.from({ length: months }, (_, i) => {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1 - i), 1));
+      return { key: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, label: MONTHS[d.getUTCMonth()], invoiced: 0, collected: 0 };
+    });
+    const byKey = new Map(series.map((s) => [s.key, s]));
+
+    for (const inv of convertible) {
+      const total = ngn(inv, inv.totals.total);
+      const balance = ngn(inv, inv.totals.balance);
+      invoiced += total;
+      outstanding += balance;
+      if (inv.display_status === 'overdue') overdue += balance;
+      if (balance > 0) {
+        const bucket = ageing.find((b) => b.test(daysUntil(inv.due_at)));
+        if (bucket) {
+          bucket.value += balance;
+          bucket.count += 1;
+        }
+      }
+      const issuedKey = new Date(inv.issued_at).toISOString().slice(0, 7);
+      const month = byKey.get(issuedKey);
+      if (month) month.invoiced += total;
+
+      const client = clientMap.get(inv.client_name) ?? { name: inv.client_name, total: 0, balance: 0, count: 0 };
+      client.total += total;
+      client.balance += balance;
+      client.count += 1;
+      clientMap.set(inv.client_name, client);
+
+      const payments = parsePayments(inv.payments);
+      for (const p of payments) {
+        const value = ngn(inv, p.amount);
+        collected += value;
+        const paidMonth = byKey.get(p.date.slice(0, 7));
+        if (paidMonth) paidMonth.collected += value;
+        const method = methodMap.get(p.method || 'Other') ?? { name: p.method || 'Other', count: 0, value: 0 };
+        method.count += 1;
+        method.value += value;
+        methodMap.set(method.name, method);
+      }
+      if (inv.display_status === 'paid' && payments.length) {
+        const last = Date.parse(`${payments[payments.length - 1].date}T00:00:00Z`);
+        if (!Number.isNaN(last)) payDays.push(Math.max(0, (last - inv.issued_at) / 86_400_000));
       }
     }
-    const methods = [...methodMap.values()].sort((a, b) => b.value - a.value);
+
+    const byStatus = INVOICE_STATUSES.map((s) => {
+      const rows = invoices.filter((inv) => inv.display_status === s.id);
+      return { ...s, count: rows.length, value: rows.reduce((sum, inv) => sum + (toNaira(inv.totals.total, inv.currency, inv.exchange_rate) ?? 0), 0) };
+    });
 
     return {
-      totalValue,
-      outstanding,
+      invoiced,
       collected,
-      clientCount: clients.size,
-      avgDays,
-      fastest,
-      slowest,
-      months,
+      outstanding,
+      overdue,
+      skipped,
+      liveCount: live.length,
+      clients: new Set(live.map((inv) => inv.client_name)).size,
+      avgDays: payDays.length ? payDays.reduce((a, b) => a + b, 0) / payDays.length : null,
+      series,
+      ageing,
       byStatus,
-      clientsByAmount,
-      methods,
-      lastInvoice: [...invoices].sort((a, b) => b.issued_at - a.issued_at)[0],
+      methods: [...methodMap.values()].sort((a, b) => b.value - a.value),
+      clientsByAmount: [...clientMap.values()].sort((a, b) => b.total - a.total).slice(0, 8),
     };
-  }, [invoices]);
+  }, [invoices, months]);
 
-  const maxStatus = Math.max(...stats.byStatus.map((s) => s.value), 1);
-  const maxClient = Math.max(...stats.clientsByAmount.map((c) => c.total), 1);
-  const maxMethodValue = Math.max(...stats.methods.map((m) => m.value), 1);
-  const maxMethodCount = Math.max(...stats.methods.map((m) => m.count), 1);
+  const exportCsv = () => {
+    const header = ['number', 'client', 'reference', 'status', 'currency', 'total', 'paid', 'balance', 'exchange_rate', 'total_ngn', 'issued', 'due'];
+    const rows = invoices.map((inv) => [
+      inv.number,
+      inv.client_name,
+      inv.reference,
+      inv.display_status,
+      inv.currency,
+      inv.totals.total,
+      inv.totals.paid,
+      inv.totals.balance,
+      inv.exchange_rate || '',
+      toNaira(inv.totals.total, inv.currency, inv.exchange_rate) ?? '',
+      new Date(inv.issued_at).toISOString().slice(0, 10),
+      new Date(inv.due_at).toISOString().slice(0, 10),
+    ]);
+    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `invoices-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const renderChart = () => {
-    const points = stats.months;
-    if (points.length < 2) return null;
+    const points = stats.series;
     const width = 800;
     const height = 220;
-    const top = 30;
+    const top = 20;
     const bottom = 200;
-    const maxVal = Math.max(...points.map((p) => p.value), 1);
-    const coords = points.map((p, i) => {
-      const x = (i / (points.length - 1)) * width;
-      const y = bottom - (p.value / maxVal) * (bottom - top);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
-    const line = coords.join(' L ');
-    const area = `M0,${bottom} L ${line} L${width},${bottom} Z`;
+    const maxVal = Math.max(...points.map((p) => Math.max(p.invoiced, p.collected)), 1);
+    const path = (key: 'invoiced' | 'collected') =>
+      points
+        .map((p, i) => `${i === 0 ? 'M' : 'L'}${((i / Math.max(1, points.length - 1)) * width).toFixed(1)},${(bottom - (p[key] / maxVal) * (bottom - top)).toFixed(1)}`)
+        .join(' ');
     return (
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="invfill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0a0a0a" stopOpacity="0.12" />
-            <stop offset="100%" stopColor="#0a0a0a" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={area} fill="url(#invfill)" />
-        <path d={`M ${line}`} fill="none" stroke="#0a0a0a" strokeWidth="1.5" />
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="Invoiced and collected per month">
+        <path d={path('invoiced')} fill="none" stroke="#0a0a0a" strokeWidth="1.8" />
+        <path d={path('collected')} fill="none" stroke="#16a34a" strokeWidth="1.8" strokeDasharray="5 4" />
       </svg>
     );
   };
+
+  const maxStatus = Math.max(...stats.byStatus.map((s) => s.value), 1);
+  const maxClient = Math.max(...stats.clientsByAmount.map((c) => c.total), 1);
+  const maxMethod = Math.max(...stats.methods.map((m) => m.value), 1);
+  const maxAgeing = Math.max(...stats.ageing.map((b) => b.value), 1);
 
   return (
     <Shell>
       <div className="page-header">
         <div className="page-title">
-          <span>Analytics</span>
-          <span className="placeholder-veil" style={{ marginLeft: '6px' }}>Invoices</span>
+          <span>Invoice analytics</span>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-outline btn-sm">
+          <button className="btn btn-outline btn-sm" onClick={() => setMonths(months === 12 ? 6 : 12)}>
             <Clock />
-            <span>Last 8 months</span>
-            <ChevronDown />
+            <span>Last {months} months</span>
           </button>
-          <button className="btn btn-outline btn-sm">
+          <button className="btn btn-outline btn-sm" onClick={exportCsv} disabled={!invoices.length}>
             <ExternalLink />
-            <span>Export</span>
+            <span>Export CSV</span>
           </button>
         </div>
       </div>
@@ -183,107 +195,103 @@ export default function InvoiceAnalyticsPage() {
         <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading analytics…</div>
       ) : (
         <>
+          {stats.skipped > 0 && (
+            <div style={{ margin: '0 0 12px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: '12px', background: '#fef3c7', color: '#92400e' }}>
+              {stats.skipped} foreign-currency invoice{stats.skipped === 1 ? ' is' : 's are'} left out because {stats.skipped === 1 ? 'it has' : 'they have'} no exchange
+              rate. Tick “Show NGN equivalent” on {stats.skipped === 1 ? 'it' : 'them'} to include {stats.skipped === 1 ? 'it' : 'them'}.
+            </div>
+          )}
+
           <div className="stat-grid">
             <div className="stat-card">
-              <div className="stat-label"><LinkIcon width="11" height="11" /><span>Total invoices</span></div>
-              <div className="stat-value">{invoices.length}</div>
-              <div className="stat-delta">{stats.clientCount} unique clients</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label"><Globe /><span>Total invoice value</span></div>
-              <div className="stat-value">{fmtMoney(stats.totalValue, 'NGN')}</div>
-              <div className="stat-delta">Summed value across all statuses</div>
+              <div className="stat-label"><LinkIcon width="11" height="11" /><span>Invoiced</span></div>
+              <div className="stat-value">{naira(stats.invoiced)}</div>
+              <div className="stat-delta">{stats.liveCount} invoices · {stats.clients} clients</div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Globe /><span>Collected</span></div>
-              <div className="stat-value">{fmtMoney(stats.collected, 'NGN')}</div>
-              <div className="stat-delta">Payments logged</div>
+              <div className="stat-value">{naira(stats.collected)}</div>
+              <div className="stat-delta">{stats.invoiced ? Math.round((stats.collected / stats.invoiced) * 100) : 0}% of invoiced</div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Clock /><span>Outstanding</span></div>
-              <div className="stat-value">{fmtMoney(stats.outstanding, 'NGN')}</div>
-              <div className="stat-delta">Open balance</div>
+              <div className="stat-value">{naira(stats.outstanding)}</div>
+              <div className="stat-delta">Of which {naira(stats.overdue)} overdue</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label"><Clock /><span>Avg days to payment</span></div>
-              <div className="stat-value" style={{ fontSize: '18px' }}>
-                {stats.avgDays ? `${stats.avgDays.toFixed(1)} days` : '—'}
-              </div>
-              <div className="stat-delta">
-                {stats.fastest ? `Fastest ${stats.fastest.toFixed(0)}d · Slowest ${stats.slowest.toFixed(0)}d` : 'No payments yet'}
-              </div>
+              <div className="stat-label"><Clock /><span>Avg. days to get paid</span></div>
+              <div className="stat-value" style={{ fontSize: '18px' }}>{stats.avgDays === null ? '—' : `${stats.avgDays.toFixed(0)} days`}</div>
+              <div className="stat-delta">From invoice date to final payment</div>
             </div>
           </div>
 
           <div className="chart-card">
             <div className="chart-header">
-              <div className="chart-title">Invoices processed month on month</div>
-              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>Value invoiced</div>
+              <div className="chart-title">Invoiced vs collected, per month (₦)</div>
+              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', display: 'flex', gap: 12 }}>
+                <span>━ Invoiced</span>
+                <span style={{ color: '#16a34a' }}>┅ Collected</span>
+              </div>
             </div>
             <div className="chart-placeholder">{renderChart()}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--muted-foreground)', marginTop: '6px' }}>
-              {stats.months.map((m, i) => (
-                <span key={`${m.label}-${i}`}>{m.label}</span>
+              {stats.series.map((m) => (
+                <span key={m.key} title={`Invoiced ${naira(m.invoiced)} · Collected ${naira(m.collected)}`}>{m.label}</span>
               ))}
             </div>
           </div>
 
           <div className="split">
             <div className="split-card">
-              <h4><span>Invoices by status</span><span className="placeholder-veil">{invoices.length} total</span></h4>
+              <h4><span>Receivables ageing</span><span className="placeholder-veil">Unpaid balances</span></h4>
+              {stats.ageing.map((b) => (
+                <div className="bar-row" key={b.id}>
+                  <div />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{b.label}</div>
+                    <div className="bar-track" style={{ marginTop: '4px' }}>
+                      <div className="bar-fill" style={{ width: pctWidth(b.value, maxAgeing), background: b.id === 'current' ? undefined : '#b91c1c' }} />
+                    </div>
+                  </div>
+                  <div className="bar-count">{naira(b.value)}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="split-card">
+              <h4><span>By status</span><span className="placeholder-veil">{invoices.length} total</span></h4>
               {stats.byStatus.map((s) => (
                 <div className="bar-row" key={s.id}>
                   <div />
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span className={`inv-status ${STATUS_META[s.id].cls}`}>
-                        <span className="inv-status-dot" />
-                        {s.label}
-                      </span>
-                    </div>
+                    <span className={`inv-status ${STATUS_META[s.id].cls}`}>
+                      <span className="inv-status-dot" />
+                      {s.label} · {s.count}
+                    </span>
                     <div className="bar-track" style={{ marginTop: '4px' }}>
                       <div className="bar-fill" style={{ width: pctWidth(s.value, maxStatus) }} />
                     </div>
                   </div>
-                  <div className="bar-count">{s.count}</div>
+                  <div className="bar-count">{naira(s.value)}</div>
                 </div>
               ))}
             </div>
 
             <div className="split-card">
-              <h4><span>Payment methods by value</span><span className="placeholder-veil">Payments</span></h4>
+              <h4><span>Payment methods</span><span className="placeholder-veil">By value</span></h4>
               {stats.methods.length === 0 && (
-                <div className="bar-row"><div /><div style={{ color: 'var(--muted-foreground)' }}>No payments logged</div><div /></div>
-              )}
-              {stats.methods.map((m) => (
-                <div className="bar-row" key={m.name}>
-                  <div>💳</div>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{m.name}</div>
-                    <div className="bar-track" style={{ marginTop: '4px' }}>
-                      <div className="bar-fill" style={{ width: pctWidth(m.value, maxMethodValue) }} />
-                    </div>
-                  </div>
-                  <div className="bar-count">{fmtMoney(m.value, 'NGN')}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="split-card">
-              <h4><span>Payment methods by count</span><span className="placeholder-veil">Payments</span></h4>
-              {stats.methods.length === 0 && (
-                <div className="bar-row"><div /><div style={{ color: 'var(--muted-foreground)' }}>No payments logged</div><div /></div>
+                <div className="bar-row"><div /><div style={{ color: 'var(--muted-foreground)' }}>No payments logged yet</div><div /></div>
               )}
               {stats.methods.map((m) => (
                 <div className="bar-row" key={m.name}>
                   <div />
                   <div>
-                    <div style={{ fontWeight: 500 }}>{m.name}</div>
+                    <div style={{ fontWeight: 500 }}>{m.name} · {m.count}</div>
                     <div className="bar-track" style={{ marginTop: '4px' }}>
-                      <div className="bar-fill" style={{ width: pctWidth(m.count, maxMethodCount) }} />
+                      <div className="bar-fill" style={{ width: pctWidth(m.value, maxMethod) }} />
                     </div>
                   </div>
-                  <div className="bar-count">{m.count}</div>
+                  <div className="bar-count">{naira(m.value)}</div>
                 </div>
               ))}
             </div>
@@ -291,67 +299,31 @@ export default function InvoiceAnalyticsPage() {
 
           <div className="split" style={{ gridTemplateColumns: '1fr' }}>
             <div className="split-card">
-              <h4><span>Client by invoice amount</span><span className="placeholder-veil">Top {stats.clientsByAmount.length}</span></h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                <div>
-                  {stats.clientsByAmount.map((c) => (
-                    <div className="bar-row" key={c.name}>
-                      <div />
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{c.name}</div>
-                        <div className="bar-track" style={{ marginTop: '4px' }}>
-                          <div className="bar-fill" style={{ width: pctWidth(c.total, maxClient) }} />
-                        </div>
-                      </div>
-                      <div className="bar-count">{fmtMoney(c.total, 'NGN')}</div>
+              <h4><span>Top clients</span><span className="placeholder-veil">Invoiced, with balance still due</span></h4>
+              {stats.clientsByAmount.length === 0 && (
+                <div className="bar-row"><div /><div style={{ color: 'var(--muted-foreground)' }}>No sent invoices yet</div><div /></div>
+              )}
+              {stats.clientsByAmount.map((c) => (
+                <div className="bar-row" key={c.name}>
+                  <div />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>
+                      {c.name} <span style={{ color: 'var(--muted-foreground)', fontWeight: 400 }}>· {c.count} invoice{c.count === 1 ? '' : 's'}{c.balance > 0 ? ` · ${naira(c.balance)} due` : ''}</span>
                     </div>
-                  ))}
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', fontWeight: 500 }}>
-                    Distribution of statuses per client
+                    <div className="bar-track" style={{ marginTop: '4px' }}>
+                      <div className="bar-fill" style={{ width: pctWidth(c.total, maxClient) }} />
+                    </div>
                   </div>
-                  {stats.clientsByAmount.map((c) => (
-                    <div className="bar-row" key={`${c.name}-mix`} style={{ gridTemplateColumns: '1fr auto' }}>
-                      <div style={{ fontWeight: 500 }}>{c.name}</div>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        {Object.entries(c.statuses).map(([status, count]) => (
-                          <span key={status} className={`inv-status ${STATUS_META[status as InvoiceStatus]?.cls ?? 'inv-status-draft'}`}>
-                            <span className="inv-status-dot" />
-                            {count}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                  <div className="bar-count">{naira(c.total)}</div>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
 
-          {stats.lastInvoice && (
-            <div className="split" style={{ gridTemplateColumns: '1fr' }}>
-              <div className="split-card">
-                <h4><span>Latest invoice</span><span className="placeholder-veil">Activity</span></h4>
-                <div className="bar-row" style={{ gridTemplateColumns: '1fr auto auto' }}>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{stats.lastInvoice.number} · {stats.lastInvoice.client_name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--muted-foreground)' }}>
-                      Issued {formatDay(stats.lastInvoice.issued_at)} · Due {formatDay(stats.lastInvoice.due_at)}
-                    </div>
-                  </div>
-                  <span className={`inv-status ${STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.cls ?? 'inv-status-draft'}`}>
-                    <span className="inv-status-dot" />
-                    {STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.label ?? 'Draft'}
-                  </span>
-                  <div className="bar-count">
-                    {CURRENCY_SYMBOLS[stats.lastInvoice.currency] ?? ''}
-                    {computeTotals(stats.lastInvoice as never).grand.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', margin: '8px 0 24px' }}>
+            Drafts and cancelled invoices are excluded from the totals. Foreign amounts are converted at each invoice’s own
+            exchange rate.
+          </div>
         </>
       )}
     </Shell>

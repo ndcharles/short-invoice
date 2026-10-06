@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
 import {
   Code,
@@ -14,12 +14,13 @@ import {
 import { Edit, Plus, Trash, Upload } from '@/components/icons';
 import { useSettingsForm } from '@/lib/settings-form';
 import { useCollections } from '@/lib/collections';
-import { newId, parseList, serializeList, toggleListValue } from '@/lib/settings-json';
+import { newId, parseList, serializeList } from '@/lib/settings-json';
+import { readImageFile } from '@/lib/image-file';
+import { CURRENCIES, CURRENCY_SYMBOLS, currencyCode, formatInvoiceNumber } from '@/lib/invoices';
 
 interface Account {
   id: string;
   title: string;
-  symbol: string;
   currency: string;
   bank: string;
   accountName: string;
@@ -28,15 +29,14 @@ interface Account {
   extraValue: string;
 }
 
-const EXTRA_LABELS = ['Sort code / Branch', 'Routing / SWIFT', 'IBAN / BIC', 'BSB / Branch'];
-
 interface Method {
   id: string;
   name: string;
-  uses: number;
   enabled: boolean;
 }
 
+const EXTRA_LABELS = ['Sort code / Branch', 'SWIFT / BIC', 'Routing number', 'IBAN', 'BSB / Branch'];
+const TERMS = ['Due on receipt', 'Net 7', 'Net 14', 'Net 30', 'Net 45', 'Net 60'];
 const TAGLINE_COLORS = [
   { value: '#1d4ed8', title: 'Blue' },
   { value: '#0f172a', title: 'Slate' },
@@ -44,624 +44,365 @@ const TAGLINE_COLORS = [
   { value: '#9a3412', title: 'Orange' },
   { value: '#7c2d12', title: 'Brown' },
 ];
+const CURRENCY_LABELS = CURRENCIES.map((c) => `${c.code} (${c.symbol})`);
 
 export default function InvoiceSettingsPage() {
   const { draft, set, dirty, saving, error, savedAt, save, discard } = useSettingsForm();
   const [editingAccount, setEditingAccount] = useState<string | null>(null);
-  const [editingMethod, setEditingMethod] = useState<string | null>(null);
-  const [addingCurrency, setAddingCurrency] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const { items: folders } = useCollections('folders');
   const { items: tags } = useCollections('tags');
-  const [newCurrency, setNewCurrency] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const accounts = parseList<Account>(draft?.inv_accounts, []);
   const methods = parseList<Method>(draft?.inv_methods, []);
-  const enabledCurrencies = parseList<string>(draft?.inv_enabled_currencies, []);
-  const currencyOptions = Array.from(
-    new Set([
-      ...parseList<string>(draft?.inv_currency_options, []),
-      ...enabledCurrencies,
-      draft?.inv_default_currency ?? 'NGN (₦)',
-    ])
-  );
-
   const setAccounts = (list: Account[]) => set('inv_accounts', serializeList(list));
-  const setMethods = (list: Method[]) => set('inv_methods', serializeList(list));
-  const updateAccount = (id: string, patch: Partial<Account>) =>
-    setAccounts(accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  const setMethods = (list: Method[]) => set('inv_methods', serializeList(list.map(({ id, name, enabled }) => ({ id, name, enabled }))));
+  const updateAccount = (id: string, patch: Partial<Account>) => setAccounts(accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)));
 
-  const taxRate = draft?.inv_tax_rate ?? '7.5';
-  const padding = Number(draft?.inv_number_padding ?? 6);
-  const nextNumber = draft?.inv_next_number ?? '435431';
-  const numberPreview = `${draft?.inv_number_prefix ?? 'INV-'}${nextNumber.padStart(
-    Number.isFinite(padding) ? padding : 6,
-    '0'
-  )}`;
+  const defaultCurrency = currencyCode(draft?.inv_default_currency);
+  const numberPreview = formatInvoiceNumber(
+    draft?.inv_number_prefix ?? '',
+    Number(draft?.inv_number_padding) || 6,
+    Number(draft?.inv_next_number) || 1
+  );
 
   return (
     <Shell>
-      <SettingsLayout
-        title="Invoice"
-        subtitle="Company profile, currencies, payment accounts, and every invoice default."
-      >
+      <SettingsLayout title="Invoice" subtitle="What prints on every invoice, and the defaults for new ones.">
         {!draft ? (
           <div className="settings-card">
             <div className="settings-card-body" style={{ color: 'var(--muted-foreground)' }}>
-              Loading settings…
+              {error ?? 'Loading settings…'}
             </div>
           </div>
         ) : (
           <>
-            {error && (
+            {(error || fileError) && (
               <div className="settings-card">
-                <div className="settings-card-body" style={{ color: 'var(--destructive)' }}>{error}</div>
+                <div className="settings-card-body" style={{ color: 'var(--destructive)' }}>{error ?? fileError}</div>
               </div>
             )}
 
-            <SettingsCard title="Company profile" subtitle='Shown as the "Pay To" party on every invoice you issue.'>
+            <SettingsCard title="Company profile" subtitle="The “from” details at the top of every invoice and receipt.">
               <SettingsRow label="Legal name">
-                <input
-                  className="input"
-                  value={draft.inv_legal_name ?? ''}
-                  onChange={(e) => set('inv_legal_name', e.target.value)}
-                />
+                <input className="input" maxLength={120} value={draft.inv_legal_name ?? ''} onChange={(e) => set('inv_legal_name', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Tax ID (TIN)">
-                <input
-                  className="input"
-                  value={draft.inv_tax_id ?? ''}
-                  onChange={(e) => set('inv_tax_id', e.target.value)}
-                />
+              <SettingsRow label="Tax ID (TIN)" help="Printed as “TIN: …”. Leave empty to hide.">
+                <input className="input" maxLength={40} value={draft.inv_tax_id ?? ''} onChange={(e) => set('inv_tax_id', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Registered address">
-                <input
-                  className="input"
-                  value={draft.inv_address_1 ?? ''}
-                  onChange={(e) => set('inv_address_1', e.target.value)}
-                />
-                <input
-                  className="input"
-                  value={draft.inv_address_2 ?? ''}
-                  onChange={(e) => set('inv_address_2', e.target.value)}
-                />
+              <SettingsRow label="Address">
+                <input className="input" placeholder="Street" maxLength={120} value={draft.inv_address_1 ?? ''} onChange={(e) => set('inv_address_1', e.target.value)} />
+                <input className="input" placeholder="City, State" maxLength={120} value={draft.inv_address_2 ?? ''} onChange={(e) => set('inv_address_2', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Contact email" help="Replies to invoice emails go here.">
-                <input
-                  className="input"
-                  type="email"
-                  value={draft.inv_contact_email ?? ''}
-                  onChange={(e) => set('inv_contact_email', e.target.value)}
-                />
+              <SettingsRow label="Billing email" help="Shown on the invoice; clients reply here.">
+                <input className="input" type="email" value={draft.inv_contact_email ?? ''} onChange={(e) => set('inv_contact_email', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Company logo" help="Shown top-left of every invoice and receipt. 512×512 PNG or SVG.">
+              <SettingsRow label="Logo" help="PNG, JPEG, WebP or SVG under 300 KB. Shown top-left on invoices.">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div
-                    className="inv-logo-slot"
-                    style={{ width: '120px', height: '44px', overflow: 'hidden' }}
-                    title="Company logo"
-                  >
+                  <div className="inv-logo-slot" style={{ width: '120px', height: '44px', overflow: 'hidden' }}>
                     {draft.inv_logo ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={draft.inv_logo} alt="" style={{ maxWidth: '100%', maxHeight: '100%' }} />
                     ) : (
-                      'Upload logo'
+                      'No logo'
                     )}
                   </div>
-                  <button className="btn btn-outline btn-sm" disabled title="Uploads are not available in this build">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (file) readImageFile(file, (url) => { setFileError(null); set('inv_logo', url); }, setFileError);
+                    }}
+                  />
+                  <button className="btn btn-outline btn-sm" onClick={() => fileRef.current?.click()}>
                     <Upload />
                     <span>Upload</span>
                   </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--muted-foreground)' }}
-                    onClick={() => set('inv_logo', '')}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </SettingsRow>
-            </SettingsCard>
-
-            <SettingsCard
-              title="Currencies"
-              subtitle="Currencies available in the invoice canvas and the Log Payment popup."
-            >
-              <SettingsRow label="Default currency" help="Used for new invoices unless overridden.">
-                <SettingSelect
-                  value={draft.inv_default_currency ?? 'NGN (₦)'}
-                  onChange={(v) => set('inv_default_currency', v)}
-                  options={currencyOptions}
-                />
-              </SettingsRow>
-
-              <SettingsRow
-                label="Enabled currencies"
-                help="Turn on any currency you want to invoice in. Custom currencies can be added at the end."
-              >
-                <div className="setting-toggle-list">
-                  {currencyOptions.map((currency) => (
-                    <button
-                      key={currency}
-                      className={`setting-chip${enabledCurrencies.includes(currency) ? ' on' : ''}`}
-                      onClick={() =>
-                        set('inv_enabled_currencies', toggleListValue(draft.inv_enabled_currencies ?? '[]', currency))
-                      }
-                    >
-                      <span>{currency}</span>
-                      <span className="x">{enabledCurrencies.includes(currency) ? '×' : '+'}</span>
-                    </button>
-                  ))}
-                  {addingCurrency ? (
-                    <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                      <input
-                        className="input"
-                        autoFocus
-                        style={{ width: '140px' }}
-                        placeholder="e.g. CAD (C$)"
-                        value={newCurrency}
-                        onChange={(e) => setNewCurrency(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
-                            setAddingCurrency(false);
-                            setNewCurrency('');
-                          }
-                          if (e.key === 'Enter' && newCurrency.trim()) {
-                            set(
-                              'inv_currency_options',
-                              serializeList([...currencyOptions, newCurrency.trim()])
-                            );
-                            set('inv_enabled_currencies', toggleListValue(draft.inv_enabled_currencies ?? '[]', newCurrency.trim()));
-                            setNewCurrency('');
-                            setAddingCurrency(false);
-                          }
-                        }}
-                      />
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => {
-                          if (!newCurrency.trim()) return;
-                          set('inv_currency_options', serializeList([...currencyOptions, newCurrency.trim()]));
-                          set('inv_enabled_currencies', toggleListValue(draft.inv_enabled_currencies ?? '[]', newCurrency.trim()));
-                          setNewCurrency('');
-                          setAddingCurrency(false);
-                        }}
-                      >
-                        Add
-                      </button>
-                    </span>
-                  ) : (
-                    <button className="setting-chip" onClick={() => setAddingCurrency(true)}>
-                      <Plus />
-                      <span>Add currency</span>
+                  {draft.inv_logo && (
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--muted-foreground)' }} onClick={() => set('inv_logo', '')}>
+                      Remove
                     </button>
                   )}
                 </div>
               </SettingsRow>
+            </SettingsCard>
 
+            <SettingsCard title="Currency & tax" subtitle="Defaults for new invoices; each invoice can change them.">
+              <SettingsRow label="Default currency">
+                <SettingSelect
+                  value={`${defaultCurrency} (${CURRENCY_SYMBOLS[defaultCurrency]})`}
+                  onChange={(v) => set('inv_default_currency', v.slice(0, 3))}
+                  options={CURRENCY_LABELS}
+                  maxWidth={200}
+                />
+              </SettingsRow>
               <SettingsRow
-                label="Tax rate"
-                help="Applied to the subtotal on every new invoice. Individual line items can still override."
+                label="Exchange rate"
+                help="Pre-filled when you tick “Show USD equivalent” on an invoice, for clients outside Nigeria. Update it as the rate moves."
               >
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '200px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '260px' }}>
+                  <span style={{ color: 'var(--muted-foreground)' }}>₦</span>
                   <input
                     className="input"
+                    inputMode="decimal"
                     style={{ textAlign: 'right' }}
-                    value={taxRate}
-                    onChange={(e) => set('inv_tax_rate', e.target.value)}
+                    value={draft.inv_usd_rate ?? ''}
+                    onChange={(e) => set('inv_usd_rate', e.target.value.replace(/[^0-9.]/g, ''))}
                   />
-                  <span style={{ color: 'var(--muted-foreground)', fontSize: '13px' }}>%</span>
+                  <span style={{ color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>= $1</span>
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', marginTop: '4px' }}>
-                  Label shown on invoice: <strong style={{ color: 'var(--foreground)' }}>Tax ({taxRate}%)</strong>
+              </SettingsRow>
+              <SettingsRow label="VAT rate" help="Nigeria’s standard VAT is 7.5%. Set 0 if you are not VAT-registered.">
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '160px' }}>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    style={{ textAlign: 'right' }}
+                    value={draft.inv_tax_rate ?? ''}
+                    onChange={(e) => set('inv_tax_rate', e.target.value.replace(/[^0-9.]/g, ''))}
+                  />
+                  <span style={{ color: 'var(--muted-foreground)' }}>%</span>
                 </div>
               </SettingsRow>
             </SettingsCard>
 
+            <SettingsCard title="Numbering & terms">
+              <SettingsRow label="Invoice number" help={<>Next invoice: <Code>{numberPreview}</Code></>}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 1fr', gap: '8px', maxWidth: '420px' }}>
+                  <div className="setting-field">
+                    <label>Prefix</label>
+                    <input className="input" maxLength={12} value={draft.inv_number_prefix ?? ''} onChange={(e) => set('inv_number_prefix', e.target.value.replace(/[^A-Za-z0-9/_.-]/g, ''))} />
+                  </div>
+                  <div className="setting-field">
+                    <label>Digits</label>
+                    <input className="input" style={{ textAlign: 'right' }} value={draft.inv_number_padding ?? '6'} onChange={(e) => set('inv_number_padding', e.target.value.replace(/[^0-9]/g, '').slice(0, 2))} />
+                  </div>
+                  <div className="setting-field">
+                    <label>Next number</label>
+                    <input className="input" style={{ textAlign: 'right' }} value={draft.inv_next_number ?? ''} onChange={(e) => set('inv_next_number', e.target.value.replace(/[^0-9]/g, ''))} />
+                  </div>
+                </div>
+              </SettingsRow>
+              <SettingsRow label="Default due date" help="Sets the due date on new invoices.">
+                <SettingSelect value={draft.inv_payment_terms ?? 'Net 30'} onChange={(v) => set('inv_payment_terms', v)} options={TERMS} maxWidth={200} />
+              </SettingsRow>
+              <SettingsRow label="Payment terms text" help="Pre-filled in the Payment terms box of new invoices.">
+                <textarea className="input" style={{ minHeight: '70px' }} maxLength={2000} value={draft.inv_terms_note ?? ''} onChange={(e) => set('inv_terms_note', e.target.value)} />
+              </SettingsRow>
+            </SettingsCard>
+
             <SettingsCard
-              title="Payment accounts"
-              subtitle='Bank accounts shown in the "Payment Information" section of every invoice. Pick a currency per account.'
+              title="Bank accounts"
+              subtitle="Printed under “Payment information”. Each invoice shows the accounts in its currency (plus USD when the USD equivalent is on)."
             >
               <div className="setting-list">
                 {accounts.map((account) => (
-                  <div className="setting-list-row account-row" key={account.id} style={{ alignItems: 'start' }}>
+                  <div className="setting-list-row account-row" key={account.id} style={{ alignItems: 'start', gridTemplateColumns: '28px minmax(0,1fr) auto' }}>
                     <div className="inv-account-flag" style={{ background: 'var(--foreground)' }}>
-                      {account.symbol}
+                      {CURRENCY_SYMBOLS[account.currency] ?? account.currency}
                     </div>
-
                     {editingAccount === account.id ? (
                       <div style={{ display: 'grid', gap: '8px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                           <div className="setting-field">
-                            <label>Title</label>
-                            <input
-                              className="input"
-                              value={account.title}
-                              placeholder="Naira account"
-                              onChange={(e) => updateAccount(account.id, { title: e.target.value })}
-                            />
-                          </div>
-                          <div className="setting-field">
-                            <label>Bank</label>
-                            <input
-                              className="input"
-                              value={account.bank}
-                              placeholder="Guaranty Trust Bank"
-                              onChange={(e) => updateAccount(account.id, { bank: e.target.value })}
-                            />
-                          </div>
-                          <div className="setting-field">
-                            <label>Account name</label>
-                            <input
-                              className="input"
-                              value={account.accountName}
-                              onChange={(e) => updateAccount(account.id, { accountName: e.target.value })}
-                            />
-                          </div>
-                          <div className="setting-field">
-                            <label>Account number</label>
-                            <input
-                              className="input"
-                              value={account.accountNumber}
-                              onChange={(e) => updateAccount(account.id, { accountNumber: e.target.value })}
-                            />
-                          </div>
-                          <div className="setting-field">
-                            <label>Fourth field</label>
-                            <SettingSelect
-                              value={account.extraLabel}
-                              onChange={(v) => updateAccount(account.id, { extraLabel: v })}
-                              options={EXTRA_LABELS}
-                            />
-                          </div>
-                          <div className="setting-field">
-                            <label>{account.extraLabel}</label>
-                            <input
-                              className="input"
-                              value={account.extraValue}
-                              onChange={(e) => updateAccount(account.id, { extraValue: e.target.value })}
-                            />
+                            <label>Label</label>
+                            <input className="input" placeholder="Naira account" value={account.title} onChange={(e) => updateAccount(account.id, { title: e.target.value })} />
                           </div>
                           <div className="setting-field">
                             <label>Currency</label>
-                            <SettingSelect
-                              value={account.currency}
-                              onChange={(v) => updateAccount(account.id, { currency: v })}
-                              options={['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'ZAR', 'KES']}
-                            />
+                            <SettingSelect value={account.currency} onChange={(v) => updateAccount(account.id, { currency: v })} options={CURRENCIES.map((c) => c.code)} />
                           </div>
                           <div className="setting-field">
-                            <label>Symbol</label>
-                            <input
-                              className="input"
-                              style={{ maxWidth: '90px' }}
-                              maxLength={3}
-                              value={account.symbol}
-                              onChange={(e) => updateAccount(account.id, { symbol: e.target.value })}
-                            />
+                            <label>Bank</label>
+                            <input className="input" placeholder="Bank name" value={account.bank} onChange={(e) => updateAccount(account.id, { bank: e.target.value })} />
+                          </div>
+                          <div className="setting-field">
+                            <label>Account name</label>
+                            <input className="input" value={account.accountName} onChange={(e) => updateAccount(account.id, { accountName: e.target.value })} />
+                          </div>
+                          <div className="setting-field">
+                            <label>Account number</label>
+                            <input className="input" value={account.accountNumber} onChange={(e) => updateAccount(account.id, { accountNumber: e.target.value })} />
+                          </div>
+                          <div className="setting-field">
+                            <label>
+                              <select
+                                value={account.extraLabel || EXTRA_LABELS[0]}
+                                onChange={(e) => updateAccount(account.id, { extraLabel: e.target.value })}
+                                style={{ border: 'none', background: 'transparent', font: 'inherit', fontWeight: 500, padding: 0 }}
+                                aria-label="Extra detail type"
+                              >
+                                {Array.from(new Set([...EXTRA_LABELS, account.extraLabel].filter(Boolean))).map((l) => (
+                                  <option key={l}>{l}</option>
+                                ))}
+                              </select>{' '}
+                              (optional)
+                            </label>
+                            <input className="input" value={account.extraValue} onChange={(e) => updateAccount(account.id, { extraValue: e.target.value })} />
                           </div>
                         </div>
-                        <button className="btn btn-primary btn-sm" onClick={() => setEditingAccount(null)}>
+                        <button className="btn btn-primary btn-sm" style={{ justifySelf: 'start' }} onClick={() => setEditingAccount(null)}>
                           Done
                         </button>
                       </div>
                     ) : (
                       <div>
-                        <div className="primary">{account.title}</div>
+                        <div className="primary">{account.title || `${account.currency} account`}</div>
                         <div className="secondary">
-                          {account.bank} · {account.accountName} · {account.accountNumber} · {account.extraLabel}: {account.extraValue}
+                          {[account.bank, account.accountName, account.accountNumber, account.extraValue ? `${account.extraLabel}: ${account.extraValue}` : '']
+                            .filter(Boolean)
+                            .join(' · ') || 'No details yet'}
                         </div>
                       </div>
                     )}
-
-                    <div className="setting-select" style={{ minWidth: '110px', maxWidth: '110px' }}>
-                      <select
-                        value={account.currency}
-                        onChange={(e) => updateAccount(account.id, { currency: e.target.value })}
-                        disabled={editingAccount === account.id}
-                      >
-                        {['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'ZAR', 'KES'].map((code) => (
-                          <option key={code} value={code}>
-                            {code}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="chev">▾</span>
-                    </div>
-
                     <div className="row-actions">
-                      <button
-                        className="icon-btn"
-                        title="Edit account"
-                        onClick={() => setEditingAccount(editingAccount === account.id ? null : account.id)}
-                      >
+                      <button className="icon-btn" title="Edit account" onClick={() => setEditingAccount(editingAccount === account.id ? null : account.id)}>
                         <Edit />
                       </button>
                       <button
                         className="icon-btn"
                         title="Delete account"
                         style={{ color: 'var(--destructive)' }}
-                        onClick={() => setAccounts(accounts.filter((a) => a.id !== account.id))}
+                        onClick={() => confirm(`Remove ${account.title || 'this account'}?`) && setAccounts(accounts.filter((a) => a.id !== account.id))}
                       >
                         <Trash />
                       </button>
                     </div>
                   </div>
                 ))}
-
                 <div
                   className="setting-list-row dashed"
                   role="button"
                   tabIndex={0}
-                  onClick={() =>
-                    setAccounts([
-                      ...accounts,
-                      {
-                        id: newId('acc'),
-                        title: 'New account',
-                        symbol: '₦',
-                        currency: 'NGN',
-                        bank: '',
-                        accountName: '',
-                        accountNumber: '',
-                        extraLabel: 'Sort code / Branch',
-                        extraValue: '',
-                      },
-                    ])
-                  }
+                  onClick={() => {
+                    const account: Account = {
+                      id: newId('acc'),
+                      title: '',
+                      currency: defaultCurrency,
+                      bank: '',
+                      accountName: draft.inv_legal_name ?? '',
+                      accountNumber: '',
+                      extraLabel: EXTRA_LABELS[0],
+                      extraValue: '',
+                    };
+                    setAccounts([...accounts, account]);
+                    setEditingAccount(account.id);
+                  }}
                 >
                   <Plus />
-                  <span style={{ marginLeft: '6px' }}>Add payment account</span>
+                  <span style={{ marginLeft: '6px' }}>Add bank account</span>
                 </div>
               </div>
             </SettingsCard>
 
-            <SettingsCard
-              title="Payment methods"
-              subtitle="Which methods appear in the Log Payment dropdown. Toggle on to enable."
-            >
+            <SettingsCard title="Payment methods" subtitle="Choices in the Log payment form. Switch off the ones you don’t use.">
               <div className="setting-list">
                 {methods.map((method) => (
-                  <div className="setting-list-row method-row" key={method.id}>
-                    <span
-                      className="favicon"
-                      style={{ width: '24px', height: '24px', background: 'var(--muted-2)', border: '1px solid var(--border)' }}
+                  <div className="setting-list-row method-row" key={method.id} style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}>
+                    <input
+                      className="input"
+                      aria-label="Method name"
+                      maxLength={60}
+                      value={method.name}
+                      onChange={(e) => setMethods(methods.map((m) => (m.id === method.id ? { ...m, name: e.target.value } : m)))}
+                      style={{ maxWidth: 280 }}
                     />
-                    {editingMethod === method.id ? (
-                      <input
-                        className="input"
-                        value={method.name}
-                        autoFocus
-                        onChange={(e) =>
-                          setMethods(methods.map((m) => (m.id === method.id ? { ...m, name: e.target.value } : m)))
-                        }
-                        onBlur={() => setEditingMethod(null)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') setEditingMethod(null);
-                        }}
-                      />
-                    ) : (
-                      <div
-                        className="primary"
-                        style={{ cursor: 'text' }}
-                        title="Click to rename"
-                        onClick={() => setEditingMethod(method.id)}
-                      >
-                        {method.name}
-                      </div>
-                    )}
-                    <span className="secondary">{method.uses} uses</span>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                      <button
-                        className="icon-btn"
-                        title="Delete method"
-                        style={{ color: 'var(--destructive)' }}
-                        onClick={() => setMethods(methods.filter((m) => m.id !== method.id))}
-                      >
+                      <SettingToggle on={method.enabled !== false} onToggle={() => setMethods(methods.map((m) => (m.id === method.id ? { ...m, enabled: m.enabled === false } : m)))} />
+                      <button className="icon-btn" title="Delete method" style={{ color: 'var(--destructive)' }} onClick={() => setMethods(methods.filter((m) => m.id !== method.id))}>
                         <Trash />
                       </button>
-                      <SettingToggle
-                        on={method.enabled}
-                        onToggle={() =>
-                          setMethods(
-                            methods.map((m) => (m.id === method.id ? { ...m, enabled: !m.enabled } : m))
-                          )
-                        }
-                      />
                     </div>
                   </div>
                 ))}
-
-                <div
-                  className="setting-list-row dashed"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() =>
-                    setMethods([...methods, { id: newId('mth'), name: 'New method', uses: 0, enabled: true }])
-                  }
-                >
+                <div className="setting-list-row dashed" role="button" tabIndex={0} onClick={() => setMethods([...methods, { id: newId('mth'), name: 'New method', enabled: true }])}>
                   <Plus />
-                  <span style={{ marginLeft: '6px' }}>Add custom method</span>
+                  <span style={{ marginLeft: '6px' }}>Add method</span>
                 </div>
               </div>
             </SettingsCard>
 
-            <SettingsCard title="Organisation" subtitle="Where new invoices land and how they are labelled.">
-              <SettingsRow label="Default folder" help="Choose None to use the module default.">
+            <SettingsCard title="Organisation" subtitle="Where new invoices land.">
+              <SettingsRow label="Default folder">
                 <SettingSelect
-                  value={draft.inv_default_folder ?? 'None'}
+                  value={draft.inv_default_folder && draft.inv_default_folder !== 'None' ? draft.inv_default_folder : 'Invoices'}
                   onChange={(v) => set('inv_default_folder', v)}
-                  options={['None', ...(folders.length ? folders.map((f) => f.name) : ['Invoices'])]}
+                  options={folders.length ? folders.map((f) => f.name) : ['Invoices']}
                 />
               </SettingsRow>
-              <SettingsRow label="Default tag" help="Applied to every new invoice. Choose None for no tag.">
-                <SettingSelect
-                  value={draft.inv_default_tag ?? 'None'}
-                  onChange={(v) => set('inv_default_tag', v)}
-                  options={['None', ...(tags.length ? tags.map((t) => t.name) : [])]}
-                />
+              <SettingsRow label="Default tag">
+                <SettingSelect value={draft.inv_default_tag ?? 'None'} onChange={(v) => set('inv_default_tag', v)} options={['None', ...tags.map((t) => t.name)]} />
               </SettingsRow>
             </SettingsCard>
 
-            <SettingsCard title="Payment terms & numbering" subtitle="Defaults for every new invoice.">
-              <SettingsRow label="Default payment terms" help="Sets the due date on new invoices (Net = days after issue).">
-                <SettingSelect
-                  value={draft.inv_payment_terms ?? 'Net 30'}
-                  onChange={(v) => set('inv_payment_terms', v)}
-                  options={['Net 14', 'Net 30', 'Net 45', 'Net 60', 'Due on receipt', 'Custom']}
-                />
-              </SettingsRow>
-              <SettingsRow
-                label="Terms note"
-                help="Free-text block appended to the Payment Terms section on the invoice."
-              >
-                <textarea
-                  className="input"
-                  style={{ minHeight: '70px' }}
-                  value={draft.inv_terms_note ?? ''}
-                  onChange={(e) => set('inv_terms_note', e.target.value)}
-                />
-              </SettingsRow>
-              <SettingsRow
-                label="Invoice number format"
-                help={
-                  <>
-                    Preview: <Code>{numberPreview}</Code>. Prefix + sequential number, zero-padded.
-                  </>
-                }
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 1fr', gap: '8px', maxWidth: '420px' }}>
-                  <div className="setting-field">
-                    <label>Prefix</label>
-                    <input
-                      className="input"
-                      value={draft.inv_number_prefix ?? 'INV-'}
-                      onChange={(e) => set('inv_number_prefix', e.target.value)}
-                    />
-                  </div>
-                  <div className="setting-field">
-                    <label>Padding</label>
-                    <input
-                      className="input"
-                      style={{ textAlign: 'right' }}
-                      value={draft.inv_number_padding ?? '6'}
-                      onChange={(e) => set('inv_number_padding', e.target.value.replace(/[^0-9]/g, ''))}
-                    />
-                  </div>
-                  <div className="setting-field">
-                    <label>Next number</label>
-                    <input
-                      className="input"
-                      style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-                      value={draft.inv_next_number ?? ''}
-                      onChange={(e) => set('inv_next_number', e.target.value.replace(/[^0-9]/g, ''))}
-                    />
-                  </div>
-                </div>
-              </SettingsRow>
-            </SettingsCard>
-
-            <SettingsCard
-              title="Invoice tagline strip"
-              subtitle="A branded strip that appears at the bottom of every invoice and receipt."
-            >
-              <SettingsRow label="Show tagline strip">
+            <SettingsCard title="Footer strip" subtitle="A coloured line of text at the bottom of every invoice and receipt.">
+              <SettingsRow label="Show strip">
                 <SettingToggle
                   on={draft.inv_tagline_on === 'true'}
                   onToggle={() => set('inv_tagline_on', draft.inv_tagline_on === 'true' ? 'false' : 'true')}
                   label={draft.inv_tagline_on === 'true' ? 'On' : 'Off'}
                 />
               </SettingsRow>
-              <SettingsRow label="Tagline text">
-                <input
-                  className="input"
-                  value={draft.inv_tagline_text ?? ''}
-                  onChange={(e) => set('inv_tagline_text', e.target.value)}
-                />
-              </SettingsRow>
-              <SettingsRow label="Background colour">
-                <div className="setting-toggle-list">
-                  {TAGLINE_COLORS.map((color) => (
-                    <button
-                      key={color.value}
-                      className={`color-swatch${draft.inv_tagline_color === color.value ? ' active' : ''}`}
-                      style={{
-                        background: color.value,
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '8px',
-                        borderWidth: '2px',
-                      }}
-                      title={color.title}
-                      onClick={() => set('inv_tagline_color', color.value)}
-                    />
-                  ))}
-                </div>
-              </SettingsRow>
-              <SettingsRow label="Preview">
-                {draft.inv_tagline_on === 'true' ? (
-                  <div className="tagline-preview" style={{ background: draft.inv_tagline_color ?? '#1d4ed8' }}>
-                    {draft.inv_tagline_text || 'May the 4th be with you!'}
-                  </div>
-                ) : (
-                  <div className="row-help">Tagline strip is hidden.</div>
-                )}
-              </SettingsRow>
+              {draft.inv_tagline_on === 'true' && (
+                <>
+                  <SettingsRow label="Text">
+                    <input className="input" maxLength={120} value={draft.inv_tagline_text ?? ''} onChange={(e) => set('inv_tagline_text', e.target.value)} />
+                  </SettingsRow>
+                  <SettingsRow label="Colour">
+                    <div className="setting-toggle-list">
+                      {TAGLINE_COLORS.map((color) => (
+                        <button
+                          key={color.value}
+                          className={`color-swatch${draft.inv_tagline_color === color.value ? ' active' : ''}`}
+                          style={{ background: color.value, width: '32px', height: '32px', borderRadius: '8px', borderWidth: '2px' }}
+                          title={color.title}
+                          aria-label={color.title}
+                          onClick={() => set('inv_tagline_color', color.value)}
+                        />
+                      ))}
+                    </div>
+                    <div className="tagline-preview" style={{ background: draft.inv_tagline_color ?? '#1d4ed8', marginTop: 8 }}>
+                      {draft.inv_tagline_text || 'Thank you for your business'}
+                    </div>
+                  </SettingsRow>
+                </>
+              )}
             </SettingsCard>
 
             <SettingsCard
               title="Email templates"
-              subtitle="Default subject and message body when sending invoices and receipts from the Send modal."
+              subtitle="Used by Send on an invoice. Placeholders are filled in for you."
+              foot={
+                <span>
+                  <Code>{'{client}'}</Code> <Code>{'{number}'}</Code> <Code>{'{amount}'}</Code> <Code>{'{balance}'}</Code>{' '}
+                  <Code>{'{due}'}</Code> <Code>{'{link}'}</Code> <Code>{'{payment_date}'}</Code>. If <Code>{'{link}'}</Code> is
+                  missing, the client link is added at the end.
+                </span>
+              }
             >
-              <SettingsRow label="Invoice email subject">
-                <input
-                  className="input"
-                  value={draft.inv_email_invoice_subject ?? ''}
-                  onChange={(e) => set('inv_email_invoice_subject', e.target.value)}
-                />
+              <SettingsRow label="Invoice subject">
+                <input className="input" value={draft.inv_email_invoice_subject ?? ''} onChange={(e) => set('inv_email_invoice_subject', e.target.value)} />
               </SettingsRow>
-              <SettingsRow
-                label="Invoice email body"
-                help={
-                  <>
-                    Use <Code>{'{client}'}</Code>, <Code>{'{number}'}</Code>, <Code>{'{amount}'}</Code>,{' '}
-                    <Code>{'{due}'}</Code>.
-                  </>
-                }
-              >
-                <textarea
-                  className="input"
-                  style={{ minHeight: '100px' }}
-                  value={draft.inv_email_invoice_body ?? ''}
-                  onChange={(e) => set('inv_email_invoice_body', e.target.value)}
-                />
+              <SettingsRow label="Invoice message">
+                <textarea className="input" style={{ minHeight: '110px' }} value={draft.inv_email_invoice_body ?? ''} onChange={(e) => set('inv_email_invoice_body', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Receipt email subject">
-                <input
-                  className="input"
-                  value={draft.inv_email_receipt_subject ?? ''}
-                  onChange={(e) => set('inv_email_receipt_subject', e.target.value)}
-                />
+              <SettingsRow label="Receipt subject" help="Used once a payment has been logged.">
+                <input className="input" value={draft.inv_email_receipt_subject ?? ''} onChange={(e) => set('inv_email_receipt_subject', e.target.value)} />
               </SettingsRow>
-              <SettingsRow label="Receipt email body">
-                <textarea
-                  className="input"
-                  style={{ minHeight: '100px' }}
-                  value={draft.inv_email_receipt_body ?? ''}
-                  onChange={(e) => set('inv_email_receipt_body', e.target.value)}
-                />
+              <SettingsRow label="Receipt message">
+                <textarea className="input" style={{ minHeight: '110px' }} value={draft.inv_email_receipt_body ?? ''} onChange={(e) => set('inv_email_receipt_body', e.target.value)} />
               </SettingsRow>
             </SettingsCard>
           </>
         )}
       </SettingsLayout>
 
-      <SaveBar
-        visible={dirty}
-        saving={saving}
-        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
-        onDiscard={discard}
-        onSave={save}
-      />
+      <SaveBar visible={dirty} saving={saving} message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'} onDiscard={discard} onSave={save} />
     </Shell>
   );
 }
