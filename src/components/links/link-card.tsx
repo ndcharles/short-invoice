@@ -14,6 +14,7 @@ import {
   Trash,
 } from '@/components/icons';
 import { usePopoverDismiss } from '@/lib/popover';
+import { useMe, useTeam } from '@/lib/team';
 
 interface LinkCardProps {
   link: LinkItem;
@@ -29,6 +30,11 @@ type MenuPos = { top: number; left: number } | null;
 
 export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, onDuplicate }: LinkCardProps) {
   const router = useRouter();
+  const { nameOf, initialsOf } = useTeam();
+  const admin = useMe().me?.role === 'admin';
+  const byline = link.created_by
+    ? `Created by ${nameOf(link.created_by)}${link.updated_by && link.updated_by !== link.created_by ? ` · last edited by ${nameOf(link.updated_by)}` : ''}`
+    : 'Created before sign-in was set up';
   const [copied, setCopied] = useState(false);
   const [menuPos, setMenuPos] = useState<MenuPos>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -129,7 +135,7 @@ export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, 
             {link.dest.replace(/^https?:\/\//, '')}
           </span>
           <span className="link-dest-meta">
-            <span className="creator-avatar" title={link.avatar}>{link.avatar}</span>
+            <span className="creator-avatar" title={byline}>{link.created_by ? initialsOf(link.created_by) : link.avatar}</span>
             <span className="link-date">{dateStr}</span>
           </span>
         </div>
@@ -176,12 +182,16 @@ export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, 
             <span>{link.archived === 1 ? 'Unarchive' : 'Archive'}</span>
             <span className="kbd-hint">A</span>
           </div>
+          {admin && (
+            <>
           <div className="dropdown-sep" />
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(link.id); }}>
             <Trash />
             <span>Delete</span>
             <span className="kbd-hint">⌫</span>
           </div>
+            </>
+          )}
         </div>
       )}
     </div>

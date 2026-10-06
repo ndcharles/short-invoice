@@ -19,6 +19,8 @@ export interface InvoicePayment {
   date: string;
   method: string;
   note: string;
+  /** Email of whoever logged it (set by the server). */
+  by?: string;
 }
 
 /** The stored fields the totals depend on (an InvoiceRow satisfies this). */
@@ -138,7 +140,13 @@ export function parseItems(value: string | null | undefined): InvoiceItem[] {
 export function parsePayments(value: string | null | undefined): InvoicePayment[] {
   return parseJsonList(value)
     .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
-    .map((p) => ({ amount: num(p.amount), date: str(p.date), method: str(p.method), note: str(p.note) }));
+    .map((p) => ({
+      amount: num(p.amount),
+      date: str(p.date),
+      method: str(p.method),
+      note: str(p.note),
+      ...(typeof p.by === 'string' && p.by ? { by: p.by } : {}),
+    }));
 }
 
 // --- Totals ---------------------------------------------------------------

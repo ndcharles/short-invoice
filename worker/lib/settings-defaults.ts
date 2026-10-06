@@ -137,4 +137,8 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   smtp_from_name: '',
   smtp_from_email: '',
   smtp_reply_to: '',
+
+  // Team: anyone who signs in with one of these email domains is a member
+  // (Settings → Team). Others need an invite.
+  team_domains: '[]',
 };

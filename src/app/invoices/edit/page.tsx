@@ -9,6 +9,8 @@ import { InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canva
 import { LogPaymentModal, SendModal, PaymentDraft, SendDraft } from '@/components/invoices/invoice-modals';
 import { pdfFileName, renderInvoicePdf } from '@/lib/invoice-pdf';
 import { useConfirm } from '@/components/invoices/choice-modal';
+import { Attribution } from '@/components/attribution';
+import { useMe, useTeam } from '@/lib/team';
 import type { InvoiceRow } from '@/lib/types';
 import { ChevronRight, Copy, Cursor, Download, Duplicate, Info, More, Plus, Send, Trash } from '@/components/icons';
 import { useCollections } from '@/lib/collections';
@@ -34,6 +36,7 @@ interface EmailLog {
   attachments: string;
   status: 'sent' | 'failed';
   error: string | null;
+  sent_by?: string | null;
 }
 
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -54,6 +57,8 @@ function EditInvoicePageInner() {
   const id = searchParams.get('id') ?? '';
   const cfg = useInvoiceSettings();
   const [ask, confirmModal] = useConfirm();
+  const admin = useMe().me?.role === 'admin';
+  const { nameOf } = useTeam();
   const { items: folders } = useCollections('folders');
   const { items: tags } = useCollections('tags');
 
@@ -397,25 +402,29 @@ function EditInvoicePageInner() {
                   <Download />
                   <span>Print / PDF</span>
                 </div>
-                <div className="dropdown-sep" />
-                <div
-                  className="dropdown-item destructive"
-                  onClick={async () => {
-                    setMenuOpen(false);
-                    const ok = await ask({
-                      title: `Delete ${draft.number}?`,
-                      message: 'The record is removed permanently. Marking it Cancelled instead keeps your numbering intact.',
-                      confirmLabel: 'Delete',
-                      destructive: true,
-                    });
-                    if (!ok) return;
-                    await fetch(`/api/invoices/${invoice.id}`, { method: 'DELETE' });
-                    router.push('/invoices');
-                  }}
-                >
-                  <Trash />
-                  <span>Delete invoice</span>
-                </div>
+                {admin && (
+                  <>
+                    <div className="dropdown-sep" />
+                    <div
+                      className="dropdown-item destructive"
+                      onClick={async () => {
+                        setMenuOpen(false);
+                        const ok = await ask({
+                          title: `Delete ${draft.number}?`,
+                          message: 'The record is removed permanently. Marking it Cancelled instead keeps your numbering intact.',
+                          confirmLabel: 'Delete',
+                          destructive: true,
+                        });
+                        if (!ok) return;
+                        await fetch(`/api/invoices/${invoice.id}`, { method: 'DELETE' });
+                        router.push('/invoices');
+                      }}
+                    >
+                      <Trash />
+                      <span>Delete invoice</span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -582,6 +591,17 @@ function EditInvoicePageInner() {
               )}
             </div>
 
+            <div className="rail-section">
+              <Attribution
+                className="rail-attribution"
+                createdBy={invoice.created_by}
+                createdAt={invoice.created_at}
+                updatedBy={invoice.updated_by}
+                updatedAt={invoice.updated_at}
+                fallbackInitials={invoice.avatar}
+              />
+            </div>
+
             {emails.length > 0 && (
               <div className="rail-section">
                 <div className="rail-section-label">Emails ({emails.length})</div>
@@ -592,6 +612,7 @@ function EditInvoicePageInner() {
                       <div className="rail-payment-amt rail-email-to">{mail.recipients}</div>
                       <div className="rail-payment-sub">
                         {mail.status === 'failed' ? 'Failed' : 'Sent'} {formatDay(mail.sent_at, cfg.dateFormat)}
+                        {mail.sent_by ? ` by ${nameOf(mail.sent_by)}` : ''}
                         {mail.attachments ? ` · ${mail.attachments.replace(',', ' + ')}` : ''}
                       </div>
                       {mail.status === 'failed' && mail.error && <div className="rail-email-error">{mail.error}</div>}
@@ -613,6 +634,7 @@ function EditInvoicePageInner() {
                         {payment.date}
                         {payment.method ? ` · ${payment.method}` : ''}
                         {payment.note ? ` · ${payment.note}` : ''}
+                        {payment.by ? ` · logged by ${nameOf(payment.by)}` : ''}
                       </div>
                     </div>
                     <button

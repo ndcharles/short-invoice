@@ -15,6 +15,7 @@ import {
   parsePayments,
 } from '@/lib/invoices';
 import { usePopoverDismiss } from '@/lib/popover';
+import { useMe, useTeam } from '@/lib/team';
 
 type MenuPos = { top: number; left: number } | null;
 
@@ -36,6 +37,11 @@ export function InvoiceCard({
   onLogPayment: (invoice: InvoiceRow) => void;
 }) {
   const router = useRouter();
+  const { nameOf, initialsOf } = useTeam();
+  const admin = useMe().me?.role === 'admin';
+  const byline = invoice.created_by
+    ? `Created by ${nameOf(invoice.created_by)}${invoice.updated_by && invoice.updated_by !== invoice.created_by ? ` · last edited by ${nameOf(invoice.updated_by)}` : ''}`
+    : 'Created before sign-in was set up';
   const [copied, setCopied] = useState(false);
   const [menuPos, setMenuPos] = useState<MenuPos>(null);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -114,7 +120,7 @@ export function InvoiceCard({
           </svg>
           <span className="link-dest-url">{invoice.client_name}</span>
           <span className="link-dest-meta">
-            <span className="creator-avatar" title={invoice.avatar}>{invoice.avatar}</span>
+            <span className="creator-avatar" title={byline}>{invoice.created_by ? initialsOf(invoice.created_by) : invoice.avatar}</span>
             <span className="link-date">Issued {formatDay(invoice.issued_at, dateFormat)}</span>
             <span className="inv-due-sep">·</span>
             <span className="link-date">Due {formatDay(invoice.due_at, dateFormat)}</span>
@@ -229,12 +235,16 @@ export function InvoiceCard({
             </div>
           )}
 
+          {admin && (
+            <>
           <div className="dropdown-sep" />
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(invoice.id); }}>
             <Trash />
             <span>Delete</span>
             <span className="kbd-hint">⌫</span>
           </div>
+            </>
+          )}
         </div>
       )}
     </div>

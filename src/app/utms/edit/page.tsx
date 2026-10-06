@@ -4,6 +4,9 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
+import { Attribution } from '@/components/attribution';
+import { useConfirm } from '@/components/invoices/choice-modal';
+import { useMe } from '@/lib/team';
 import { UtmForm } from '@/components/utms/utm-form';
 import type { UtmCampaign } from '@/lib/types';
 import { Archive, ChevronDown, ChevronRight, Copy, Cursor, Duplicate, Info, More, Trash } from '@/components/icons';
@@ -28,6 +31,8 @@ export default function EditUtmPage() {
 function EditUtmPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const [ask, confirmModal] = useConfirm();
+  const admin = useMe().me?.role === 'admin';
   const id = searchParams.get('id') ?? '';
 
   const settings = useSettings();
@@ -156,7 +161,8 @@ function EditUtmPageInner() {
 
   const handleDelete = async () => {
     if (!campaign) return;
-    if (!confirm('Delete this campaign?')) return;
+    const ok = await ask({ title: 'Delete this UTM?', message: 'The tracked URL record is removed. Archiving keeps it instead.', confirmLabel: 'Delete', destructive: true });
+    if (!ok) return;
     await fetch(`/api/utms/${campaign.id}`, { method: 'DELETE' });
     router.push('/utms');
   };
@@ -196,11 +202,11 @@ function EditUtmPageInner() {
     );
   }
 
-  const dateStr = new Date(campaign.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
   const label = fields.campaign || fields.campaign_id || '(no campaign)';
 
   return (
     <Shell>
+      {confirmModal}
       <div className="crumb-bar">
         <div className="crumbs">
           <Link href="/utms">UTM Builder</Link>
@@ -251,11 +257,15 @@ function EditUtmPageInner() {
                   <Archive />
                   <span>{campaign.archived === 1 ? 'Unarchive' : 'Archive'}</span>
                 </div>
-                <div className="dropdown-sep" />
-                <div className="dropdown-item destructive" onClick={() => { setMenuOpen(false); handleDelete(); }}>
-                  <Trash />
-                  <span>Delete</span>
-                </div>
+                {admin && (
+                  <>
+                    <div className="dropdown-sep" />
+                    <div className="dropdown-item destructive" onClick={() => { setMenuOpen(false); handleDelete(); }}>
+                      <Trash />
+                      <span>Delete</span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -271,12 +281,14 @@ function EditUtmPageInner() {
           previewLabel="Generated URL"
         />
 
-        <div className="creator-note-inline">
-          <div className="avatar" style={{ width: '20px', height: '20px', fontSize: '10px' }}>{campaign.avatar}</div>
-          <span>
-            Created by <strong style={{ color: 'var(--foreground)' }}>ndcharles</strong> · {dateStr}
-          </span>
-        </div>
+        <Attribution
+          className="creator-note-inline"
+          createdBy={campaign.created_by}
+          createdAt={campaign.created_at}
+          updatedBy={campaign.updated_by}
+          updatedAt={campaign.updated_at}
+          fallbackInitials={campaign.avatar}
+        />
       </div>
 
       <div className={`save-bar ${dirty ? 'visible' : ''}`}>

@@ -38,7 +38,7 @@ export default function GeneralSettingsPage() {
 
   return (
     <Shell>
-      <SettingsLayout title="General" subtitle="Workspace details, folders, tags and your profile.">
+      <SettingsLayout title="General" subtitle="Workspace details, folders and tags. Your own name is under your profile (bottom left).">
         {!draft ? (
           <div className="settings-card">
             <div className="settings-card-body" style={{ color: 'var(--muted-foreground)' }}>
@@ -123,30 +123,6 @@ export default function GeneralSettingsPage() {
 
             <FoldersCard />
             <TagsCard />
-
-            <SettingsCard
-              title="Your profile"
-              subtitle="Your initials mark the links, campaigns and invoices you create."
-            >
-              <SettingsRow label="Full name">
-                <input
-                  className="input"
-                  maxLength={80}
-                  placeholder="Ada Lovelace"
-                  value={draft.profile_name ?? ''}
-                  onChange={(e) => set('profile_name', e.target.value)}
-                />
-              </SettingsRow>
-              <SettingsRow label="Email">
-                <input
-                  className="input"
-                  type="email"
-                  placeholder="you@company.com"
-                  value={draft.profile_email ?? ''}
-                  onChange={(e) => set('profile_email', e.target.value)}
-                />
-              </SettingsRow>
-            </SettingsCard>
 
             <SettingsCard
               title="Access & data"

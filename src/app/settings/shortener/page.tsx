@@ -227,13 +227,13 @@ export default function ShortenerSettingsPage() {
 
             <DomainsCard onDefaultChange={onDefaultChange} />
 
-            <SettingsCard title="Root redirect" subtitle="Where visitors go when they open a short domain without an alias.">
+            <SettingsCard title="Root redirect" subtitle="Where visitors go when they open a short domain without an alias, or a short link that does not exist.">
               <SettingsRow
                 label="Redirect URL"
                 help={
                   <>
-                    For example <Code>https://{draft.default_domain}</Code> → your website. Leave empty to show a
-                    &ldquo;link not found&rdquo; page.
+                    <Code>https://{draft.default_domain}</Code>, <Code>/s/</Code> and any missing or deleted short link
+                    go here. Leave empty to show a &ldquo;link not found&rdquo; page.
                   </>
                 }
               >

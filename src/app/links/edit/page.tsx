@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
 import { Shell } from '@/components/layout/shell';
+import { Attribution } from '@/components/attribution';
+import { useConfirm } from '@/components/invoices/choice-modal';
+import { useMe } from '@/lib/team';
 import type { LinkItem } from '@/lib/types';
 import {
   Archive,
@@ -99,6 +102,8 @@ export default function EditLinkPage() {
 function EditLinkPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const [ask, confirmModal] = useConfirm();
+  const admin = useMe().me?.role === 'admin';
   const id = searchParams.get('id') ?? '';
 
   const [link, setLink] = useState<LinkItem | null>(null);
@@ -263,7 +268,6 @@ function EditLinkPageInner() {
   const short = urlFor({ domain: draft.domain, alias: draft.alias });
   const fullUrl = short.url;
   const shorthand = short.label;
-  const dateStr = new Date(link.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
   const preview = resolveOg({
     dest: draft.dest,
@@ -320,7 +324,13 @@ function EditLinkPageInner() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Delete this link? It stops redirecting immediately and its click history is removed.')) return;
+    const ok = await ask({
+      title: 'Delete this link?',
+      message: 'It stops redirecting immediately and its click history is removed. Archiving keeps it instead.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/links/${link.id}`, { method: 'DELETE' });
     router.push('/links');
   };
@@ -330,6 +340,7 @@ function EditLinkPageInner() {
 
   return (
     <Shell>
+      {confirmModal}
       {/* Crumb bar */}
       <div className="crumb-bar">
         <div className="crumbs">
@@ -381,11 +392,15 @@ function EditLinkPageInner() {
                   <Archive />
                   <span>{link.archived === 1 ? 'Unarchive' : 'Archive'}</span>
                 </div>
-                <div className="dropdown-sep" />
-                <div className="dropdown-item destructive" onClick={() => { setMenuOpen(false); handleDelete(); }}>
-                  <Trash />
-                  <span>Delete</span>
-                </div>
+                {admin && (
+                  <>
+                    <div className="dropdown-sep" />
+                    <div className="dropdown-item destructive" onClick={() => { setMenuOpen(false); handleDelete(); }}>
+                      <Trash />
+                      <span>Delete</span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -577,12 +592,13 @@ function EditLinkPageInner() {
             </div>
           )}
 
-          <div className="creator-note">
-            <div className="avatar" style={{ width: '20px', height: '20px', fontSize: '10px' }}>{link.avatar}</div>
-            <span>
-              Created by <strong style={{ color: 'var(--foreground)' }}>ndcharles</strong> · {dateStr}
-            </span>
-          </div>
+          <Attribution
+            createdBy={link.created_by}
+            createdAt={link.created_at}
+            updatedBy={link.updated_by}
+            updatedAt={link.updated_at}
+            fallbackInitials={link.avatar}
+          />
         </div>
 
         {/* Right column */}

@@ -240,15 +240,28 @@ async function suppliedPassword(c: RedirectContext): Promise<string> {
   return typeof form.pw === 'string' ? form.pw.slice(0, 1024) : '';
 }
 
+/**
+ * A short link that does not exist (or a bare `/s/`): send visitors to the
+ * Redirect URL from Settings → URL Shortener when one is set, otherwise show
+ * the "link not found" page.
+ */
+export async function missingLink(c: RedirectContext, label: string): Promise<Response> {
+  const row = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'root_redirect'").first<{ value: string }>();
+  const target = row?.value ? parseHttpUrl(row.value) : null;
+  if (target?.ok) return c.redirect(target.value, 302);
+  return c.html(notFoundPage(label), 404);
+}
+
 /** `/s/:alias`, available on every host. */
 const redirect = new Hono<AppEnv>();
 
 const servePath = async (c: RedirectContext, supplied: string | null) => {
   const alias = c.req.param('alias') ?? '';
   const res = await serveLink(c, { kind: 'path' }, alias, supplied);
-  return res ?? c.html(notFoundPage(`/s/${alias}`), 404);
+  return res ?? missingLink(c, `/s/${alias}`);
 };
 
+redirect.get('/', (c) => missingLink(c, '/s/'));
 redirect.get('/:alias', (c) => servePath(c, null));
 redirect.post('/:alias', async (c) => servePath(c, await suppliedPassword(c)));
 
