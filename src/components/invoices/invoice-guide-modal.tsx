@@ -87,9 +87,9 @@ export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="guide-warn">
-            <strong>Partial payments →</strong> Do not mark the invoice as <strong>Paid</strong> until the total amount
-            due is completely settled. Instead keep the status as <strong>Sent</strong> or switch to{' '}
-            <strong>Partially paid</strong> and log the received amount against the open balance.
+            <strong>Partial payments →</strong> Log each amount you receive with <strong>Log Payment</strong>. The
+            invoice switches to <strong>Partially paid</strong> on its own and to <strong>Paid</strong> only once the
+            full amount is settled. <strong>Overdue</strong> is also automatic: it applies the day after the due date.
           </div>
 
           <div className="guide-steps">

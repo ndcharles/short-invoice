@@ -361,7 +361,7 @@ export default function LinksPage() {
             <More />
           </button>
           {openMenu === 'more' && (
-            <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', right: 0 }}>
+            <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
               <div className="dropdown-item" onClick={() => { setOpenMenu(null); refresh(); }}>
                 <Refresh />
                 <span>Refresh</span>

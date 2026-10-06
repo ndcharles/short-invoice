@@ -368,7 +368,7 @@ function EditLinkPageInner() {
               <More />
             </button>
             {menuOpen && (
-              <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', right: 0 }}>
+              <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
                 <div className="dropdown-item" onClick={() => { setMenuOpen(false); copyFullUrl(); }}>
                   <Copy />
                   <span>Copy URL</span>
@@ -530,6 +530,29 @@ function EditLinkPageInner() {
               value={draft.comments}
               onChange={(e) => patch({ comments: e.target.value })}
             />
+          </div>
+
+          <div className="field field-row" style={{ marginTop: '14px' }}>
+            <label className="field-label" style={{ margin: 0 }} title="Visitors see the short URL in the address bar while the destination loads in a frame">
+              Cloak link
+              <span className="field-hint"><Info /></span>
+            </label>
+            <div
+              className={`toggle ${draft.cloak ? 'on' : ''}`}
+              role="switch"
+              aria-checked={draft.cloak}
+              aria-label="Cloak link"
+              tabIndex={0}
+              onClick={() => patch({ cloak: !draft.cloak })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  patch({ cloak: !draft.cloak });
+                }
+              }}
+            >
+              <div className="toggle-switch" />
+            </div>
           </div>
 
           <div className="tools-bar" style={{ marginTop: '16px' }}>

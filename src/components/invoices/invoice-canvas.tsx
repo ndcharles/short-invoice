@@ -1,18 +1,31 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, Download, Drag, Duplicate, Plus, Receipt, Refresh, Trash } from '@/components/icons';
+import Link from 'next/link';
+import { ChevronDown, Download, Drag, Duplicate, Plus, Receipt, Refresh, Trash, XIcon } from '@/components/icons';
 import { usePopoverDismiss } from '@/lib/popover';
+import { fromDateInput, toDateInput } from '@/lib/dates';
 import {
-  CURRENCY_SYMBOLS,
+  BASE_CURRENCY,
+  EQUIVALENT_CURRENCY,
+  currencySymbol,
+  draftTotals,
+  equivalentCurrency,
   fmtMoney,
   formatDay,
+  invoiceEquivalent,
   InvoiceItem,
+  InvoicePayment,
   InvoiceStatus,
+  lineTotal,
+  MANUAL_STATUSES,
   moneyInWords,
-  parsePayments,
+  rateLine,
+  round2,
   STATUS_META,
 } from '@/lib/invoices';
+import { MoneyInput } from './money-input';
+import { ChoiceModal, useConfirm } from './choice-modal';
 
 export interface InvoiceDraft {
   number: string;
@@ -31,12 +44,15 @@ export interface InvoiceDraft {
   discount: number;
   discountType: 'value' | 'percent';
   taxRate: number;
-  /** Manually entered foreign-currency equivalent, shown only when provided. */
+  /** Manual figure for the equivalent; 0 means "convert at the exchange rate". */
   equivalentAmount: number;
+  /** Naira per one unit of the other currency. 0 hides the equivalent. */
   exchangeRate: number;
   terms: string;
   notes: string;
   paymentMethod: string;
+  folder: string;
+  tag: string | null;
 }
 
 export interface CanvasAccount {
@@ -49,13 +65,6 @@ export interface CanvasAccount {
   accountNumber: string;
   extraLabel: string;
   extraValue: string;
-}
-
-/** Strips currency symbols and separators so a formatted field can be edited. */
-function parseMoneyInput(value: string): number {
-  const cleaned = value.replace(/[^0-9.-]/g, '');
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 const BIG_LABEL: Record<InvoiceStatus, string> = {
@@ -76,18 +85,56 @@ const BIG_CLASS: Record<InvoiceStatus, string> = {
   cancelled: 'is-cancelled',
 };
 
-const MANUAL_STATUSES: InvoiceStatus[] = ['draft', 'sent', 'overdue', 'cancelled'];
+const FALLBACK_CURRENCIES = ['NGN', 'USD', 'EUR', 'GBP'];
 
-const PAYMENT_METHODS = [
-  'Paystack (Debit/Credit Cards)',
-  'Bank transfer',
-  'Cash',
-  'Card',
-  'Wire transfer',
-  'Cheque',
-];
+export const emptyItem = (): InvoiceItem => ({ name: '', desc: '', qty: 1, unitPrice: 0 });
 
-const toDateInput = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+/**
+ * A date shown as formatted text that opens the date picker when clicked: the
+ * invoice reads like a document, with no separate date fields.
+ */
+function InlineDate({
+  label,
+  value,
+  min,
+  dateFormat,
+  disabled = false,
+  disabledTitle,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  dateFormat?: string;
+  disabled?: boolean;
+  disabledTitle?: string;
+  onChange: (ms: number) => void;
+}) {
+  return (
+    <span className={`inv-date-field${disabled ? ' is-disabled' : ''}`} title={disabled ? disabledTitle : `Change the ${label.toLowerCase()}`}>
+      <strong>{formatDay(value, dateFormat)}</strong>
+      <input
+        type="date"
+        className="inv-print-hide"
+        aria-label={label}
+        value={toDateInput(value)}
+        min={min !== undefined ? toDateInput(min) : undefined}
+        disabled={disabled}
+        onClick={(e) => {
+          try {
+            e.currentTarget.showPicker();
+          } catch {
+            /* older browsers open the picker on their own */
+          }
+        }}
+        onChange={(e) => {
+          const next = fromDateInput(e.target.value);
+          if (next !== null) onChange(next);
+        }}
+      />
+    </span>
+  );
+}
 
 export function InvoiceCanvas({
   draft,
@@ -96,24 +143,54 @@ export function InvoiceCanvas({
   payments = [],
   accounts = [],
   tagline,
+  logo,
+  dateFormat,
+  currencies,
+  defaultRate = 0,
   defaultTerms = 'Net 30. Late payments accrue 1.5% interest per month.',
   variant = 'page',
   onLogPayment,
+  documentView,
+  onDocumentViewChange,
 }: {
   draft: InvoiceDraft;
   onChange: (patch: Partial<InvoiceDraft>) => void;
   payTo: { name: string; addr1: string; addr2: string; email: string; taxId: string };
-  payments?: ReturnType<typeof parsePayments>;
+  payments?: InvoicePayment[];
   accounts?: CanvasAccount[];
   tagline?: { on: boolean; text: string; color: string };
+  /** Company logo from Settings → Invoice (data URL or https URL). */
+  logo?: string;
+  dateFormat?: string;
+  /** Enabled currency codes from Settings → Invoice. */
+  currencies?: string[];
+  /** Naira per USD from Settings, used when an equivalent is first added. */
+  defaultRate?: number;
   defaultTerms?: string;
   variant?: 'page' | 'modal';
   onLogPayment?: (mode?: 'full' | 'partial') => void;
+  /** Which document a paid invoice shows; uncontrolled when omitted. */
+  documentView?: 'invoice' | 'receipt';
+  onDocumentViewChange?: (view: 'invoice' | 'receipt') => void;
 }) {
-  const [itemsMode, setItemsMode] = useState<'simple' | 'detailed'>('simple');
-  const [methodOpen, setMethodOpen] = useState(false);
+  // Detailed (qty × price) is the starting mode whenever an item uses a quantity.
+  const [itemsMode, setItemsMode] = useState<'simple' | 'detailed'>(() =>
+    draft.items.some((item) => Number(item.qty) !== 1) ? 'detailed' : 'simple'
+  );
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusPos, setStatusPos] = useState<{ top: number; left: number } | null>(null);
+  const [localView, setLocalView] = useState<'invoice' | 'receipt'>('receipt');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Keeps the equivalent rows open while a rate is still being typed in.
+  const [equivalentOpen, setEquivalentOpen] = useState(false);
+  const [ask, confirmModal] = useConfirm();
+  // A currency switch waiting for "convert the prices or not?".
+  const [pendingCurrency, setPendingCurrency] = useState<{
+    next: string;
+    rate: number;
+    converted: Pick<InvoiceDraft, 'items' | 'charges' | 'discount'>;
+    newTotal: number;
+  } | null>(null);
   const statusBtnRef = React.useRef<HTMLDivElement>(null);
 
   const toggleStatusMenu = () => {
@@ -124,7 +201,7 @@ export function InvoiceCanvas({
     const rect = statusBtnRef.current?.getBoundingClientRect();
     if (!rect) return;
     const width = 240;
-    const height = 320;
+    const height = 300;
     const openUp = rect.top >= height + 16;
     const rawTop = openUp ? rect.top - height - 8 : rect.bottom + 8;
     // Always keep the panel inside the viewport, even when the trigger sits at
@@ -133,47 +210,41 @@ export function InvoiceCanvas({
     setStatusPos({ top, left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8)) });
     setStatusOpen(true);
   };
-  const [receiptView, setReceiptView] = useState(false);
-  usePopoverDismiss(methodOpen, React.useCallback(() => setMethodOpen(false), []));
   usePopoverDismiss(statusOpen, React.useCallback(() => setStatusOpen(false), []));
 
-  const paid = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const lastPaymentDate = payments.length ? payments[payments.length - 1].date : '';
-  const receiptMode = receiptView || payments.length > 0;
   const c = draft.currency;
+  const symbol = currencySymbol(c);
   const status = draft.status;
+  const paid = round2(payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+  const lastPaymentDate = payments.length ? payments[payments.length - 1].date : '';
+  // With payments logged the document reads as a receipt; "View Invoice" shows
+  // the original invoice exactly as issued (no payments, stamp or balance).
+  const view = documentView ?? localView;
+  const setView = (next: 'invoice' | 'receipt') => (onDocumentViewChange ? onDocumentViewChange(next) : setLocalView(next));
+  const receiptMode = payments.length > 0 && view === 'receipt';
+  const originalView = payments.length > 0 && view === 'invoice';
 
-  const itemsSubtotal = draft.items.reduce((sum, i) => sum + Number(i.qty) * Number(i.unitPrice), 0);
-  const discountAmount =
-    draft.discountType === 'percent' ? (itemsSubtotal * Number(draft.discount || 0)) / 100 : Number(draft.discount || 0);
-  const discounted = Math.max(0, itemsSubtotal - discountAmount);
-  const charges = Number(draft.charges || 0);
-  const taxAmount = (discounted + charges) * Number(draft.taxRate || 0);
-  const grand = discounted + charges + taxAmount;
+  const totals = draftTotals(draft);
   // A payment can exceed the current total if items/discount changed after it
   // was logged, so the applied amount is capped and the excess shown as credit.
-  const appliedPaid = Math.min(paid, grand);
-  const overpaid = Math.max(0, paid - grand);
+  const appliedPaid = Math.min(paid, totals.grand);
+  const overpaid = round2(Math.max(0, paid - totals.grand));
+  const balance = round2(Math.max(0, totals.grand - appliedPaid));
 
-  const totals = {
-    subtotal: itemsSubtotal,
-    charges,
-    discountAmount,
-    tax: taxAmount,
-    grand,
-    paid,
-    appliedPaid,
-    overpaid,
-    balance: Math.max(0, grand - appliedPaid),
-  };
+  const eqCode = equivalentCurrency(c);
+  const converted = invoiceEquivalent({
+    currency: c,
+    grand: totals.grand,
+    balance,
+    exchangeRate: draft.exchangeRate,
+    equivalentAmount: draft.equivalentAmount,
+  });
+  const equivalent =
+    converted ??
+    (equivalentOpen ? { code: eqCode, total: 0, balance: 0, rate: 0, rateLine: '', overridden: false } : null);
+  const eqSymbol = currencySymbol(eqCode);
+  const rateForeign = c === BASE_CURRENCY ? eqCode : c;
 
-  // Equivalent: the manually entered figure wins, otherwise it is derived from
-  // the exchange rate (invoice total ÷ rate) so the row is never just the rate.
-  const targetCode = c === 'NGN' ? 'USD' : 'NGN';
-  const targetSymbol = c === 'NGN' ? '$' : '₦';
-  const autoEquivalent = draft.exchangeRate > 0 ? grand / draft.exchangeRate : 0;
-  const equivalentValue = Number(draft.equivalentAmount) > 0 ? Number(draft.equivalentAmount) : autoEquivalent;
-  const rateLine = draft.exchangeRate > 0 ? `₦${draft.exchangeRate.toLocaleString('en-US')} = $1` : '';
   const stamp =
     status === 'paid'
       ? { cls: 'stamp-paid', label: 'PAID IN FULL' }
@@ -181,10 +252,44 @@ export function InvoiceCanvas({
         ? { cls: 'stamp-partial', label: 'PARTIALLY PAID' }
         : null;
 
+  const currencyOptions = Array.from(new Set([...(currencies?.length ? currencies : FALLBACK_CURRENCIES), c]));
+
+  // Payment Information lists the accounts a client would pay into: the
+  // invoice currency, plus the equivalent's currency when one is shown.
+  const payable = new Set([c, ...(equivalent ? [equivalent.code] : [])]);
+  const matching = accounts.filter((account) => payable.has(account.currency));
+  const shownAccounts = matching.length ? matching : accounts;
+
+  /**
+   * Switching currency re-labels the invoice. Between NGN and USD it can also
+   * convert every price at the exchange rate, so a naira draft becomes a
+   * dollar invoice (or back). The equivalent line is removed either way: a
+   * USD invoice for a foreign client shows no naira unless it is added again.
+   */
+  const changeCurrency = (next: string) => {
+    if (next === c) return;
+    const pair = [BASE_CURRENCY, EQUIVALENT_CURRENCY];
+    const rate = draft.exchangeRate > 0 ? draft.exchangeRate : defaultRate;
+    const hasAmounts = totals.subtotal > 0 || totals.charges > 0;
+    setEquivalentOpen(false);
+    if (pair.includes(c) && pair.includes(next) && rate > 0 && hasAmounts) {
+      const toUsd = next === EQUIVALENT_CURRENCY;
+      const convert = (n: number) => round2(toUsd ? Number(n) / rate : Number(n) * rate);
+      const converted = {
+        items: draft.items.map((item) => ({ ...item, unitPrice: convert(item.unitPrice) })),
+        charges: convert(draft.charges),
+        discount: draft.discountType === 'value' ? convert(draft.discount) : draft.discount,
+      };
+      setPendingCurrency({ next, rate, converted, newTotal: draftTotals({ ...draft, ...converted }).grand });
+      return;
+    }
+    onChange({ currency: next, exchangeRate: 0, equivalentAmount: 0 });
+  };
+
   const updateItem = (index: number, patch: Partial<InvoiceItem>) =>
     onChange({ items: draft.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) });
 
-  const addItem = () => onChange({ items: [...draft.items, { name: '', desc: '', qty: 1, unitPrice: 0 }] });
+  const addItem = () => onChange({ items: [...draft.items, emptyItem()] });
 
   const duplicateItem = (index: number) =>
     onChange({
@@ -193,35 +298,66 @@ export function InvoiceCanvas({
 
   const removeItem = (index: number) => onChange({ items: draft.items.filter((_, i) => i !== index) });
 
+  const moveItem = (from: number, to: number) => {
+    if (from === to) return;
+    const items = [...draft.items];
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved);
+    onChange({ items });
+  };
+
   return (
     <div className="invoice-canvas">
-      {/* Header: logo + document number | status label + due date + Pay Now */}
+      {/* Header: logo + document number | status label + due date + invoice date */}
       <div className="inv-top">
         <div className="inv-logo-block">
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <div className="inv-logo-slot" title="Logo upload is not available in this build">
-              Upload logo
-            </div>
+            {logo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="inv-logo-img" src={logo} alt={payTo.name || 'Company logo'} />
+            ) : (
+              <Link href="/settings/invoice" className="inv-logo-slot inv-print-hide" title="Add your logo in Settings → Invoice">
+                Upload logo
+              </Link>
+            )}
           </div>
           <div className="inv-number">
-            {receiptMode ? 'Receipt' : 'Invoice'} #{draft.number.replace(/^[A-Za-z0-9]+-/, '')}
+            <span>{receiptMode ? 'Receipt' : 'Invoice'} #</span>
+            <input
+              className="inv-number-input"
+              value={draft.number}
+              size={Math.max(6, draft.number.length)}
+              aria-label="Invoice number"
+              onChange={(e) => onChange({ number: e.target.value })}
+            />
           </div>
         </div>
-        <div className={`inv-status-big ${BIG_CLASS[status]}`}>
-          <div className="inv-status-label">{BIG_LABEL[status]}</div>
+        <div className={`inv-status-big ${originalView ? 'is-sent' : BIG_CLASS[status]}`}>
+          <div className="inv-status-label">{originalView ? 'INVOICE' : BIG_LABEL[status]}</div>
           <div className="inv-due-line">
-            Due Date: <strong style={{ color: 'var(--foreground)' }}>{formatDay(draft.dueAt)}</strong>
+            Due Date:{' '}
+            <InlineDate
+              label="Due date"
+              value={draft.dueAt}
+              min={draft.issuedAt}
+              dateFormat={dateFormat}
+              disabled={status === 'paid'}
+              disabledTitle="A paid invoice keeps its original due date"
+              onChange={(dueAt) => onChange({ dueAt })}
+            />
           </div>
-          <input
-            className="inv-party-input"
-            type="date"
-            style={{ maxWidth: 190, textAlign: 'right' }}
-            value={toDateInput(draft.dueAt)}
-            disabled={status === 'paid'}
-            title={status === 'paid' ? 'A paid invoice keeps its original due date' : 'Due date'}
-            onChange={(e) => onChange({ dueAt: e.target.value ? Date.parse(e.target.value) : draft.dueAt })}
-          />
-          {status !== 'paid' && status !== 'cancelled' && <button className="inv-pay-now">Pay Now</button>}
+          <div className="inv-due-line">
+            Invoice Date:{' '}
+            <InlineDate
+              label="Invoice date"
+              value={draft.issuedAt}
+              dateFormat={dateFormat}
+              onChange={(issuedAt) =>
+                // Keep the payment window when the invoice date moves past the due date.
+                onChange(issuedAt > draft.dueAt ? { issuedAt, dueAt: issuedAt + (draft.dueAt - draft.issuedAt) } : { issuedAt })
+              }
+            />
+          </div>
         </div>
       </div>
 
@@ -233,34 +369,35 @@ export function InvoiceCanvas({
             className="inv-party-input inv-party-strong"
             value={draft.clientName}
             placeholder="Client name"
+            aria-label="Client name"
             onChange={(e) => onChange({ clientName: e.target.value })}
           />
           <input
-            className="inv-party-input"
+            className={`inv-party-input${draft.clientContact ? '' : ' inv-print-hide'}`}
             value={draft.clientContact}
             placeholder="Contact person"
             onChange={(e) => onChange({ clientContact: e.target.value })}
           />
           <input
-            className="inv-party-input"
+            className={`inv-party-input${draft.clientAddr1 ? '' : ' inv-print-hide'}`}
             value={draft.clientAddr1}
             placeholder="Street address"
             onChange={(e) => onChange({ clientAddr1: e.target.value })}
           />
           <input
-            className="inv-party-input"
+            className={`inv-party-input${draft.clientAddr2 ? '' : ' inv-print-hide'}`}
             value={draft.clientAddr2}
             placeholder="City, State, Postal code"
             onChange={(e) => onChange({ clientAddr2: e.target.value })}
           />
           <input
-            className="inv-party-input"
+            className={`inv-party-input${draft.clientCountry ? '' : ' inv-print-hide'}`}
             value={draft.clientCountry}
             placeholder="Country"
             onChange={(e) => onChange({ clientCountry: e.target.value })}
           />
           <input
-            className="inv-party-input"
+            className={`inv-party-input${draft.clientEmail ? '' : ' inv-print-hide'}`}
             type="email"
             value={draft.clientEmail}
             placeholder="client@company.com"
@@ -269,56 +406,11 @@ export function InvoiceCanvas({
         </div>
         <div className="inv-party inv-right">
           <div className="inv-party-title">Pay To</div>
-          <input className="inv-party-input inv-party-strong" value={payTo.name} readOnly />
-          <input className="inv-party-input" value={payTo.addr1} readOnly />
-          <input className="inv-party-input" value={payTo.addr2} readOnly />
-          <input className="inv-party-input" type="email" value={payTo.email} readOnly />
-          <input className="inv-party-input" value={`TIN: ${payTo.taxId}`} readOnly />
-        </div>
-      </div>
-
-      {/* Invoice date & payment method */}
-      <div className="inv-meta-row">
-        <div className="inv-meta-left">
-          <div className="inv-meta-title">Invoice Date</div>
-          <input
-            className="inv-party-input"
-            type="date"
-            value={toDateInput(draft.issuedAt)}
-            onChange={(e) => onChange({ issuedAt: e.target.value ? Date.parse(e.target.value) : draft.issuedAt })}
-          />
-          {rateLine && (
-            <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', marginTop: '6px' }}>
-              Exchange rate: {rateLine}
-            </div>
-          )}
-        </div>
-        <div className="inv-meta-right-col">
-          <div className="inv-meta-title">Payment Method</div>
-          <div style={{ position: 'relative' }} data-popover-root>
-            <button className="pay-method-select" onClick={() => setMethodOpen(!methodOpen)}>
-              <span>{draft.paymentMethod}</span>
-              <span className="chev">
-                <ChevronDown />
-              </span>
-            </button>
-            {methodOpen && (
-              <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', right: 0, minWidth: '240px' }}>
-                {PAYMENT_METHODS.map((method) => (
-                  <div
-                    key={method}
-                    className={`dropdown-item${method === draft.paymentMethod ? ' is-current' : ''}`}
-                    onClick={() => {
-                      onChange({ paymentMethod: method });
-                      setMethodOpen(false);
-                    }}
-                  >
-                    <span>{method}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <div className="inv-party-line inv-party-strong">{payTo.name}</div>
+          {payTo.addr1 && <div className="inv-party-line">{payTo.addr1}</div>}
+          {payTo.addr2 && <div className="inv-party-line">{payTo.addr2}</div>}
+          {payTo.taxId && <div className="inv-party-line">TIN: {payTo.taxId}</div>}
+          {payTo.email && <div className="inv-party-line">{payTo.email}</div>}
         </div>
       </div>
 
@@ -334,12 +426,37 @@ export function InvoiceCanvas({
         </div>
 
         {draft.items.map((item, index) => {
-          const line = Number(item.qty) * Number(item.unitPrice);
+          const line = lineTotal(item);
           return (
-            <div className={`inv-item-row items-${itemsMode}`} key={index}>
+            <div
+              className={`inv-item-row items-${itemsMode}${dragIndex === index ? ' is-dragging' : ''}`}
+              key={index}
+              onDragOver={(e) => {
+                if (dragIndex === null) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragIndex !== null) moveItem(dragIndex, index);
+                setDragIndex(null);
+              }}
+            >
               <div className="inv-item-lead">
                 <span className="inv-item-idx">{index + 1}</span>
-                <span className="inv-item-handle" title="Drag to reorder">
+                <span
+                  className="inv-item-handle inv-print-hide"
+                  title="Drag to reorder"
+                  draggable={draft.items.length > 1}
+                  onDragStart={(e) => {
+                    setDragIndex(index);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(index));
+                    const row = e.currentTarget.closest('.inv-item-row');
+                    if (row) e.dataTransfer.setDragImage(row, 20, 20);
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
                   <Drag />
                 </span>
               </div>
@@ -348,11 +465,12 @@ export function InvoiceCanvas({
                   className="inv-item-name"
                   rows={1}
                   placeholder="Item name"
+                  aria-label={`Item ${index + 1} name`}
                   value={item.name}
                   onChange={(e) => updateItem(index, { name: e.target.value })}
                 />
                 <textarea
-                  className="inv-item-desc"
+                  className={`inv-item-desc${item.desc ? '' : ' inv-print-hide'}`}
                   rows={1}
                   placeholder="Item description (optional)"
                   value={item.desc}
@@ -361,41 +479,43 @@ export function InvoiceCanvas({
               </div>
               {itemsMode === 'detailed' && (
                 <div className="inv-item-col num-center">
-                  <input
+                  <MoneyInput
                     className="inv-item-input"
                     style={{ textAlign: 'center' }}
-                    type="number"
-                    min="0"
+                    aria-label={`Item ${index + 1} quantity`}
                     value={item.qty}
-                    onChange={(e) => updateItem(index, { qty: Number(e.target.value) })}
+                    format={(n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    onChange={(qty) => updateItem(index, { qty })}
                   />
                 </div>
               )}
               {itemsMode === 'detailed' && (
                 <div className="inv-item-col num-right">
-                  <input
+                  <MoneyInput
                     className="inv-item-input"
-                    type="number"
-                    min="0"
-                    step="0.01"
+                    aria-label={`Item ${index + 1} unit price`}
                     value={item.unitPrice}
-                    onChange={(e) => updateItem(index, { unitPrice: Number(e.target.value) })}
+                    onChange={(unitPrice) => updateItem(index, { unitPrice })}
                   />
                 </div>
               )}
               <div className="inv-item-col num-right">
                 {itemsMode === 'simple' ? (
-                  <input
+                  <MoneyInput
                     className="inv-item-input"
-                    inputMode="decimal"
-                    value={fmtMoney(item.unitPrice, c)}
-                    onChange={(e) => updateItem(index, { unitPrice: parseMoneyInput(e.target.value) })}
+                    aria-label={`Item ${index + 1} amount`}
+                    value={line}
+                    format={(n) => fmtMoney(n, c)}
+                    onChange={(amount) => {
+                      const qty = Number(item.qty) > 0 ? Number(item.qty) : 1;
+                      updateItem(index, { qty, unitPrice: qty === 1 ? amount : amount / qty });
+                    }}
                   />
                 ) : (
                   <strong>{fmtMoney(line, c)}</strong>
                 )}
               </div>
-              <div className="inv-item-actions inv-item-actions-stack">
+              <div className="inv-item-actions inv-item-actions-stack inv-print-hide">
                 <button className="icon-btn item-delete" title="Delete" onClick={() => removeItem(index)}>
                   <Trash />
                 </button>
@@ -406,9 +526,12 @@ export function InvoiceCanvas({
             </div>
           );
         })}
+        {draft.items.length === 0 && (
+          <div className="inv-item-row inv-items-empty inv-print-hide">Add at least one item to bill for.</div>
+        )}
       </div>
 
-      <div className="inv-items-footer">
+      <div className="inv-items-footer inv-print-hide">
         <button className="inv-add-item" onClick={addItem}>
           <Plus />
           <span>Add Item</span>
@@ -440,7 +563,15 @@ export function InvoiceCanvas({
             onChange={(e) => onChange({ terms: e.target.value })}
           />
 
-          {stamp && (
+          <div className={`inv-meta-title inv-notes-title${draft.notes ? '' : ' inv-print-hide'}`}>Notes</div>
+          <textarea
+            className={`inv-notes-input${draft.notes ? '' : ' inv-print-hide'}`}
+            placeholder="Thank-you note, project reference, PO number… (optional)"
+            value={draft.notes}
+            onChange={(e) => onChange({ notes: e.target.value })}
+          />
+
+          {stamp && receiptMode && (
             <div className="inv-stamp-wrap">
               <div className={`inv-stamp ${stamp.cls}`}>
                 <div className="inv-stamp-text">{stamp.label}</div>
@@ -455,7 +586,7 @@ export function InvoiceCanvas({
                       <div className="inv-history-body">
                         <div className="inv-history-line1">
                           <strong>{fmtMoney(payment.amount, c)}</strong>
-                          <span className="inv-history-method">{payment.method}</span>
+                          {payment.method && <span className="inv-history-method">{payment.method}</span>}
                         </div>
                         <div className="inv-history-line2">
                           {payment.date}
@@ -472,66 +603,86 @@ export function InvoiceCanvas({
 
         <div>
           <div className="inv-totals">
-            <div className="inv-totals-row add-charge" style={{ alignItems: 'center' }}>
-              <span className="tot-label">+ Additional Charges</span>
-              <span className="tot-value" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-start', gap: '4px', flex: 1 }}>
-                <span style={{ color: 'var(--muted-foreground)', fontSize: '12px' }}>{CURRENCY_SYMBOLS[c] ?? c}</span>
-                <input
-                  className="inv-discount-input"
-                  style={{ textAlign: 'left', width: '100%' }}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={draft.charges || ''}
-                  onChange={(e) => onChange({ charges: Number(e.target.value) })}
-                />
-              </span>
-            </div>
-
             <div className="inv-totals-row">
               <span className="tot-label">Subtotal</span>
               <span className="tot-value">{fmtMoney(totals.subtotal, c)}</span>
             </div>
 
-            <div className="inv-totals-row inv-discount-row">
-              <span className="tot-label">+ Discount{draft.discountType === 'percent' ? ' (%)' : ''}</span>
-              <span className="tot-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <input
-                  className="inv-discount-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={draft.discount || ''}
-                  onChange={(e) => onChange({ discount: Number(e.target.value) })}
-                />
-                <span className="inv-mode-toggle" style={{ padding: '1px' }}>
-                  <button
-                    className={`mode-tab${draft.discountType === 'value' ? ' active' : ''}`}
-                    style={{ padding: '2px 8px' }}
-                    onClick={() => onChange({ discountType: 'value' })}
-                  >
-                    {CURRENCY_SYMBOLS[c] ?? c}
-                  </button>
-                  <button
-                    className={`mode-tab${draft.discountType === 'percent' ? ' active' : ''}`}
-                    style={{ padding: '2px 8px' }}
-                    onClick={() => onChange({ discountType: 'percent' })}
-                  >
-                    %
-                  </button>
-                </span>
-                {draft.discountType === 'percent' && (
-                  <span style={{ minWidth: '86px', textAlign: 'right', color: 'var(--muted-foreground)', fontSize: '12px' }}>
-                    {fmtMoney(totals.discountAmount, c)}
+            <div className={`inv-totals-row inv-discount-row${totals.discount ? '' : ' inv-print-hide'}`}>
+              <span className="tot-label">
+                Discount{draft.discountType === 'percent' && draft.discount ? ` (${draft.discount}%)` : ''}
+              </span>
+              <span className="tot-value tot-input">
+                <span className="inv-print-only">− {fmtMoney(totals.discount, c)}</span>
+                <span className="tot-input inv-print-hide">
+                  {draft.discountType === 'percent' && totals.discount > 0 && (
+                    <span className="tot-hint">− {fmtMoney(totals.discount, c)}</span>
+                  )}
+                  <MoneyInput
+                    className="inv-discount-input"
+                    placeholder="0.00"
+                    blankZero
+                    aria-label="Discount"
+                    value={draft.discount}
+                    onChange={(discount) => onChange({ discount })}
+                  />
+                  <span className="inv-mode-toggle" style={{ padding: '1px' }}>
+                    <button
+                      className={`mode-tab${draft.discountType === 'value' ? ' active' : ''}`}
+                      style={{ padding: '2px 8px' }}
+                      title="Fixed amount"
+                      onClick={() => onChange({ discountType: 'value' })}
+                    >
+                      {symbol}
+                    </button>
+                    <button
+                      className={`mode-tab${draft.discountType === 'percent' ? ' active' : ''}`}
+                      style={{ padding: '2px 8px' }}
+                      title="Percentage of the subtotal"
+                      onClick={() => onChange({ discountType: 'percent' })}
+                    >
+                      %
+                    </button>
                   </span>
-                )}
+                </span>
               </span>
             </div>
 
-            <div className="inv-totals-row">
-              <span className="tot-label">Tax ({(draft.taxRate * 100).toFixed(1)}%)</span>
+            <div className={`inv-totals-row inv-discount-row${totals.charges ? '' : ' inv-print-hide'}`}>
+              <span className="tot-label">Additional Charges</span>
+              <span className="tot-value tot-input">
+                <span className="inv-print-only">{fmtMoney(totals.charges, c)}</span>
+                <span className="tot-input inv-print-hide">
+                  <span className="tot-sym">{symbol}</span>
+                  <MoneyInput
+                    className="inv-discount-input"
+                    placeholder="0.00"
+                    blankZero
+                    aria-label="Additional charges"
+                    title="Delivery, logistics or any other charge added to the subtotal"
+                    value={draft.charges}
+                    onChange={(charges) => onChange({ charges })}
+                  />
+                </span>
+              </span>
+            </div>
+
+            <div className="inv-totals-row inv-discount-row">
+              <span className="tot-label tot-input">
+                <span>Tax</span>
+                <span className="inv-print-only">({round2(draft.taxRate * 100)}%)</span>
+                <span className="tot-input inv-print-hide">
+                  <MoneyInput
+                    className="inv-discount-input inv-rate-input"
+                    aria-label="Tax rate in percent"
+                    title="Tax rate for this invoice (set the default in Settings → Invoice)"
+                    value={round2(draft.taxRate * 100)}
+                    format={(n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    onChange={(percent) => onChange({ taxRate: Math.min(100, percent) / 100 })}
+                  />
+                  <span className="tot-sym">%</span>
+                </span>
+              </span>
               <span className="tot-value">{fmtMoney(totals.tax, c)}</span>
             </div>
 
@@ -540,7 +691,7 @@ export function InvoiceCanvas({
               <span className="tot-value">{fmtMoney(totals.grand, c)}</span>
             </div>
 
-            {paid > 0 && (
+            {paid > 0 && receiptMode && (
               <>
                 <div className="inv-totals-row tot-paid">
                   <span className="tot-label">Amount Paid</span>
@@ -552,53 +703,90 @@ export function InvoiceCanvas({
                     <span className="tot-value">{fmtMoney(overpaid, c)}</span>
                   </div>
                 )}
-                <div className={`inv-totals-row grand ${totals.balance <= 0 ? 'tot-cleared' : 'tot-outstanding'}`}>
-                  <span className="tot-label">{totals.balance <= 0 ? 'Balance' : 'Balance Due'}</span>
-                  <span className="tot-value">{fmtMoney(totals.balance, c)}</span>
+                <div className={`inv-totals-row grand ${balance <= 0 ? 'tot-cleared' : 'tot-outstanding'}`}>
+                  <span className="tot-label">{balance <= 0 ? 'Balance' : 'Balance Due'}</span>
+                  <span className="tot-value">{fmtMoney(balance, c)}</span>
                 </div>
               </>
             )}
 
-            <div className="inv-totals-row inv-equivalent">
-              <span className="tot-label">Equivalent ({targetCode})</span>
-              <span className="tot-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '13px', color: 'var(--foreground)' }}>
-                  {targetSymbol}
-                  {equivalentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {equivalent ? (
+              <>
+                <div className={`inv-totals-row inv-equivalent${converted ? '' : ' inv-print-hide'}`}>
+                  <span className="tot-label">Equivalent ({equivalent.code})</span>
+                  <span className="tot-value tot-input">
+                    <span className="inv-print-only">{fmtMoney(equivalent.total, equivalent.code)}</span>
+                    <span className="tot-input inv-print-hide">
+                      {equivalent.overridden && (
+                        <button
+                          className="tot-link"
+                          title="Use the converted amount again"
+                          onClick={() => onChange({ equivalentAmount: 0 })}
+                        >
+                          reset
+                        </button>
+                      )}
+                      <span className="tot-sym">{eqSymbol}</span>
+                      <MoneyInput
+                        className="inv-discount-input inv-eq-input"
+                        aria-label={`Equivalent in ${equivalent.code}`}
+                        title="Converted at the exchange rate. Type a figure to use your own."
+                        value={equivalent.total}
+                        onChange={(amount) => onChange({ equivalentAmount: amount })}
+                      />
+                    </span>
+                  </span>
+                </div>
+                {receiptMode && balance > 0 && (
+                  <div className="inv-totals-row inv-equivalent">
+                    <span className="tot-label">Balance Due ({equivalent.code})</span>
+                    <span className="tot-value">{fmtMoney(equivalent.balance, equivalent.code)}</span>
+                  </div>
+                )}
+                <div className={`inv-totals-row inv-rate-row${converted ? '' : ' inv-print-hide'}`}>
+                  <span className="tot-label">Exchange rate</span>
+                  <span className="tot-value tot-input">
+                    <span className="inv-print-only">{equivalent.rateLine}</span>
+                    <span className="tot-input inv-print-hide">
+                      <span className="tot-sym">{currencySymbol(BASE_CURRENCY)}</span>
+                      <MoneyInput
+                        className="inv-discount-input inv-rate-input"
+                        aria-label="Exchange rate"
+                        value={draft.exchangeRate}
+                        format={(n) => n.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                        onChange={(exchangeRate) => onChange({ exchangeRate })}
+                      />
+                      <span className="tot-sym">= {currencySymbol(rateForeign)}1</span>
+                      <button
+                        className="icon-btn tot-remove"
+                        title={`Remove the ${equivalent.code} equivalent`}
+                        aria-label={`Remove the ${equivalent.code} equivalent`}
+                        onClick={() => {
+                          setEquivalentOpen(false);
+                          onChange({ exchangeRate: 0, equivalentAmount: 0 });
+                        }}
+                      >
+                        <XIcon />
+                      </button>
+                    </span>
+                  </span>
+                </div>
+              </>
+            ) : (
+              <button
+                className="inv-totals-row add-charge inv-add-equivalent inv-print-hide"
+                title={`Show what this invoice costs in ${eqCode}, for clients paying from abroad`}
+                onClick={() => {
+                  setEquivalentOpen(true);
+                  onChange({ exchangeRate: c === BASE_CURRENCY || c === 'USD' ? defaultRate || 0 : 0, equivalentAmount: 0 });
+                }}
+              >
+                <span className="tot-label">+ Add {eqCode} equivalent</span>
+                <span className="tot-value">
+                  {defaultRate > 0 && (c === BASE_CURRENCY || c === 'USD') ? `₦${defaultRate.toLocaleString('en-US')} = $1` : ''}
                 </span>
-                <input
-                  className="inv-discount-input"
-                  style={{ textAlign: 'left', width: '90px' }}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="override"
-                  title="Type a figure to override the converted amount"
-                  value={draft.equivalentAmount || ''}
-                  onChange={(e) => onChange({ equivalentAmount: Number(e.target.value) })}
-                />
-              </span>
-            </div>
-
-            <div className="inv-totals-row" style={{ paddingTop: 0, borderTop: 'none' }}>
-              <span className="tot-label" style={{ fontWeight: 400, color: 'var(--muted-foreground)' }}>
-                Exchange rate
-              </span>
-              <span className="tot-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ color: 'var(--muted-foreground)', fontSize: '12px' }}>₦</span>
-                <input
-                  className="inv-discount-input"
-                  style={{ textAlign: 'left', width: '72px' }}
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="1500"
-                  value={draft.exchangeRate || ''}
-                  onChange={(e) => onChange({ exchangeRate: Number(e.target.value) })}
-                />
-                <span style={{ color: 'var(--muted-foreground)', fontSize: '12px' }}>= $1</span>
-              </span>
-            </div>
+              </button>
+            )}
           </div>
 
           <div className="inv-total-words">
@@ -611,37 +799,45 @@ export function InvoiceCanvas({
       <hr className="inv-hr" />
 
       {/* Payment Information — accounts come from Settings → Invoice */}
-      <div className="inv-meta-title" style={{ marginBottom: '12px' }}>Payment Information</div>
-      <div className="inv-payment-grid">
-        {accounts.map((account) => (
-          <div className="inv-account-card" key={account.id}>
-            <div className="inv-account-head">
-              <span className="inv-account-flag">{account.symbol || account.currency}</span>
-              <span className="inv-account-name">{account.title || `${account.currency} account`}</span>
-            </div>
-            <div className="inv-account-grid">
-              <div>
-                <label>Bank Name</label>
-                <input className="inv-party-input" defaultValue={account.bank} readOnly />
-              </div>
-              <div>
-                <label>Account name</label>
-                <input className="inv-party-input" defaultValue={account.accountName} readOnly />
-              </div>
-              <div>
-                <label>Account Number</label>
-                <input className="inv-party-input" defaultValue={account.accountNumber} readOnly />
-              </div>
-              <div>
-                <label>{account.extraLabel || 'Routing / SWIFT'}</label>
-                <input className="inv-party-input" defaultValue={account.extraValue} readOnly />
-              </div>
-            </div>
+      <div>
+        <div className="inv-meta-title" style={{ marginBottom: '12px' }}>Payment Information</div>
+        {shownAccounts.length === 0 ? (
+          <div className="inv-notes inv-print-hide" style={{ marginBottom: '16px' }}>
+            No payment accounts yet. <Link href="/settings/invoice">Add your bank details in Settings → Invoice</Link>.
           </div>
-        ))}
+        ) : (
+          <div className="inv-payment-grid">
+            {shownAccounts.map((account) => (
+              <div className="inv-account-card" key={account.id}>
+                <div className="inv-account-head">
+                  <span className="inv-account-flag">{account.symbol || account.currency}</span>
+                  <span className="inv-account-name">{account.title || `${account.currency} account`}</span>
+                </div>
+                <div className="inv-account-grid">
+                  <div>
+                    <label>Bank Name</label>
+                    <input className="inv-party-input" value={account.bank} readOnly />
+                  </div>
+                  <div>
+                    <label>Account name</label>
+                    <input className="inv-party-input" value={account.accountName} readOnly />
+                  </div>
+                  <div>
+                    <label>Account Number</label>
+                    <input className="inv-party-input" value={account.accountNumber} readOnly />
+                  </div>
+                  <div>
+                    <label>{account.extraLabel || 'Routing / SWIFT'}</label>
+                    <input className="inv-party-input" value={account.extraValue} readOnly />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {tagline?.on && (
+      {tagline?.on && tagline.text && (
         <div className="inv-tagline-strip" style={{ background: tagline.color }}>
           {tagline.text}
         </div>
@@ -649,7 +845,7 @@ export function InvoiceCanvas({
 
       {/* Footer: brand + currency + status + Log Payment + Reset/Receipt + Download PDF */}
       <div
-        className="inv-footer-bar"
+        className="inv-footer-bar inv-print-hide"
         style={variant === 'modal' ? { position: 'static', boxShadow: 'none' } : undefined}
       >
         <div className="inv-brand-mini">
@@ -662,20 +858,18 @@ export function InvoiceCanvas({
           <span>Invoices</span>
         </div>
 
-        <label className="currency-select" title="Change currency">
-          <span className="currency-symbol">{CURRENCY_SYMBOLS[c] ?? c}</span>
-          <select
-            value={c}
-            onChange={(e) => onChange({ currency: e.target.value })}
-            style={{ border: 'none', background: 'transparent', fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, outline: 'none', appearance: 'none', cursor: 'pointer', minWidth: '52px' }}
-          >
-            {Object.keys(CURRENCY_SYMBOLS).map((code) => (
+        <label className="currency-select currency-picker" title="Invoice currency">
+          <span className="currency-symbol">{symbol.trim()}</span>
+          <span>{c}</span>
+          <ChevronDown />
+          {/* The native select covers the whole pill, so any click opens it. */}
+          <select value={c} aria-label="Invoice currency" onChange={(e) => changeCurrency(e.target.value)}>
+            {currencyOptions.map((code) => (
               <option key={code} value={code}>
                 {code}
               </option>
             ))}
           </select>
-          <ChevronDown />
         </label>
 
         <div className="currency-select status-switch" data-popover-root style={{ position: 'relative', zIndex: 6 }} ref={statusBtnRef}>
@@ -701,13 +895,13 @@ export function InvoiceCanvas({
               </div>
               {MANUAL_STATUSES.map((id) => {
                 const meta = STATUS_META[id];
-                const current = id === status;
+                const current = id === status || (id === 'sent' && status === 'overdue');
                 return (
                   <div
                     key={id}
                     className={`dropdown-item${current ? ' is-current' : ''}`}
                     onClick={() => {
-                      onChange({ status: id });
+                      if (!current) onChange({ status: id });
                       setStatusOpen(false);
                     }}
                   >
@@ -719,42 +913,42 @@ export function InvoiceCanvas({
                   </div>
                 );
               })}
-              <div className="dropdown-sep" />
-              {(['partially-paid', 'paid'] as InvoiceStatus[]).map((id) => (
-                <div
-                  key={id}
-                  className="dropdown-item"
-                  onClick={() => {
-                    setStatusOpen(false);
-                    if (onLogPayment) onLogPayment(id === 'paid' ? 'full' : 'partial');
-                  }}
-                >
-                  <span className={`inv-status ${STATUS_META[id].cls}`}>
-                    <span className="inv-status-dot" />
-                    {STATUS_META[id].label}
-                  </span>
-                  <span className="kbd-hint">{onLogPayment ? 'payment' : 'log payment'}</span>
-                </div>
-              ))}
+              {onLogPayment && status !== 'cancelled' && (
+                <>
+                  <div className="dropdown-sep" />
+                  {(['partially-paid', 'paid'] as InvoiceStatus[]).map((id) => (
+                    <div
+                      key={id}
+                      className="dropdown-item"
+                      onClick={() => {
+                        setStatusOpen(false);
+                        onLogPayment(id === 'paid' ? 'full' : 'partial');
+                      }}
+                    >
+                      <span className={`inv-status ${STATUS_META[id].cls}`}>
+                        <span className="inv-status-dot" />
+                        {STATUS_META[id].label}
+                      </span>
+                      <span className="kbd-hint">log payment</span>
+                    </div>
+                  ))}
+                </>
+              )}
               <div className="dropdown-sep" />
               <div style={{ padding: '2px 6px 4px', fontSize: '11px', color: 'var(--muted-foreground)', lineHeight: 1.45 }}>
-                To mark as <strong>Paid</strong> or <strong>Partially paid</strong>, use <em>Log Payment</em>.
+                <strong>Overdue</strong> is set automatically after the due date. <strong>Paid</strong> and{' '}
+                <strong>Partially paid</strong> follow the payments you log.
               </div>
             </div>
           )}
         </div>
 
-        {status !== 'draft' && status !== 'cancelled' && (
+        {onLogPayment && status !== 'draft' && status !== 'cancelled' && (
           <button
             className="btn btn-outline btn-sm log-payment-btn"
-            disabled={status === 'paid' && paid > 0}
-            title={status === 'paid' && paid > 0 ? 'This invoice is fully paid — no further payment can be logged' : 'Log a payment'}
-            style={status === 'paid' && paid > 0 ? { filter: 'blur(0.6px)', opacity: 0.45, cursor: 'not-allowed' } : undefined}
-            onClick={() => {
-              if (status === 'paid' && paid > 0) return;
-              if (onLogPayment) onLogPayment();
-              else onChange({ status: 'partially-paid' });
-            }}
+            disabled={status === 'paid'}
+            title={status === 'paid' ? 'This invoice is fully paid' : 'Log a payment'}
+            onClick={() => onLogPayment()}
           >
             <Plus />
             <span>Log Payment</span>
@@ -764,37 +958,85 @@ export function InvoiceCanvas({
         <div className="inv-footer-spacer" />
 
         {payments.length > 0 && (
-          <button className="btn btn-outline btn-sm" onClick={() => setReceiptView(!receiptView)}>
+          <button
+            className="btn btn-outline btn-sm"
+            title={receiptMode ? 'Show the original invoice, as issued before any payment' : 'Show the receipt with payments'}
+            onClick={() => setView(receiptMode ? 'invoice' : 'receipt')}
+          >
             <Receipt />
-            <span>{receiptView ? 'View Invoice' : 'View Receipt'}</span>
+            <span>{receiptMode ? 'View Invoice' : 'View Receipt'}</span>
           </button>
         )}
         {payments.length === 0 && (
-        <button
-          className="btn btn-outline btn-sm"
-          title="Clear this draft invoice"
-          onClick={() => {
-            if (!confirm('Reset this invoice? Line items, charges, discount and notes will be cleared.')) return;
-            onChange({
-              items: [{ name: '', desc: '', qty: 1, unitPrice: 0 }],
-              charges: 0,
-              discount: 0,
-              discountType: 'value',
-              notes: '',
-              terms: defaultTerms,
-              status: 'draft',
-            });
-          }}
-        >
-          <Refresh />
-          <span>Reset</span>
-        </button>
+          <button
+            className="btn btn-outline btn-sm"
+            title="Clear the items, charges, discount and notes"
+            onClick={async () => {
+              const ok = await ask({
+                title: 'Reset this invoice?',
+                message: 'Line items, charges, discount and notes will be cleared. Client details and dates stay.',
+                confirmLabel: 'Reset',
+                destructive: true,
+              });
+              if (!ok) return;
+              onChange({
+                items: [emptyItem()],
+                charges: 0,
+                discount: 0,
+                discountType: 'value',
+                notes: '',
+                terms: defaultTerms,
+              });
+            }}
+          >
+            <Refresh />
+            <span>Reset</span>
+          </button>
         )}
-        <button className="btn btn-primary btn-sm" onClick={() => window.print()}>
-          <Download />
-          <span>Download PDF</span>
-        </button>
+        {variant === 'page' && (
+          <button className="btn btn-primary btn-sm" onClick={() => window.print()} title="Opens the print dialog; choose “Save as PDF”">
+            <Download />
+            <span>Download PDF</span>
+          </button>
+        )}
       </div>
+      {pendingCurrency && (
+        <ChoiceModal
+          title={`Switch to ${pendingCurrency.next}`}
+          onClose={() => setPendingCurrency(null)}
+          choices={[
+            {
+              label: 'Keep the numbers',
+              onSelect: () => {
+                onChange({ currency: pendingCurrency.next, exchangeRate: 0, equivalentAmount: 0 });
+                setPendingCurrency(null);
+              },
+            },
+            {
+              label: `Convert to ${pendingCurrency.next}`,
+              variant: 'primary',
+              onSelect: () => {
+                onChange({ currency: pendingCurrency.next, exchangeRate: 0, equivalentAmount: 0, ...pendingCurrency.converted });
+                setPendingCurrency(null);
+              },
+            },
+          ]}
+        >
+          <p>
+            Convert every price at <strong>{rateLine(c === BASE_CURRENCY ? BASE_CURRENCY : c, pendingCurrency.rate)}</strong>?
+          </p>
+          <div className="choice-modal-compare">
+            <span>{fmtMoney(totals.grand, c)}</span>
+            <span aria-hidden="true">→</span>
+            <strong>{fmtMoney(pendingCurrency.newTotal, pendingCurrency.next)}</strong>
+          </div>
+          <p className="choice-modal-hint">
+            <strong>Keep the numbers</strong> only changes the currency label. Either way the equivalent line is
+            removed, so the client sees one currency.
+          </p>
+        </ChoiceModal>
+      )}
+      {confirmModal}
     </div>
   );
 }

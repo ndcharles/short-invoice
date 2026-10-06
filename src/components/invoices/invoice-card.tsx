@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Archive, Check, Copy, Duplicate, Edit, More, Plus, Trash } from '@/components/icons';
 import type { InvoiceRow } from '@/lib/types';
 import {
-  computeTotals,
   fmtMoney,
   formatDay,
+  invoiceEquivalent,
   InvoiceStatus,
   invoiceStatusPill,
+  invoiceTotals,
   MANUAL_STATUSES,
   parsePayments,
 } from '@/lib/invoices';
@@ -23,8 +24,12 @@ export function InvoiceCard({
   onDelete,
   onDuplicate,
   onLogPayment,
+  tagColor,
+  dateFormat,
 }: {
   invoice: InvoiceRow;
+  tagColor?: string;
+  dateFormat?: string;
   onStatusChange: (id: string, status: InvoiceStatus) => void;
   onDelete: (id: string) => void;
   onDuplicate: (invoice: InvoiceRow) => void;
@@ -38,11 +43,15 @@ export function InvoiceCard({
 
   const status = invoice.status as InvoiceStatus;
   const pill = invoiceStatusPill(status);
-  const totals = computeTotals({
-    ...invoice,
-    status,
-    payments: invoice.payments,
-  } as never);
+  const totals = invoiceTotals(invoice);
+  const equivalent = invoiceEquivalent({
+    currency: invoice.currency,
+    grand: totals.grand,
+    balance: totals.balance,
+    exchangeRate: invoice.exchange_rate,
+    equivalentAmount: invoice.equivalent_amount,
+  });
+  const canLogPayment = status !== 'draft' && status !== 'cancelled' && status !== 'paid';
 
   const closeMenu = useCallback(() => {
     setMenuPos(null);
@@ -106,9 +115,9 @@ export function InvoiceCard({
           <span className="link-dest-url">{invoice.client_name}</span>
           <span className="link-dest-meta">
             <span className="creator-avatar" title={invoice.avatar}>{invoice.avatar}</span>
-            <span className="link-date">Issued {formatDay(invoice.issued_at)}</span>
+            <span className="link-date">Issued {formatDay(invoice.issued_at, dateFormat)}</span>
             <span className="inv-due-sep">·</span>
-            <span className="link-date">Due {formatDay(invoice.due_at)}</span>
+            <span className="link-date">Due {formatDay(invoice.due_at, dateFormat)}</span>
             {paymentCount > 0 && (
               <>
                 <span className="inv-due-sep">·</span>
@@ -122,12 +131,28 @@ export function InvoiceCard({
       </div>
 
       <div className="link-meta-right">
+        {invoice.tag && <span className={`tag ${tagColor ?? ''}`}>{invoice.tag}</span>}
         <span className={`inv-status ${pill.cls}`}>
           <span className="inv-status-dot" />
           {pill.label}
         </span>
-        <div className="inv-amount" title={totals.balance > 0 ? `${fmtMoney(totals.balance, invoice.currency)} outstanding` : 'Fully settled'}>
+        <div
+          className="inv-amount"
+          title={[
+            totals.paid > 0 ? (totals.balance > 0 ? `${fmtMoney(totals.balance, invoice.currency)} still due` : 'Fully settled') : '',
+            equivalent ? `≈ ${fmtMoney(equivalent.total, equivalent.code)} at ${equivalent.rateLine}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined}
+        >
           {fmtMoney(totals.grand, invoice.currency)}
+          {(equivalent || (totals.paid > 0 && totals.balance > 0)) && (
+            <div className="inv-amount-sub">
+              {totals.paid > 0 && totals.balance > 0
+                ? `${fmtMoney(totals.balance, invoice.currency)} due`
+                : `≈ ${fmtMoney(equivalent!.total, equivalent!.code)}`}
+            </div>
+          )}
         </div>
       </div>
 
@@ -164,10 +189,12 @@ export function InvoiceCard({
             <span>Copy number</span>
             <span className="kbd-hint">⌘C</span>
           </div>
-          <div className="dropdown-item" onClick={() => { closeMenu(); onLogPayment(invoice); }}>
-            <Plus />
-            <span>Log payment</span>
-          </div>
+          {canLogPayment && (
+            <div className="dropdown-item" onClick={() => { closeMenu(); onLogPayment(invoice); }}>
+              <Plus />
+              <span>Log payment</span>
+            </div>
+          )}
 
           <div className="dropdown-sep" />
 
@@ -180,7 +207,7 @@ export function InvoiceCard({
             <div className="dropdown status-sub" data-popover>
               {MANUAL_STATUSES.map((id) => {
                 const meta = invoiceStatusPill(id);
-                const current = id === status;
+                const current = id === status || (id === 'sent' && status === 'overdue');
                 return (
                   <div
                     key={id}
@@ -197,7 +224,7 @@ export function InvoiceCard({
               })}
               <div className="dropdown-sep" />
               <div style={{ padding: '6px 8px', fontSize: '11px', color: 'var(--muted-foreground)', lineHeight: 1.4 }}>
-                Use <strong>Log payment</strong> to mark as Paid/Partial.
+                Overdue follows the due date. Use <strong>Log payment</strong> for Paid / Partially paid.
               </div>
             </div>
           )}

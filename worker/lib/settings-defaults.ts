@@ -102,14 +102,16 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
     },
   ]),
   inv_methods: JSON.stringify([
-    { id: 'mth_cash', name: 'Cash', uses: 32, enabled: true },
-    { id: 'mth_transfer', name: 'Bank transfer', uses: 18, enabled: true },
-    { id: 'mth_card', name: 'Card', uses: 11, enabled: true },
-    { id: 'mth_paystack', name: 'Paystack', uses: 7, enabled: true },
-    { id: 'mth_wire', name: 'Wire transfer', uses: 4, enabled: true },
-    { id: 'mth_cheque', name: 'Cheque', uses: 2, enabled: true },
-    { id: 'mth_other', name: 'Other', uses: 0, enabled: false },
+    { id: 'mth_transfer', name: 'Bank transfer', enabled: true },
+    { id: 'mth_card', name: 'Card', enabled: true },
+    { id: 'mth_paystack', name: 'Paystack', enabled: true },
+    { id: 'mth_wire', name: 'Wire transfer', enabled: true },
+    { id: 'mth_cash', name: 'Cash', enabled: true },
+    { id: 'mth_cheque', name: 'Cheque', enabled: true },
+    { id: 'mth_other', name: 'Other', enabled: false },
   ]),
+  // Preselected on new invoices; empty means the first enabled method.
+  inv_default_method: 'Bank transfer',
   inv_payment_terms: 'Net 30',
   inv_terms_note: 'Net 30. Late payments accrue 1.5% interest per month.',
   inv_number_prefix: '4th-',
@@ -118,10 +120,21 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   inv_tagline_on: 'true',
   inv_tagline_text: 'May the 4th be with you!',
   inv_tagline_color: '#1d4ed8',
-  inv_email_invoice_subject: 'Your invoice from Your Company Ltd',
+  inv_email_invoice_subject: 'Invoice {number} from {company}',
   inv_email_invoice_body:
-    'Hi {client},\n\nPlease find invoice {number} attached, due on {due}. Total amount: {amount}.\n\nPayment details are inside the invoice. Reply to this email with any questions.\n\nThanks,\nYour Company Ltd',
-  inv_email_receipt_subject: 'Receipt for your recent payment',
+    'Hi {client},\n\nPlease find invoice {number} attached, due on {due}. Total amount: {amount}.\n\nPayment details are inside the invoice. Reply to this email with any questions.\n\nThanks,\n{company}',
+  inv_email_receipt_subject: 'Receipt for invoice {number}',
   inv_email_receipt_body:
-    'Hi {client},\n\nThanks for your payment of {amount} on {payment_date}. Attached is your receipt for invoice {number}.\n\nBest,\nYour Company Ltd',
+    'Hi {client},\n\nThanks for your payment of {amount} on {payment_date}. Attached is your receipt for invoice {number}.\n\nBest,\n{company}',
+
+  // Email sending (SMTP) for invoices and receipts. The password is write-only:
+  // it is stored here but never returned by the API or the JSON export.
+  smtp_host: '',
+  smtp_port: '465',
+  smtp_security: 'tls',
+  smtp_username: '',
+  smtp_password: '',
+  smtp_from_name: '',
+  smtp_from_email: '',
+  smtp_reply_to: '',
 };

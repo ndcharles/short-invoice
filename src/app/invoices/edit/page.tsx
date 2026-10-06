@@ -1,71 +1,42 @@
 'use client';
 
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
-import { CanvasAccount, InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canvas';
-import { LogPaymentModal, SendModal, PaymentDraft } from '@/components/invoices/invoice-modals';
+import { InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canvas';
+import { LogPaymentModal, SendModal, PaymentDraft, SendDraft } from '@/components/invoices/invoice-modals';
+import { pdfFileName, renderInvoicePdf } from '@/lib/invoice-pdf';
+import { useConfirm } from '@/components/invoices/choice-modal';
 import type { InvoiceRow } from '@/lib/types';
-import { ChevronDown, ChevronRight, Copy, Cursor, Info, More, Plus, Send, Trash } from '@/components/icons';
-import { useSettings } from '@/lib/collections';
-import { parseList } from '@/lib/settings-json';
+import { ChevronRight, Copy, Cursor, Download, Duplicate, Info, More, Plus, Send, Trash } from '@/components/icons';
+import { useCollections } from '@/lib/collections';
+import { usePopoverDismiss } from '@/lib/popover';
+import { draftFromInvoice, draftProblem, invoicePayload, useInvoiceSettings } from '@/lib/invoice-settings';
 import {
   draftTotals,
+  fillTemplate,
   fmtMoney,
-  parseItems,
+  formatDay,
+  invoiceEquivalent,
+  InvoicePayment,
   parsePayments,
+  round2,
   STATUS_META,
-  InvoiceStatus,
-  InvoiceItem,
 } from '@/lib/invoices';
 
-function draftFromInvoice(invoice: InvoiceRow, paymentMethod: string): InvoiceDraft {
-  const addressLines = (invoice.client_address || '').split('\n');
-  const items = parseItems(invoice.items);
-  const rate = Number(invoice.tax_rate ?? 0.075);
-
-  // Seeded invoices store a grand total with no line items — materialise the
-  // design's synthetic "Services" line so the canvas totals match.
-  const effectiveItems: InvoiceItem[] =
-    items.length > 0
-      ? items
-      : Number(invoice.total) > 0
-        ? [{ name: 'Services', desc: '', qty: 1, unitPrice: Math.round((Number(invoice.total) / (1 + rate)) * 100) / 100 }]
-        : [];
-
-  return {
-    number: invoice.number,
-    clientName: invoice.client_name,
-    clientContact: addressLines[1] ?? '',
-    clientAddr1: addressLines[2] ?? '',
-    clientAddr2: addressLines[3] ?? '',
-    clientCountry: addressLines[4] ?? '',
-    clientEmail: invoice.client_email,
-    issuedAt: invoice.issued_at,
-    dueAt: invoice.due_at,
-    currency: invoice.currency,
-    status: invoice.status as InvoiceStatus,
-    items: effectiveItems,
-    charges: Number(invoice.charges ?? 0),
-    discount: Number(invoice.discount ?? 0),
-    discountType: (invoice.discount_type === 'percent' ? 'percent' : 'value') as 'value' | 'percent',
-    equivalentAmount: Number(invoice.equivalent_amount ?? 0),
-    exchangeRate: Number(invoice.exchange_rate ?? 0),
-    
-    taxRate: rate,
-    terms: invoice.terms || 'Net 30. Late payments accrue 1.5% interest per month.',
-    notes: invoice.notes,
-    paymentMethod,
-  };
+interface EmailLog {
+  id: string;
+  sent_at: number;
+  recipients: string;
+  subject: string;
+  attachments: string;
+  status: 'sent' | 'failed';
+  error: string | null;
 }
 
-
-function addressFromDraft(draft: InvoiceDraft): string {
-  return [draft.clientName, draft.clientContact, draft.clientAddr1, draft.clientAddr2, draft.clientCountry]
-    .filter(Boolean)
-    .join('\n');
-}
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 // Edit pages take the id as `?id=` because a static export cannot
 // prerender a dynamic `[id]` segment for ids that do not exist yet.
@@ -81,18 +52,14 @@ function EditInvoicePageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const id = searchParams.get('id') ?? '';
-  const settings = useSettings();
-  const canvasAccounts = parseList<CanvasAccount>(settings?.inv_accounts, []);
-  const methodNames = parseList<{ name: string; enabled: boolean }>(settings?.inv_methods, [])
-    .filter((m) => m.enabled !== false)
-    .map((m) => m.name);
-  const canvasTagline = {
-    on: settings?.inv_tagline_on === 'true',
-    text: settings?.inv_tagline_text ?? '',
-    color: settings?.inv_tagline_color ?? '#1d4ed8',
-  };
+  const cfg = useInvoiceSettings();
+  const [ask, confirmModal] = useConfirm();
+  const { items: folders } = useCollections('folders');
+  const { items: tags } = useCollections('tags');
 
   const [invoice, setInvoice] = useState<InvoiceRow | null>(null);
+  const [emails, setEmails] = useState<EmailLog[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
   const [baseline, setBaseline] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -104,29 +71,35 @@ function EditInvoicePageInner() {
   const [logMode, setLogMode] = useState<'full' | 'partial'>('full');
   const [sendOpen, setSendOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // A paid invoice can be shown (and printed) as its receipt or as the original invoice.
+  const [documentView, setDocumentView] = useState<'invoice' | 'receipt'>('receipt');
+  usePopoverDismiss(menuOpen, useCallback(() => setMenuOpen(false), []));
+
+  /** Adopts a row from the server as the new saved state. */
+  const adopt = useCallback((row: InvoiceRow) => {
+    const next = draftFromInvoice(row);
+    setInvoice(row);
+    setDraft(next);
+    setBaseline(JSON.stringify(next));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/invoices/${id}`);
+        const res = await fetch(`/api/invoices/${encodeURIComponent(id)}`);
         if (res.status === 404) {
           if (!cancelled) setNotFound(true);
           return;
         }
         const data = await res.json();
         if (cancelled || !data.invoice) return;
-        const inv = data.invoice as InvoiceRow;
-        const payments = parsePayments(inv.payments);
-        const method =
-          inv.payment_method || payments[payments.length - 1]?.method || 'Paystack (Debit/Credit Cards)';
-        const initial = draftFromInvoice(inv, method);
-        setInvoice(inv);
-        setDraft(initial);
-        setBaseline(JSON.stringify(initial));
+        adopt(data.invoice as InvoiceRow);
+        setEmails((data.emails ?? []) as EmailLog[]);
       } catch (err) {
         console.error('Failed to load invoice:', err);
+        if (!cancelled) setNotFound(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -134,95 +107,170 @@ function EditInvoicePageInner() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, adopt]);
 
   const dirty = useMemo(() => !!draft && JSON.stringify(draft) !== baseline, [draft, baseline]);
 
+  // Leaving with unsaved edits asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  const payments = useMemo(() => (invoice ? parsePayments(invoice.payments) : []), [invoice]);
   const totals = draft ? draftTotals(draft) : null;
-  const payments = invoice ? parsePayments(invoice.payments) : [];
-  const paid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const balance = totals ? Math.max(0, totals.grand - paid) : 0;
+  const paid = round2(payments.reduce((sum, p) => sum + Number(p.amount || 0), 0));
+  const balance = totals ? round2(Math.max(0, totals.grand - paid)) : 0;
 
-  const patch = (partial: Partial<InvoiceDraft>) => setDraft((prev) => (prev ? { ...prev, ...partial } : prev));
-
-  const handleSave = async () => {
-    if (!invoice || !draft) return;
-    if (!draft.clientName.trim()) {
-      setError('A client name is required');
-      return;
-    }
-    setSaving(true);
+  const patch = (partial: Partial<InvoiceDraft>) => {
     setError(null);
-    try {
-      const res = await fetch(`/api/invoices/${invoice.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          number: draft.number,
-          client_name: draft.clientName,
-          client_email: draft.clientEmail,
-          client_address: addressFromDraft(draft),
-          issued_at: draft.issuedAt,
-          due_at: draft.dueAt,
-          currency: draft.currency,
-          status: draft.status,
-          items: draft.items,
-          subtotal: totals?.subtotal ?? 0,
-          tax_rate: draft.taxRate,
-          discount: draft.discount,
-          discount_type: draft.discountType,
-          charges: draft.charges,
-          payment_method: draft.paymentMethod,
-          equivalent_amount: draft.equivalentAmount,
-          exchange_rate: draft.exchangeRate,
-          total: totals?.grand ?? 0,
-          notes: draft.notes,
-          terms: draft.terms,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save invoice');
-      setInvoice(data.invoice);
-      setBaseline(JSON.stringify(draft));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save invoice');
-    } finally {
-      setSaving(false);
-    }
+    setDraft((prev) => (prev ? { ...prev, ...partial } : prev));
   };
 
-  const logPayment = async () => {
-    if (!invoice || !totals) return;
-    const raw = prompt(`Amount received for ${draft?.number ?? invoice.number} (${invoice.currency}):`);
-    if (!raw) return;
-    const amount = Number(raw);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    const next = [
-      ...parsePayments(invoice.payments),
-      { amount, date: new Date().toISOString().slice(0, 10), method: draft?.paymentMethod || 'Bank transfer', note: '' },
-    ];
-    const nextStatus: InvoiceStatus = paid + amount >= totals.grand - 0.01 ? 'paid' : 'partially-paid';
-    const res = await fetch(`/api/invoices/${invoice.id}`, {
-      method: 'PATCH',
+  /**
+   * Saves the draft (plus any extra fields such as payments) in one PATCH, so
+   * logging a payment never loses unsaved edits and the server always derives
+   * totals and status from what is on screen.
+   */
+  /** Returns null on success, otherwise the error message (also shown in the save bar). */
+  const commit = useCallback(
+    async (extra: Record<string, unknown> = {}): Promise<string | null> => {
+      if (!invoice || !draft) return 'The invoice is still loading';
+      const problem = draftProblem(draft);
+      if (problem) {
+        setError(problem);
+        return problem;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/invoices/${invoice.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...invoicePayload(draft), ...extra }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save invoice');
+        adopt(data.invoice as InvoiceRow);
+        return null;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to save invoice';
+        setError(message);
+        return message;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [invoice, draft, adopt]
+  );
+
+  // ⌘S / Ctrl+S saves.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (dirty && !saving) void commit();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [dirty, saving, commit]);
+
+  const openLog = (mode: 'full' | 'partial' = 'full') => {
+    setLogMode(mode);
+    setLogOpen(true);
+  };
+
+  /** Switches the document to the receipt or the original invoice, then opens the print dialog. */
+  const printAs = (view: 'invoice' | 'receipt') => {
+    setDocumentView(view);
+    // Let React paint the chosen document before the browser snapshots it.
+    requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+  };
+
+  /**
+   * Send modal → saves unsaved edits, renders the chosen documents to PDF from
+   * the canvas itself, then emails them through the SMTP server in Settings.
+   */
+  const sendEmail = async (send: SendDraft, progress: (step: string) => void) => {
+    if (!invoice || !draft) return;
+    if (dirty) {
+      progress('Saving…');
+      const failed = await commit();
+      if (failed) throw new Error(failed);
+    }
+    const node = document.querySelector<HTMLElement>('.edit-invoice-layout .invoice-canvas');
+    if (!node) throw new Error('The invoice is not on screen');
+    const kinds: ('invoice' | 'receipt')[] = send.attach === 'both' ? ['invoice', 'receipt'] : [send.attach];
+    const previous = documentView;
+    const attachments: { kind: string; filename: string; content: string }[] = [];
+    try {
+      for (const kind of kinds) {
+        progress(`Making the ${kind} PDF…`);
+        flushSync(() => setDocumentView(kind));
+        await nextFrame();
+        await nextFrame();
+        const title = `${kind === 'invoice' ? 'Invoice' : 'Receipt'} ${draft.number}`;
+        attachments.push({ kind, filename: pdfFileName(kind, draft.number), content: await renderInvoicePdf(node, title) });
+      }
+    } finally {
+      setDocumentView(previous);
+    }
+    progress('Sending…');
+    const res = await fetch(`/api/invoices/${invoice.id}/send`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payments: next, status: nextStatus }),
+      body: JSON.stringify({
+        to: send.to,
+        cc: send.cc,
+        copy_me: send.copyMe,
+        subject: send.subject,
+        message: send.message,
+        attachments,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.invoice) adopt(data.invoice as InvoiceRow);
+    if (data.emails) setEmails(data.emails as EmailLog[]);
+    if (!res.ok) throw new Error(data.error || 'Could not send the email');
+    setSendOpen(false);
+    setNotice(`Sent to ${send.to.join(', ')}`);
+    setTimeout(() => setNotice(null), 4000);
+  };
+
+  const removePayment = async (index: number) => {
+    const payment = payments[index];
+    if (!payment || !draft) return;
+    const ok = await ask({
+      title: 'Remove this payment?',
+      message: `The ${fmtMoney(payment.amount, draft.currency)} payment from ${payment.date} is removed and the balance and status update.`,
+      confirmLabel: 'Remove payment',
+      destructive: true,
+    });
+    if (!ok) return;
+    await commit({ payments: payments.filter((_, i) => i !== index) });
+  };
+
+  const duplicate = async () => {
+    if (!draft) return;
+    const { number: _number, status: _status, ...rest } = invoicePayload(draft);
+    void _number;
+    void _status;
+    const res = await fetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...rest, issued_at: undefined, due_at: undefined, status: 'draft' }),
     });
     const data = await res.json();
-    if (res.ok && data.invoice) {
-      setInvoice(data.invoice);
-      setDraft((prev) => (prev ? { ...prev, status: nextStatus } : prev));
-      setBaseline((prev) => {
-        try {
-          const parsed = JSON.parse(prev) as InvoiceDraft;
-          return JSON.stringify({ ...parsed, status: nextStatus });
-        } catch {
-          return prev;
-        }
-      });
-    }
+    if (res.ok && data.invoice) router.push(`/invoices/edit?id=${encodeURIComponent(data.invoice.id)}`);
+    else setError(data.error || 'Could not duplicate this invoice');
   };
 
-  if (loading) {
+  if (loading && id) {
     return (
       <Shell>
         <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading invoice…</div>
@@ -230,7 +278,7 @@ function EditInvoicePageInner() {
     );
   }
 
-  if (notFound || !invoice || !draft || !totals) {
+  if (!id || notFound || !invoice || !draft || !totals) {
     return (
       <Shell>
         <div className="empty">
@@ -248,6 +296,44 @@ function EditInvoicePageInner() {
   }
 
   const meta = STATUS_META[draft.status];
+  const equivalent = invoiceEquivalent({
+    currency: draft.currency,
+    grand: totals.grand,
+    balance,
+    exchangeRate: draft.exchangeRate,
+    equivalentAmount: draft.equivalentAmount,
+  });
+  const canLogPayment = draft.status !== 'draft' && draft.status !== 'cancelled' && draft.status !== 'paid';
+  const lastPayment = payments[payments.length - 1];
+  const templateValues = {
+    client: draft.clientContact || draft.clientName,
+    number: draft.number,
+    // Invoice emails quote the total (with the equivalent when shown); receipts the latest payment.
+    amount: lastPayment
+      ? fmtMoney(lastPayment.amount, draft.currency)
+      : `${fmtMoney(totals.grand, draft.currency)}${equivalent ? ` (≈ ${fmtMoney(equivalent.total, equivalent.code)})` : ''}`,
+    due: formatDay(draft.dueAt, cfg.dateFormat),
+    payment_date: lastPayment?.date ?? '',
+    company: cfg.payTo.name,
+  };
+  const emailTemplates = {
+    invoice: {
+      subject: fillTemplate(cfg.emails.invoiceSubject, {
+        ...templateValues,
+        amount: `${fmtMoney(totals.grand, draft.currency)}${equivalent ? ` (≈ ${fmtMoney(equivalent.total, equivalent.code)})` : ''}`,
+      }),
+      message: fillTemplate(cfg.emails.invoiceBody, {
+        ...templateValues,
+        amount: `${fmtMoney(totals.grand, draft.currency)}${equivalent ? ` (≈ ${fmtMoney(equivalent.total, equivalent.code)})` : ''}`,
+      }),
+    },
+    receipt: {
+      subject: fillTemplate(cfg.emails.receiptSubject, templateValues),
+      message: fillTemplate(cfg.emails.receiptBody, templateValues),
+    },
+  };
+  const folderNames = Array.from(new Set([...(folders.length ? folders.map((f) => f.name) : ['Invoices']), draft.folder]));
+  const tagNames = Array.from(new Set([...tags.map((t) => t.name), ...(draft.tag ? [draft.tag] : [])]));
 
   return (
     <Shell>
@@ -263,12 +349,16 @@ function EditInvoicePageInner() {
               </svg>
             </span>
             {draft.number}
-            <ChevronDown />
           </span>
           {dirty && <span className="draft-saved" style={{ marginLeft: 0 }}>Unsaved changes</span>}
+          {notice && (
+            <span className="draft-saved" role="status" style={{ marginLeft: 0, color: 'var(--accent-green-fg)' }}>
+              {notice}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div className="click-stat-large">
+          <div className="click-stat-large" title={balance > 0 && paid > 0 ? `${fmtMoney(balance, draft.currency)} still due` : 'Invoice total'}>
             <Cursor />
             <strong>{fmtMoney(totals.grand, draft.currency)}</strong>
           </div>
@@ -279,7 +369,7 @@ function EditInvoicePageInner() {
           <button
             className="btn btn-outline btn-sm"
             onClick={() => {
-              navigator.clipboard.writeText(`${window.location.origin}/invoices/${invoice.id}`);
+              navigator.clipboard.writeText(`${window.location.origin}/invoices/edit?id=${encodeURIComponent(invoice.id)}`);
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             }}
@@ -292,13 +382,19 @@ function EditInvoicePageInner() {
               <More />
             </button>
             {menuOpen && (
-              <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', right: 0 }}>
-                <div className="dropdown-item" onClick={() => { setMenuOpen(false); logPayment(); }}>
-                  <Plus />
-                  <span>Log payment</span>
+              <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
+                {canLogPayment && (
+                  <div className="dropdown-item" onClick={() => { setMenuOpen(false); openLog('full'); }}>
+                    <Plus />
+                    <span>Log payment</span>
+                  </div>
+                )}
+                <div className="dropdown-item" onClick={() => { setMenuOpen(false); void duplicate(); }}>
+                  <Duplicate />
+                  <span>Duplicate as new draft</span>
                 </div>
                 <div className="dropdown-item" onClick={() => { setMenuOpen(false); window.print(); }}>
-                  <Copy />
+                  <Download />
                   <span>Print / PDF</span>
                 </div>
                 <div className="dropdown-sep" />
@@ -306,7 +402,13 @@ function EditInvoicePageInner() {
                   className="dropdown-item destructive"
                   onClick={async () => {
                     setMenuOpen(false);
-                    if (!confirm(`Delete ${draft.number}?`)) return;
+                    const ok = await ask({
+                      title: `Delete ${draft.number}?`,
+                      message: 'The record is removed permanently. Marking it Cancelled instead keeps your numbering intact.',
+                      confirmLabel: 'Delete',
+                      destructive: true,
+                    });
+                    if (!ok) return;
                     await fetch(`/api/invoices/${invoice.id}`, { method: 'DELETE' });
                     router.push('/invoices');
                   }}
@@ -322,23 +424,21 @@ function EditInvoicePageInner() {
 
       <div className="edit-invoice-layout">
         <InvoiceCanvas
+          key={invoice.id}
           draft={draft}
           onChange={patch}
           payments={payments}
-          onLogPayment={(mode) => {
-            setLogMode(mode ?? 'full');
-            setLogOpen(true);
-          }}
-          accounts={canvasAccounts}
-          tagline={canvasTagline}
-          defaultTerms={settings?.inv_terms_note}
-          payTo={{
-            name: settings?.inv_legal_name ?? '',
-            addr1: settings?.inv_address_1 ?? '',
-            addr2: settings?.inv_address_2 ?? '',
-            email: settings?.inv_contact_email ?? '',
-            taxId: settings?.inv_tax_id ?? '—',
-          }}
+          onLogPayment={openLog}
+          documentView={documentView}
+          onDocumentViewChange={setDocumentView}
+          accounts={cfg.accounts}
+          tagline={cfg.tagline}
+          logo={cfg.logo}
+          dateFormat={cfg.dateFormat}
+          currencies={cfg.currencies}
+          defaultRate={cfg.defaultRate}
+          defaultTerms={cfg.defaultTerms}
+          payTo={cfg.payTo}
         />
 
         <aside className="right-rail">
@@ -354,43 +454,38 @@ function EditInvoicePageInner() {
             <div className="rail-section">
               <div className="rail-section-label">Client</div>
               <div className="rail-client-name">{draft.clientName || 'Client name'}</div>
-              <div className="rail-client-line">{draft.clientContact || 'Contact person'}</div>
-              <div className="rail-client-line">{draft.clientAddr1 || 'Street address'}</div>
-              <div className="rail-client-line">{draft.clientAddr2 || 'City, State, Postal code'}</div>
-              <div className="rail-client-line">{draft.clientCountry || 'Country'}</div>
-              <div className="rail-client-line">{draft.clientEmail || 'client@company.com'}</div>
+              {draft.clientContact && <div className="rail-client-line">{draft.clientContact}</div>}
+              {draft.clientAddr1 && <div className="rail-client-line">{draft.clientAddr1}</div>}
+              {draft.clientAddr2 && <div className="rail-client-line">{draft.clientAddr2}</div>}
+              {draft.clientCountry && <div className="rail-client-line">{draft.clientCountry}</div>}
+              <div className="rail-client-line">{draft.clientEmail || 'No email yet'}</div>
             </div>
 
             <div className="rail-section">
               <div className="rail-section-label">Payment breakdown</div>
               <div className="rail-kv"><span>Subtotal</span><span>{fmtMoney(totals.subtotal, draft.currency)}</span></div>
-              <div className="rail-kv">
-                <span>Discount{draft.discountType === 'percent' ? ` (${draft.discount}%)` : ''}</span>
-                <span>{fmtMoney(totals.discount, draft.currency)}</span>
-              </div>
-              <div className="rail-kv"><span>Tax ({(draft.taxRate * 100).toFixed(1)}%)</span><span>{fmtMoney(totals.tax, draft.currency)}</span></div>
-              <div className="rail-kv"><span>Additional charges</span><span>{fmtMoney(totals.charges, draft.currency)}</span></div>
-              <div className="rail-kv rail-kv-total"><span>Invoice total</span><span>{fmtMoney(totals.grand, draft.currency)}</span></div>
-              {(Number(draft.equivalentAmount) > 0 || draft.exchangeRate > 0) && (
-                <div className="rail-kv" style={{ paddingTop: 0 }}>
-                  <span>Equivalent ({draft.currency === 'NGN' ? 'USD' : 'NGN'})</span>
-                  <span style={{ color: 'var(--muted-foreground)' }}>
-                    {draft.currency === 'NGN' ? '$' : '₦'}
-                    {(
-                      Number(draft.equivalentAmount) > 0
-                        ? Number(draft.equivalentAmount)
-                        : draft.exchangeRate > 0
-                          ? totals.grand / draft.exchangeRate
-                          : 0
-                    ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+              {totals.discount > 0 && (
+                <div className="rail-kv">
+                  <span>Discount{draft.discountType === 'percent' ? ` (${draft.discount}%)` : ''}</span>
+                  <span>− {fmtMoney(totals.discount, draft.currency)}</span>
                 </div>
               )}
-              {draft.exchangeRate > 0 && (
-                <div className="rail-kv" style={{ paddingTop: 0 }}>
-                  <span style={{ color: 'var(--muted-foreground)' }}>Exchange rate</span>
-                  <span style={{ color: 'var(--muted-foreground)' }}>₦{draft.exchangeRate.toLocaleString('en-US')} = $1</span>
-                </div>
+              {totals.charges > 0 && (
+                <div className="rail-kv"><span>Additional charges</span><span>{fmtMoney(totals.charges, draft.currency)}</span></div>
+              )}
+              <div className="rail-kv"><span>Tax ({round2(draft.taxRate * 100)}%)</span><span>{fmtMoney(totals.tax, draft.currency)}</span></div>
+              <div className="rail-kv rail-kv-total"><span>Invoice total</span><span>{fmtMoney(totals.grand, draft.currency)}</span></div>
+              {equivalent && (
+                <>
+                  <div className="rail-kv" style={{ paddingTop: 0 }}>
+                    <span>Equivalent ({equivalent.code})</span>
+                    <span style={{ color: 'var(--muted-foreground)' }}>{fmtMoney(equivalent.total, equivalent.code)}</span>
+                  </div>
+                  <div className="rail-kv" style={{ paddingTop: 0 }}>
+                    <span style={{ color: 'var(--muted-foreground)' }}>Exchange rate</span>
+                    <span style={{ color: 'var(--muted-foreground)' }}>{equivalent.rateLine}</span>
+                  </div>
+                </>
               )}
               {paid > 0 && (
                 <>
@@ -410,60 +505,124 @@ function EditInvoicePageInner() {
                   </div>
                 </>
               )}
+              <div className="rail-kv" style={{ color: 'var(--muted-foreground)' }}>
+                <span>Due</span>
+                <span>{formatDay(draft.dueAt, cfg.dateFormat)}</span>
+              </div>
+            </div>
+
+            <div className="rail-section">
+              <div className="rail-section-label">Organisation</div>
+              <label className="rail-field">
+                <span>Folder</span>
+                <span className="setting-select">
+                  <select value={draft.folder} onChange={(e) => patch({ folder: e.target.value })}>
+                    {folderNames.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </span>
+              </label>
+              <label className="rail-field">
+                <span>Tag</span>
+                <span className="setting-select">
+                  <select value={draft.tag ?? ''} onChange={(e) => patch({ tag: e.target.value || null })}>
+                    <option value="">No tag</option>
+                    {tagNames.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </span>
+              </label>
             </div>
 
             <div className="rail-section rail-actions">
-              {(draft.status === 'sent' ||
-                draft.status === 'overdue' ||
-                draft.status === 'partially-paid' ||
-                draft.status === 'paid') && (
+              {draft.status !== 'draft' && draft.status !== 'cancelled' && (
                 <button
                   className="btn btn-primary rail-btn"
-                  disabled={draft.status === 'paid' && paid > 0}
-                  title={
-                    draft.status === 'paid'
-                      ? 'This invoice is fully paid — no further payment can be logged'
-                      : 'Log a payment'
-                  }
-                  style={
-                    draft.status === 'paid' && paid > 0
-                      ? { filter: 'blur(0.6px)', opacity: 0.45, cursor: 'not-allowed' }
-                      : undefined
-                  }
-                  onClick={() => {
-                    if (draft.status === 'paid' && paid > 0) return;
-                    setLogMode('full');
-                    setLogOpen(true);
-                  }}
+                  disabled={!canLogPayment}
+                  title={canLogPayment ? 'Log a payment' : 'This invoice is fully paid'}
+                  onClick={() => openLog('full')}
                 >
                   <Plus />
                   <span>Log Payment</span>
                 </button>
               )}
-              {payments.length > 0 && (
+              {(draft.status === 'draft' || payments.length > 0) && (
                 <button
-                  className="btn btn-outline rail-btn"
-                  onClick={() => navigator.clipboard.writeText(`${draft.number} · ${draft.clientName} · ${fmtMoney(totals.grand, draft.currency)}`)}
+                  className={`btn ${draft.status === 'draft' ? 'btn-primary' : 'btn-outline'} rail-btn`}
+                  onClick={() => setSendOpen(true)}
                 >
-                  <Copy />
-                  <span>View Receipt</span>
+                  <Send />
+                  <span>{payments.length > 0 ? 'Send receipt' : 'Send to client'}</span>
+                </button>
+              )}
+              {payments.length > 0 ? (
+                <>
+                  <button className="btn btn-outline rail-btn" onClick={() => printAs('receipt')}>
+                    <Download />
+                    <span>Download receipt</span>
+                  </button>
+                  <button
+                    className="btn btn-outline rail-btn"
+                    title="The invoice as originally issued, without payments"
+                    onClick={() => printAs('invoice')}
+                  >
+                    <Download />
+                    <span>Download original invoice</span>
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn-outline rail-btn" onClick={() => window.print()}>
+                  <Download />
+                  <span>Download PDF</span>
                 </button>
               )}
             </div>
 
+            {emails.length > 0 && (
+              <div className="rail-section">
+                <div className="rail-section-label">Emails ({emails.length})</div>
+                {emails.map((mail) => (
+                  <div className="rail-payment" key={mail.id} title={mail.error ?? mail.subject}>
+                    <span className={`rail-email-dot${mail.status === 'failed' ? ' is-failed' : ''}`} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="rail-payment-amt rail-email-to">{mail.recipients}</div>
+                      <div className="rail-payment-sub">
+                        {mail.status === 'failed' ? 'Failed' : 'Sent'} {formatDay(mail.sent_at, cfg.dateFormat)}
+                        {mail.attachments ? ` · ${mail.attachments.replace(',', ' + ')}` : ''}
+                      </div>
+                      {mail.status === 'failed' && mail.error && <div className="rail-email-error">{mail.error}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {payments.length > 0 && (
               <div className="rail-section">
                 <div className="rail-section-label">Payments ({payments.length})</div>
-                {payments.map((payment, index) => (
+                {payments.map((payment: InvoicePayment, index) => (
                   <div className="rail-payment" key={index}>
                     <span className="rail-payment-idx">{index + 1}</span>
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="rail-payment-amt">{fmtMoney(payment.amount, draft.currency)}</div>
                       <div className="rail-payment-sub">
                         {payment.date}
                         {payment.method ? ` · ${payment.method}` : ''}
+                        {payment.note ? ` · ${payment.note}` : ''}
                       </div>
                     </div>
+                    <button
+                      className="icon-btn rail-payment-remove"
+                      title="Remove this payment"
+                      aria-label="Remove this payment"
+                      onClick={() => void removePayment(index)}
+                    >
+                      <Trash />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -472,37 +631,17 @@ function EditInvoicePageInner() {
         </aside>
       </div>
 
-      {logOpen && totals && (
+      {logOpen && (
         <LogPaymentModal
           initialFullyPaid={logMode === 'full'}
           currency={draft.currency}
           outstanding={balance}
-          methods={methodNames}
+          methods={cfg.methods}
+          defaultMethod={draft.paymentMethod}
           onClose={() => setLogOpen(false)}
           onSubmit={async (payment: PaymentDraft) => {
-            const next = [
-              ...parsePayments(invoice.payments),
-              { amount: payment.amount, date: payment.date, method: payment.method, note: payment.note },
-            ];
-            const paidTotal = paid + payment.amount;
-            const nextStatus: InvoiceStatus = paidTotal >= totals.grand - 0.01 ? 'paid' : 'partially-paid';
-            const res = await fetch(`/api/invoices/${invoice.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ payments: next, status: nextStatus }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to log payment');
-            setInvoice(data.invoice);
-            setDraft((prev) => (prev ? { ...prev, status: nextStatus } : prev));
-            setBaseline((prev) => {
-              try {
-                const parsed = JSON.parse(prev) as InvoiceDraft;
-                return JSON.stringify({ ...parsed, status: nextStatus });
-              } catch {
-                return prev;
-              }
-            });
+            const failed = await commit({ payments: [...payments, payment] });
+            if (failed) throw new Error(failed);
             setLogOpen(false);
           }}
         />
@@ -511,42 +650,18 @@ function EditInvoicePageInner() {
       {sendOpen && (
         <SendModal
           clientEmail={draft.clientEmail}
-          receiptMode={payments.length > 0}
-          subject={
-            payments.length > 0
-              ? settings?.inv_email_receipt_subject ?? 'Receipt for your recent payment'
-              : settings?.inv_email_invoice_subject ?? `Your invoice from ${settings?.inv_legal_name ?? 'us'}`
-          }
-          message={
-            payments.length > 0
-              ? settings?.inv_email_receipt_body ?? ''
-              : settings?.inv_email_invoice_body ?? ''
-          }
+          copyEmail={cfg.copyEmail}
+          hasPayments={payments.length > 0}
+          templates={emailTemplates}
+          ready={cfg.emailReady}
           onClose={() => setSendOpen(false)}
-          onSubmit={async () => {
-            const res = await fetch(`/api/invoices/${invoice.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ status: draft.status === 'draft' ? 'sent' : draft.status }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to send');
-            if (data.invoice) setInvoice(data.invoice);
-            setDraft((prev) => (prev ? { ...prev, status: prev.status === 'draft' ? 'sent' : prev.status } : prev));
-            setBaseline((prev) => {
-              try {
-                const parsed = JSON.parse(prev) as InvoiceDraft;
-                return JSON.stringify({ ...parsed, status: parsed.status === 'draft' ? 'sent' : parsed.status });
-              } catch {
-                return prev;
-              }
-            });
-            setSendOpen(false);
-          }}
+          onSubmit={sendEmail}
         />
       )}
 
-      <div className={`save-bar ${dirty ? 'visible' : ''}`}>
+      {confirmModal}
+
+      <div className={`save-bar ${dirty || error ? 'visible' : ''}`}>
         <span className="save-bar-dot" />
         <span>{error ?? (saving ? 'Saving…' : 'Unsaved changes')}</span>
         <button
@@ -563,7 +678,7 @@ function EditInvoicePageInner() {
         >
           Discard
         </button>
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+        <button className="btn btn-primary" onClick={() => void commit()} disabled={saving || !dirty}>
           {saving ? 'Saving…' : 'Save changes'}
         </button>
       </div>
