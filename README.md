@@ -2,11 +2,13 @@
 
 An internal multi-tool workspace for a small team:
 
-- **URL shortener**: short links with folders, tags, UTM params, passwords,
-  expiry, cloaking, custom link previews, QR codes and click analytics
+- **URL shortener**: short links on your own domain (or `/s/` on the app),
+  folders, tags, UTM params, passwords, expiry, cloaking, custom link
+  previews, QR codes and click analytics
 - **UTM builder**: tagged campaign URLs with presets and QR codes
-- **Invoice generator**: Draft → Sent → Overdue → Partially paid → Paid →
-  Cancelled, payment logging, receipts, PDF export and analytics
+- **Invoice generator**: naira-first invoices with VAT, discounts, charges
+  and an optional USD equivalent for foreign clients; payments, receipts,
+  automatic overdue, a private client link with PDF download, and analytics
 - **Settings** for all three modules
 
 Built to run on the **Cloudflare Workers free plan**.
@@ -16,7 +18,7 @@ Built to run on the **Cloudflare Workers free plan**.
 | Piece | Tech | Notes |
 | --- | --- | --- |
 | UI | Next.js 16, static export (`out/`) | Served by Workers Static Assets: free, and not counted against request quotas |
-| API + redirects | Hono Worker (`worker/`) | Only `/api/*` and `/s/:alias` invoke the Worker |
+| API + redirects | Hono Worker (`worker/`) | Runs for `/api/*`, `/s/*`, `/` and unknown paths (short-domain aliases) |
 | Storage | Cloudflare D1 | No KV. Clicks are stored as daily rollups to stay well inside D1's free write/read limits |
 
 See [CLAUDE.md](CLAUDE.md) for the free-tier rules this codebase follows.
@@ -26,8 +28,10 @@ See [CLAUDE.md](CLAUDE.md) for the free-tier rules this codebase follows.
 ```bash
 npm install
 npm run db:migrate:local
-npm run db:seed:local   # optional demo data
-npm run dev             # http://localhost:3000
+npm run db:seed:local            # optional demo links and campaigns
+npm run db:demo:invoices:local   # optional demo invoices (every status)
+npm run dev                      # http://localhost:3000
+npm test                         # unit + API tests
 ```
 
 ## Deploying
@@ -40,8 +44,15 @@ npm run deploy
 ```
 
 Put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
-in front of the app (everything except `/s/*`) before sharing it. The app
-has no login of its own yet.
+in front of the app host (bypass `/s/*`, which serves short links and client
+invoice links) before sharing it. The app has no login of its own yet.
+
+To serve short links on your own domain, attach it to the Worker in the
+Cloudflare dashboard (Workers & Pages → short-invoice → Settings → Domains &
+Routes → Custom domain), add it in Settings → URL Shortener and press Verify.
+
+Demo invoices can be loaded into the deployed database and removed again:
+`npm run db:demo:invoices` / `npm run db:demo:invoices:clean`.
 
 ## Design reference
 

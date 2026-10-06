@@ -10,23 +10,58 @@ for the API and short-link redirects, and Cloudflare D1 for storage.
 
 ```
 src/        Next.js app (all pages are client components) -> static export in out/
-worker/     Hono Worker: /api/* and /s/:alias. Entry worker/index.ts
+worker/     Hono Worker. Entry worker/index.ts
 migrations/ D1 schema (wrangler d1 migrations)
-seed/       demo data for local dev only
+seed/       demo.sql (local only); demo-invoices.sql (safe on prod, DEMO- rows only)
+tests/      vitest: unit/ (pure libs) and api/ (black-box against wrangler dev)
 design/     original HTML design handoff (reference, not shipped)
 ```
 
-`src/lib/types.ts`, `src/lib/links/*` and `src/lib/invoices.ts` are shared by
-both sides; keep them free of React/DOM/Workers imports.
+Shared by the Worker and the UI, so free of React/DOM/Workers imports:
+`src/lib/types.ts`, `validate.ts`, `invoices.ts`, `invoice-document.ts`,
+`short-url.ts`, `dates.ts`, `links/*`.
+
+## Routing
+
+The Worker runs for `/api/*`, `/s/*` and `/` (`run_worker_first`), and for any
+path with no static file (`not_found_handling: "none"`). It handles:
+
+- `/s/:alias`: short link on the default domain (any host).
+- `/<alias>` on a verified custom domain: same link lookup, keyed by the host.
+- `/` on a short domain: the root redirect setting. On the app host: the app.
+- `/s/i/<token>`: public, read-only invoice/receipt (`?doc=receipt`,
+  `?print=1`, `?preview=1` skips the "viewed" stamp). Rendered server-side by
+  `src/lib/invoice-document.ts`; the app's PDF button prints this page.
+- `/.well-known/short-invoice`: token used by Settings → Verify for domains.
+- Anything else: the static app's 404 page.
+
+Cloudflare Access belongs on the **app host only**, with `/s/*` bypassed.
+Short domains (e.g. 4th.link) should not be behind Access at all.
+
+## Invoices
+
+- Totals are computed in minor units by `computeTotals` (lines, flat or %
+  discount, charges, then VAT on the result). The server always recomputes;
+  client-sent totals are ignored.
+- Stored status is draft | sent | partially-paid | paid | cancelled. Paid and
+  partially-paid follow from payments (`settleStatus`); overdue is never
+  stored, it is derived from the due date (`displayStatus`).
+- `exchange_rate` is naira per 1 unit of the foreign currency. NGN invoices
+  show a USD equivalent, other currencies show NGN; 0 hides it.
+- Numbers come from an atomic upsert on `inv_next_number`.
+- Payments live in the `payments` JSON column with ids; add/remove via
+  `/api/invoices/:id/payments`.
 
 ## Commands
 
 ```bash
-npm run db:migrate:local   # first run: create local D1 schema
-npm run db:seed:local      # optional demo data
+npm run db:migrate:local   # first run (and after new migrations): local D1 schema
+npm run db:seed:local      # optional demo links/campaigns
+npm run db:demo:invoices:local  # 12 demo invoices covering every status
 npm run dev                # wrangler dev :8787 + next dev :3000 (proxies /api, /s)
 npm run typecheck          # UI tsconfig + worker/tsconfig.json
 npm run lint
+npm test                   # unit + API tests (boots wrangler dev on :8791, fresh D1)
 npm run preview            # static build served by the Worker on :8787
 npm run deploy             # next build && wrangler deploy
 npm run db:migrate         # apply migrations to remote D1
@@ -62,6 +97,10 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
 - Multi-statement writes use `db.batch([...])` (one round trip, atomic).
 - SQL uses bound placeholders (`?1`); never interpolate request input.
   Table names only from fixed maps (see `worker/lib/collections.ts`).
+- **Validate every input on the server** with `src/lib/validate.ts`
+  (`parseHttpUrl` for anything that ends up in a redirect, href, src or
+  iframe). Worker-rendered HTML escapes every value. API writes require JSON
+  and a same-origin `Sec-Fetch-Site` (CSRF guard in `worker/index.ts`).
 
 ## Settings
 
@@ -78,6 +117,9 @@ npm run db:migrate
 npx wrangler secret put LINK_COOKIE_SECRET   # e.g. `openssl rand -base64 32`
 npm run deploy
 ```
+
+Run `npm run db:migrate` **before** `npm run deploy` whenever `migrations/`
+has a new file (0002 adds invoice columns the new code needs).
 
 Locally, copy `.dev.vars.example` to `.dev.vars`. Without the secret, password
 links still work but ask for the password on every click.
@@ -96,7 +138,7 @@ changes take up to 60 s to propagate and links must update instantly.
 ## Known gaps (next steps)
 
 - **No authentication.** Put Cloudflare Access (free up to 50 users) in front
-  of everything except `/s/*` before sharing the deployed URL.
-- Short links resolve at `/s/:alias` on the app host; serving `4th.link/:alias`
-  needs a custom domain route and host-based routing in the Worker.
-- Parts of the analytics UI still render placeholder data.
+  of the app host, bypassing `/s/*`, before sharing the deployed URL.
+- Invoices are sent through the user's email app (`mailto:`); there is no
+  mail server on the free plan.
+- Password-protected links have no attempt limit.
