@@ -1,3 +1,7 @@
 # Copy to .dev.vars for `wrangler dev`. Production: `npx wrangler secret put LINK_COOKIE_SECRET`.
 # Any long random string, e.g. `openssl rand -base64 32`.
 LINK_COOKIE_SECRET=dev-only-change-me
+
+# Optional: who you are locally (default: a stand-in admin "dev@localhost").
+# Set it to a non-admin email to see the app as a member.
+# DEV_USER_EMAIL=you@yourcompany.com

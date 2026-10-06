@@ -137,6 +137,27 @@ Settings UI. **The repo is public; never commit them.**
   put Cloudflare Access in front of the app before saving real SMTP details.
 - `tests/api/email.test.ts` runs a fake SMTP server in the test process.
 
+## People, roles and activity
+
+- Cloudflare Access proves who someone is (email one-time PIN or Google); the
+  Worker decides whether they may use the app (`worker/lib/auth.ts`,
+  `requireUser` on every `/api/*` call except health). The Access JWT is
+  verified in the Worker (`worker/lib/access-jwt.ts`) whenever
+  `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set; requests without a valid token
+  get 401, which also closes the API on short domains that are not behind Access.
+- Admins: the `ADMIN_EMAILS` secret (comma-separated). Members: anyone on a
+  domain in Settings → Team (`team_domains`), or invited there. Removed people
+  keep a `users` row with status `removed`, so a domain rule cannot let them back.
+- Members create and edit links, UTMs and invoices. Settings, domains,
+  folders/tags, export, test email, team management and all deletes are
+  admin-only (`requireAdmin`, see `worker/index.ts`).
+- Every write records `created_by`/`updated_by` (emails) and an `activity` row
+  in the same batch (`worker/lib/activity.ts`). Invoice payments carry `by`,
+  set on the server; emails carry `sent_by`.
+- Locally (no Access) you are a stand-in admin; send `x-dev-user: someone@x`
+  to act as someone else (localhost only). Deployed without Access the app is
+  unprotected and everyone acts as the first admin email.
+
 ## UI gotchas
 
 - basecoat-css pins every `[data-popover]` to the left edge. A dropdown that

@@ -34,6 +34,9 @@ export interface LinkItem {
   avatar: string;
   created_at: number;
   updated_at: number;
+  /** Emails of who created / last changed it; null for rows from before sign-in. */
+  created_by?: string | null;
+  updated_by?: string | null;
 }
 
 export interface UtmCampaign {
@@ -53,6 +56,9 @@ export interface UtmCampaign {
   avatar: string;
   created_at: number;
   updated_at: number;
+  /** Emails of who created / last changed it; null for rows from before sign-in. */
+  created_by?: string | null;
+  updated_by?: string | null;
 }
 
 export interface InvoiceRow {
@@ -84,4 +90,7 @@ export interface InvoiceRow {
   avatar: string;
   created_at: number;
   updated_at: number;
+  /** Emails of who created / last changed it; null for rows from before sign-in. */
+  created_by?: string | null;
+  updated_by?: string | null;
 }

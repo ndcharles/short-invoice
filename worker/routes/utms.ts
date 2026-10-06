@@ -5,7 +5,8 @@ import type { UtmCampaign } from '../../src/lib/types';
 import { LIMITS, parseHttpUrl, parseMultiline, parseText, type Result } from '../../src/lib/validate';
 import { readJsonObject } from '../lib/request';
 import { getSettings } from '../lib/settings';
-import { initials } from '../lib/initials';
+import { activity, changedFields } from '../lib/activity';
+import { requireAdmin } from '../lib/auth';
 
 const utms = new Hono<AppEnv>();
 
@@ -92,9 +93,11 @@ utms.post('/', async (c) => {
 
   const id = `utm_${nanoid(10)}`;
   const now = Date.now();
-  await c.env.DB.prepare(
-    `INSERT INTO utms (id, website, source, medium, campaign, campaign_id, term, content, comments, folder, avatar, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)`
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare(
+    `INSERT INTO utms (id, website, source, medium, campaign, campaign_id, term, content, comments, folder, avatar, created_at, updated_at, created_by, updated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13)`
   )
     .bind(
       id,
@@ -107,10 +110,12 @@ utms.post('/', async (c) => {
       input.content ?? null,
       input.comments ?? '',
       input.folder ?? (settings.utm_default_folder && settings.utm_default_folder !== 'None' ? settings.utm_default_folder : 'Campaigns'),
-      initials(settings.profile_name),
-      now
-    )
-    .run();
+      c.var.user.initials,
+      now,
+      c.var.user.email
+    ),
+    activity(db, c.var.user, { action: 'created', type: 'utm', id, label: utmLabel(input), detail: input.website }, now),
+  ]);
 
   const campaign = await c.env.DB.prepare('SELECT * FROM utms WHERE id = ?1').bind(id).first<UtmCampaign>();
   return c.json({ campaign }, 201);
@@ -137,11 +142,14 @@ utms.patch('/:id', async (c) => {
   const pick = <K extends keyof UtmInput & keyof UtmCampaign>(key: K) =>
     input[key] === undefined ? existing[key] : input[key];
 
-  await db
+  const now = Date.now();
+  const archivedChange = input.archived !== undefined && input.archived !== existing.archived;
+  await db.batch([
+    db
     .prepare(
       `UPDATE utms
        SET website = ?1, source = ?2, medium = ?3, campaign = ?4, campaign_id = ?5, term = ?6, content = ?7,
-           comments = ?8, folder = ?9, archived = ?10, updated_at = ?11
+           comments = ?8, folder = ?9, archived = ?10, updated_at = ?11, updated_by = ?13
        WHERE id = ?12`
     )
     .bind(
@@ -155,18 +163,60 @@ utms.patch('/:id', async (c) => {
       pick('comments'),
       input.folder === undefined ? existing.folder : input.folder ?? 'Campaigns',
       pick('archived'),
-      Date.now(),
-      id
-    )
-    .run();
+      now,
+      id,
+      c.var.user.email
+    ),
+    activity(
+      db,
+      c.var.user,
+      archivedChange
+        ? { action: input.archived ? 'archived' : 'restored', type: 'utm', id, label: utmLabel({ ...existing, ...definedOnly(input) }) }
+        : {
+            action: 'updated',
+            type: 'utm',
+            id,
+            label: utmLabel({ ...existing, ...definedOnly(input) }),
+            detail: changedFields(existing as unknown as Record<string, unknown>, input as Record<string, unknown>, UTM_FIELDS),
+          },
+      now
+    ),
+  ]);
 
   const campaign = await db.prepare('SELECT * FROM utms WHERE id = ?1').bind(id).first<UtmCampaign>();
   return c.json({ campaign });
 });
 
-utms.delete('/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM utms WHERE id = ?1').bind(c.req.param('id')).run();
+utms.delete('/:id', requireAdmin, async (c) => {
+  const id = c.req.param('id');
+  const db = c.env.DB;
+  const existing = await db.prepare('SELECT * FROM utms WHERE id = ?1').bind(id).first<UtmCampaign>();
+  if (!existing) return c.json({ success: true });
+  await db.batch([
+    db.prepare('DELETE FROM utms WHERE id = ?1').bind(id),
+    activity(db, c.var.user, { action: 'deleted', type: 'utm', id, label: utmLabel(existing) }),
+  ]);
   return c.json({ success: true });
 });
+
+const UTM_FIELDS: Record<string, string> = {
+  website: 'website',
+  source: 'source',
+  medium: 'medium',
+  campaign: 'campaign',
+  campaign_id: 'campaign ID',
+  term: 'term',
+  content: 'content',
+  comments: 'comments',
+  folder: 'folder',
+};
+
+const definedOnly = <T extends object>(obj: T) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
+
+/** "newsletter / email · q3_launch" for the activity feed. */
+function utmLabel(u: { website?: string | null; source?: string | null; medium?: string | null; campaign?: string | null }) {
+  const tracking = [u.source, u.medium].filter(Boolean).join(' / ');
+  return [tracking, u.campaign].filter(Boolean).join(' · ') || u.website || 'UTM';
+}
 
 export default utms;

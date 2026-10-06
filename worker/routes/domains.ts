@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { getSettings } from '../lib/settings';
+import { activity } from '../lib/activity';
 import { isAppHost, parseDomains } from '../lib/domains';
 import { readJsonObject } from '../lib/request';
 import { parseHostname } from '../../src/lib/validate';
@@ -74,6 +75,7 @@ domains.post('/', async (c) => {
 
   list.push({ id: `dom_${crypto.randomUUID().slice(0, 8)}`, name: name.value, status: 'pending', added: Date.now(), verified_at: null });
   await writeDomains(c.env.DB, list);
+  await activity(c.env.DB, c.var.user, { action: 'added', type: 'domain', label: name.value }).run();
   return c.json((await state(c.env.DB)).body, 201);
 });
 
@@ -108,6 +110,7 @@ domains.post('/:name/verify', async (c) => {
   domain.status = verified ? 'active' : 'pending';
   domain.verified_at = verified ? Date.now() : null;
   await writeDomains(db, list);
+  await activity(db, c.var.user, { action: verified ? 'verified' : 'verify failed', type: 'domain', label: domain.name }).run();
   const body = (await state(db)).body;
   // A failed check is a normal outcome, not an error: 200 with verified: false.
   return c.json({ ...body, verified, reason: verified ? null : reason });
@@ -125,6 +128,7 @@ domains.post('/:name/default', async (c) => {
     )
     .bind(domain.name, Date.now())
     .run();
+  await activity(db, c.var.user, { action: 'made default', type: 'domain', label: domain.name }).run();
   return c.json((await state(db)).body);
 });
 
@@ -141,6 +145,7 @@ domains.delete('/:name', async (c) => {
     return c.json({ error: `${domain.links} link(s) still use ${name}. Move or delete them first.` }, 409);
   }
   await writeDomains(db, list.filter((d) => d.name !== name));
+  await activity(db, c.var.user, { action: 'removed', type: 'domain', label: name }).run();
   return c.json((await state(db)).body);
 });
 

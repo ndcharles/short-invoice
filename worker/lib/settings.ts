@@ -80,6 +80,32 @@ const VALIDATORS: Record<string, (value: string) => Result<string>> = {
   smtp_reply_to: (v) => asString(parseEmail(v, 'Reply-to email')),
 };
 
+/** JSON list of sign-in domains such as ["4th-entity.com"]; public webmail domains are refused. */
+function teamDomainList(value: string): Result<string> {
+  let list: unknown;
+  try {
+    list = JSON.parse(value || '[]');
+  } catch {
+    return { ok: false, error: 'Allowed domains must be a list' };
+  }
+  if (!Array.isArray(list) || list.length > 20) return { ok: false, error: 'Allowed domains must be a list of up to 20 domains' };
+  const out: string[] = [];
+  for (const item of list) {
+    const host = parseHostname(String(item ?? '').replace(/^@/, ''));
+    if (!host.ok) return { ok: false, error: `"${item}" is not a domain like 4th-entity.com` };
+    if (PUBLIC_MAIL.has(host.value)) {
+      return { ok: false, error: `${host.value} is a public email service; invite those people one by one instead` };
+    }
+    if (!out.includes(host.value)) out.push(host.value);
+  }
+  return { ok: true, value: JSON.stringify(out) };
+}
+
+const PUBLIC_MAIL = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+  'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'zoho.com', 'yandex.com',
+]);
+
 function smtpHost(value: string): Result<string> {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed || trimmed === 'localhost') return { ok: true, value: trimmed };
@@ -101,6 +127,7 @@ export function validateSetting(key: string, raw: unknown): Result<string> {
   if (BOOLEAN_KEYS.has(key)) {
     return value === 'true' || value === 'false' ? { ok: true, value } : { ok: false, error: `${key} must be true or false` };
   }
+  if (key === 'team_domains') return teamDomainList(value);
   if (LIST_KEYS.has(key)) {
     if (value.length > 50_000) return { ok: false, error: `${key} is too large` };
     try {
@@ -119,7 +146,11 @@ export function validateSetting(key: string, raw: unknown): Result<string> {
  * Persists a patch in one batch, ignoring unknown and managed keys and
  * unchanged values. Any invalid value rejects the whole patch.
  */
-export async function saveSettings(db: D1Database, patch: Record<string, unknown>): Promise<Result<SettingsMap>> {
+export async function saveSettings(
+  db: D1Database,
+  patch: Record<string, unknown>,
+  extra: D1PreparedStatement[] | ((changed: string[]) => D1PreparedStatement[]) = []
+): Promise<Result<{ settings: SettingsMap; changed: string[] }>> {
   const current = await getSettings(db);
   const now = Date.now();
   const stmt = db.prepare(
@@ -128,6 +159,7 @@ export async function saveSettings(db: D1Database, patch: Record<string, unknown
   );
 
   const writes = [];
+  const changed: string[] = [];
   for (const [key, raw] of Object.entries(patch)) {
     if (!(key in DEFAULT_SETTINGS) || MANAGED_KEYS.has(key)) continue;
     // A secret is only replaced when a new value is typed; `<key>_clear` removes it.
@@ -137,14 +169,16 @@ export async function saveSettings(db: D1Database, patch: Record<string, unknown
     if (current[key] === checked.value) continue;
     writes.push(stmt.bind(key, checked.value, now));
     current[key] = checked.value;
+    changed.push(key);
   }
   for (const key of SECRET_KEYS) {
     if (patch[`${key}_clear`] === 'true' || patch[`${key}_clear`] === true) {
       writes.push(db.prepare('DELETE FROM settings WHERE key = ?1').bind(key));
       current[key] = '';
+      changed.push(key);
     }
   }
-  if (writes.length) await db.batch(writes);
+  if (writes.length) await db.batch([...writes, ...(typeof extra === 'function' ? extra(changed) : extra)]);
 
-  return { ok: true, value: current };
+  return { ok: true, value: { settings: current, changed } };
 }

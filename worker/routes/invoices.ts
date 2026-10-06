@@ -5,6 +5,9 @@ import type { InvoiceRow } from '../../src/lib/types';
 import {
   currencyCode,
   draftTotals,
+  fmtMoney,
+  STATUS_META,
+  type InvoicePayment,
   dueDateFor,
   paidTotal,
   parseItems,
@@ -14,7 +17,8 @@ import {
 import { startOfDay } from '../../src/lib/dates';
 import { getSettings, type SettingsMap } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
-import { initials } from '../lib/initials';
+import { activity, changedFields } from '../lib/activity';
+import { requireAdmin, type CurrentUser } from '../lib/auth';
 import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
@@ -184,9 +188,9 @@ invoices.post('/', async (c) => {
       .prepare(
         `INSERT INTO invoices (id, number, client_name, client_email, client_address, issued_at, due_at, currency, status,
           items, payments, subtotal, tax_rate, discount, total, notes, terms, folder, tag, avatar, created_at, updated_at,
-          discount_type, charges, payment_method, equivalent_amount, exchange_rate)
+          discount_type, charges, payment_method, equivalent_amount, exchange_rate, created_by, updated_by)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21,
-          ?22, ?23, ?24, ?25, ?26)`
+          ?22, ?23, ?24, ?25, ?26, ?27, ?27)`
       )
       .bind(
         id,
@@ -199,7 +203,7 @@ invoices.post('/', async (c) => {
         input.currency ?? defaults.currency,
         status,
         JSON.stringify(fields.items),
-        JSON.stringify(fields.payments),
+        JSON.stringify(withAuthors([], fields.payments, c.var.user)),
         totals.subtotal,
         fields.tax_rate,
         fields.discount,
@@ -208,14 +212,22 @@ invoices.post('/', async (c) => {
         input.terms ?? defaults.terms,
         input.folder ?? defaults.folder,
         input.tag === undefined ? defaults.tag : input.tag,
-        initials(settings.profile_name),
+        c.var.user.initials,
         now,
         fields.discount_type,
         fields.charges,
         input.payment_method ?? defaults.payment_method,
         input.equivalent_amount ?? 0,
-        input.exchange_rate ?? 0
+        input.exchange_rate ?? 0,
+        c.var.user.email
       ),
+    activity(db, c.var.user, {
+      action: 'created',
+      type: 'invoice',
+      id,
+      label: number,
+      detail: `${input.client_name} · ${fmtMoney(totals.grand, input.currency ?? defaults.currency)}`,
+    }, now),
   ];
   if (advanceTo !== null) {
     statements.push(
@@ -233,7 +245,7 @@ invoices.post('/', async (c) => {
   return c.json({ invoice }, 201);
 });
 
-const EMAIL_HISTORY = `SELECT id, sent_at, recipients, subject, attachments, status, error
+const EMAIL_HISTORY = `SELECT id, sent_at, recipients, subject, attachments, status, error, sent_by
   FROM invoice_emails WHERE invoice_id = ?1 ORDER BY sent_at DESC LIMIT 20`;
 
 invoices.get('/:id', async (c) => {
@@ -299,8 +311,8 @@ invoices.post('/:id/send', async (c) => {
   const statements = [
     db
       .prepare(
-        `INSERT INTO invoice_emails (id, invoice_id, sent_at, recipients, subject, attachments, status, error)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        `INSERT INTO invoice_emails (id, invoice_id, sent_at, recipients, subject, attachments, status, error, sent_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
       )
       .bind(
         `eml_${nanoid(10)}`,
@@ -310,8 +322,16 @@ invoices.post('/:id/send', async (c) => {
         req.subject,
         req.attachments.map((a) => a.kind).join(','),
         error ? 'failed' : 'sent',
-        error
+        error,
+        c.var.user.email
       ),
+    activity(db, c.var.user, {
+      action: error ? 'email failed' : 'emailed',
+      type: 'invoice',
+      id,
+      label: invoice.number,
+      detail: `${req.attachments.map((a) => a.kind).join(' + ') || 'message'} to ${req.to.join(', ')}`,
+    }, now),
   ];
   // Sending a draft issues it; the due date then decides sent vs overdue.
   if (!error && invoice.status === 'draft') {
@@ -322,7 +342,7 @@ invoices.post('/:id/send', async (c) => {
       dueAt: invoice.due_at,
       now,
     });
-    statements.push(db.prepare('UPDATE invoices SET status = ?1, updated_at = ?2 WHERE id = ?3').bind(status, now, id));
+    statements.push(db.prepare('UPDATE invoices SET status = ?1, updated_at = ?2, updated_by = ?4 WHERE id = ?3').bind(status, now, id, c.var.user.email));
   }
   await db.batch(statements);
 
@@ -356,9 +376,10 @@ invoices.patch('/:id', async (c) => {
   }
 
   const issuedAt = input.issued_at ?? existing.issued_at;
+  const previousPayments = parsePayments(existing.payments);
   const fields = {
     items: input.items ?? parseItems(existing.items),
-    payments: input.payments ?? parsePayments(existing.payments),
+    payments: input.payments ? withAuthors(previousPayments, input.payments, c.var.user) : previousPayments,
     discount: input.discount ?? Number(existing.discount),
     discount_type: input.discount_type ?? (existing.discount_type === 'percent' ? ('percent' as const) : ('value' as const)),
     charges: input.charges ?? Number(existing.charges),
@@ -379,13 +400,14 @@ invoices.patch('/:id', async (c) => {
     ? resolveStatus({ status: fields.status, grand: total, paid: paidTotal(fields.payments), dueAt: fields.due_at, now })
     : derived.status;
 
-  await db
+  const update = db
     .prepare(
       `UPDATE invoices SET
         number = ?1, client_name = ?2, client_email = ?3, client_address = ?4, issued_at = ?5, due_at = ?6,
         currency = ?7, status = ?8, items = ?9, payments = ?10, subtotal = ?11, tax_rate = ?12, discount = ?13,
         total = ?14, notes = ?15, terms = ?16, folder = ?17, tag = ?18, updated_at = ?19,
-        discount_type = ?20, charges = ?21, payment_method = ?22, equivalent_amount = ?23, exchange_rate = ?24
+        discount_type = ?20, charges = ?21, payment_method = ?22, equivalent_amount = ?23, exchange_rate = ?24,
+        updated_by = ?26
        WHERE id = ?25`
     )
     .bind(
@@ -413,22 +435,92 @@ invoices.patch('/:id', async (c) => {
       input.payment_method ?? existing.payment_method ?? '',
       input.equivalent_amount ?? Number(existing.equivalent_amount ?? 0),
       input.exchange_rate ?? Number(existing.exchange_rate ?? 0),
-      id
-    )
-    .run();
+      id,
+      c.var.user.email
+    );
+  const currency = input.currency ?? existing.currency;
+  const label = input.number ?? existing.number;
+  const entries = invoiceActivity(existing, input, { status, total, currency, label, previousPayments, payments: fields.payments });
+  await db.batch([update, ...entries.map((entry) => activity(db, c.var.user, entry, now))]);
 
   const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ?1').bind(id).first<InvoiceRow>();
   return c.json({ invoice });
 });
 
-invoices.delete('/:id', async (c) => {
+invoices.delete('/:id', requireAdmin, async (c) => {
   const db = c.env.DB;
   const id = c.req.param('id');
+  const existing = await db.prepare('SELECT number, client_name FROM invoices WHERE id = ?1').bind(id).first<{ number: string; client_name: string }>();
+  if (!existing) return c.json({ success: true });
   await db.batch([
     db.prepare('DELETE FROM invoices WHERE id = ?1').bind(id),
     db.prepare('DELETE FROM invoice_emails WHERE invoice_id = ?1').bind(id),
+    activity(db, c.var.user, { action: 'deleted', type: 'invoice', id, label: existing.number, detail: existing.client_name }),
   ]);
   return c.json({ success: true });
 });
+
+const samePayment = (a: InvoicePayment, b: InvoicePayment) =>
+  a.amount === b.amount && a.date === b.date && a.method === b.method && a.note === b.note;
+
+/** Keeps who logged each existing payment; new ones are credited to the caller. */
+function withAuthors(previous: InvoicePayment[], next: InvoicePayment[], user: CurrentUser): InvoicePayment[] {
+  const pool = [...previous];
+  return next.map((payment) => {
+    const index = pool.findIndex((old) => samePayment(old, payment));
+    const match = index === -1 ? null : pool.splice(index, 1)[0];
+    const { by: _ignored, ...rest } = payment;
+    void _ignored;
+    return { ...rest, by: match?.by ?? (match ? undefined : user.email) } as InvoicePayment;
+  });
+}
+
+const INVOICE_FIELDS: Record<string, string> = {
+  number: 'number',
+  client_name: 'client',
+  client_email: 'client email',
+  client_address: 'client address',
+  issued_at: 'invoice date',
+  due_at: 'due date',
+  currency: 'currency',
+  items: 'items',
+  tax_rate: 'tax rate',
+  discount: 'discount',
+  discount_type: 'discount type',
+  charges: 'charges',
+  exchange_rate: 'exchange rate',
+  equivalent_amount: 'equivalent',
+  notes: 'notes',
+  terms: 'terms',
+  folder: 'folder',
+  tag: 'tag',
+};
+
+/** Activity rows for one invoice save: payments logged/removed, status changes, other edits. */
+function invoiceActivity(
+  existing: InvoiceRow,
+  input: InvoiceInput,
+  after: { status: string; total: number; currency: string; label: string; previousPayments: InvoicePayment[]; payments: InvoicePayment[] }
+) {
+  const base = { type: 'invoice' as const, id: existing.id, label: after.label };
+  const entries: { action: string; type: 'invoice'; id: string; label: string; detail?: string }[] = [];
+  const remaining = [...after.previousPayments];
+  for (const payment of after.payments) {
+    const index = remaining.findIndex((old) => samePayment(old, payment));
+    if (index === -1) entries.push({ ...base, action: 'logged payment', detail: `${fmtMoney(payment.amount, after.currency)} · ${payment.method || 'payment'}` });
+    else remaining.splice(index, 1);
+  }
+  for (const payment of remaining) entries.push({ ...base, action: 'removed payment', detail: fmtMoney(payment.amount, after.currency) });
+
+  if (after.status !== existing.status) {
+    const label = (s: string) => STATUS_META[s as keyof typeof STATUS_META]?.label ?? s;
+    entries.push({ ...base, action: 'status', detail: `${label(existing.status)} → ${label(after.status)}` });
+  }
+
+  const comparable: Record<string, unknown> = { ...input, items: input.items === undefined ? undefined : JSON.stringify(input.items) };
+  const fields = changedFields(existing as unknown as Record<string, unknown>, comparable, INVOICE_FIELDS);
+  if (fields) entries.push({ ...base, action: 'updated', detail: fields });
+  return entries;
+}
 
 export default invoices;

@@ -1,9 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSettings } from '@/lib/collections';
+import { useMe } from '@/lib/team';
+import { XIcon } from '@/components/icons';
 
 function initialsOf(name: string, fallback: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -19,15 +21,16 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const isInvoice = pathname.startsWith('/invoices');
   const isSettings = pathname.startsWith('/settings');
   const settings = useSettings();
+  const { me } = useMe();
+  const admin = me?.role === 'admin';
+  const [profileOpen, setProfileOpen] = useState(false);
   const workspaceName = settings?.workspace_name || 'Workspace';
   const workspaceLogo = settings?.workspace_logo || '';
-  const profileName = settings?.profile_name || '';
-  const profileEmail = settings?.profile_email || '';
 
   return (
     <aside className="sidebar" data-collapsed={collapsed ? 'true' : undefined}>
       {/* Workspace (name and logo from Settings → General) */}
-      <Link href="/settings" className="workspace" title="Workspace settings">
+      <Link href={admin ? '/settings' : '/links'} className="workspace" title={admin ? 'Workspace settings' : workspaceName}>
         <div className="workspace-avatar" style={workspaceLogo ? { overflow: 'hidden', padding: 0 } : undefined}>
           {workspaceLogo ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -202,7 +205,8 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
         )}
       </div>
 
-      {/* Settings */}
+      {/* Settings (admins only) */}
+      {admin && (
       <div>
         <Link
           href="/settings"
@@ -224,17 +228,86 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
           <span>Settings</span>
         </Link>
       </div>
+      )}
 
-      {/* Footer */}
+      {/* Footer: the signed-in person */}
       <div className="sidebar-footer">
-        <Link href="/settings" className="user-row" title="Your profile">
-          <div className="avatar">{initialsOf(profileName, 'ME')}</div>
+        <button type="button" className="user-row" title="Your profile" onClick={() => setProfileOpen(true)}>
+          <div className="avatar">{me?.initials ?? '··'}</div>
           <div className="user-meta">
-            <div className="user-name">{profileName || 'Your name'}</div>
-            <div className="user-email">{profileEmail || 'Set your profile in Settings'}</div>
+            <div className="user-name">
+              {me?.name ?? 'Loading…'}
+              {me && <span className={`role-badge${admin ? ' is-admin' : ''}`}>{admin ? 'Admin' : 'Member'}</span>}
+            </div>
+            <div className="user-email">{me?.email ?? ''}</div>
           </div>
-        </Link>
+        </button>
       </div>
+      {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} />}
     </aside>
+  );
+}
+
+/** Your own name, shown next to everything you create or change. */
+function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { me, mode, setName } = useMe();
+  const [name, setDraft] = useState(me?.name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await setName(name.trim());
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal choice-modal" role="dialog" aria-label="Your profile">
+        <div className="modal-header">
+          <div className="modal-title">Your profile</div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <XIcon />
+          </button>
+        </div>
+        <div className="choice-modal-body">
+          <div className="log-field">
+            <label>Your name</label>
+            <input
+              autoFocus
+              maxLength={60}
+              value={name}
+              placeholder={me?.email.split('@')[0]}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void save()}
+            />
+          </div>
+          <div className="choice-modal-hint">
+            Signed in as <strong>{me?.email}</strong> ({me?.role === 'admin' ? 'admin' : 'member'}). Your name appears next to
+            the links, UTMs and invoices you create or change.
+          </div>
+          {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
+        </div>
+        <div className="modal-footer">
+          {mode === 'access' ? (
+            <a className="btn btn-ghost" href="/cdn-cgi/access/logout">
+              Sign out
+            </a>
+          ) : (
+            <span />
+          )}
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

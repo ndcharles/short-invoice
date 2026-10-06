@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { getSettings } from '../lib/settings';
+import { activity } from '../lib/activity';
 import { readJsonObject } from '../lib/request';
 import {
   createCollection,
@@ -42,6 +43,7 @@ collections.post('/', async (c) => {
 
   const fallbackColor = kind === 'folders' ? 'green' : 'blue';
   const item = await createCollection(c.env.DB, kind, name, normalizeColor(body.color, fallbackColor));
+  await activity(c.env.DB, c.var.user, { action: 'created', type: kind === 'folders' ? 'folder' : 'tag', id: item?.id ?? '', label: name }).run();
   return c.json({ item }, 201);
 });
 
@@ -67,6 +69,14 @@ collections.patch('/:id', async (c) => {
 
   const color = body.color === undefined ? undefined : normalizeColor(body.color, existing.color);
   const item = await updateCollection(c.env.DB, kind, existing, { name: name ?? undefined, color });
+  const renamed = name && name !== existing.name;
+  await activity(c.env.DB, c.var.user, {
+    action: renamed ? 'renamed' : 'updated',
+    type: kind === 'folders' ? 'folder' : 'tag',
+    id,
+    label: name ?? existing.name,
+    detail: renamed ? `was ${existing.name}` : 'colour',
+  }).run();
   return c.json({ item });
 });
 
@@ -87,6 +97,7 @@ collections.delete('/:id', async (c) => {
   }
 
   const { detached } = await deleteCollection(c.env.DB, kind, existing, settings.default_folder);
+  await activity(c.env.DB, c.var.user, { action: 'deleted', type: kind === 'folders' ? 'folder' : 'tag', id: existing.id, label: existing.name }).run();
   return c.json({ success: true, detached });
 });
 

@@ -8,7 +8,8 @@ import { parseLinkInput } from '../lib/link-input';
 import { getSettings } from '../lib/settings';
 import { knownDomains } from '../lib/domains';
 import { readJsonObject } from '../lib/request';
-import { initials } from '../lib/initials';
+import { activity, changedFields } from '../lib/activity';
+import { requireAdmin } from '../lib/auth';
 
 const links = new Hono<AppEnv>();
 
@@ -81,15 +82,16 @@ links.post('/', async (c) => {
   const now = Date.now();
   const utm = pickUtm(input.utm ?? {});
 
-  await db
+  await db.batch([
+    db
     .prepare(
       `INSERT INTO links (
         id, domain, alias, dest, tag, folder, comments, cloak,
         password_hash, expires_at, expires_url,
         utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral,
         custom_preview, og_title, og_description, og_image,
-        avatar, created_at, updated_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?23)`
+        avatar, created_at, updated_at, created_by, updated_by
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?23, ?24, ?24)`
     )
     .bind(
       id, domain, alias, input.dest, input.tag ?? null, input.folder ?? settings.default_folder ?? 'Links',
@@ -102,9 +104,10 @@ links.post('/', async (c) => {
       input.og_title ?? null,
       input.og_description ?? null,
       input.og_image ?? null,
-      initials(settings.profile_name), now
-    )
-    .run();
+      c.var.user.initials, now, c.var.user.email
+    ),
+    activity(db, c.var.user, { action: 'created', type: 'link', id, label: `${domain}/${alias}`, detail: input.dest }, now),
+  ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
   return c.json({ link: publicLink(link) }, 201);
@@ -152,14 +155,16 @@ links.patch('/:id', async (c) => {
   const utm = pickUtm({ ...pickUtm(existing), ...(input.utm ?? {}) });
   const keep = <K extends keyof LinkItem>(key: K, next: LinkItem[K] | undefined) => (next === undefined ? existing[key] : next);
 
-  await db
+  const now = Date.now();
+  await db.batch([
+    db
     .prepare(
       `UPDATE links
        SET domain = ?1, alias = ?2, dest = ?3, tag = ?4, folder = ?5, comments = ?6, cloak = ?7,
            password_hash = ?8, expires_at = ?9, expires_url = ?10,
            utm_source = ?11, utm_medium = ?12, utm_campaign = ?13, utm_term = ?14, utm_content = ?15, utm_referral = ?16,
            custom_preview = ?17, og_title = ?18, og_description = ?19, og_image = ?20,
-           archived = ?21, updated_at = ?22
+           archived = ?21, updated_at = ?22, updated_by = ?24
        WHERE id = ?23`
     )
     .bind(
@@ -177,22 +182,56 @@ links.patch('/:id', async (c) => {
       keep('og_description', input.og_description),
       keep('og_image', input.og_image),
       keep('archived', input.archived),
-      Date.now(),
-      id
-    )
-    .run();
+      now,
+      id,
+      c.var.user.email
+    ),
+    activity(db, c.var.user, linkActivity(existing, input as Record<string, unknown>, domain, alias, passwordHash !== existing.password_hash), now),
+  ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
   return c.json({ link: publicLink(link) });
 });
 
-links.delete('/:id', async (c) => {
+links.delete('/:id', requireAdmin, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM links WHERE id = ?1').bind(id),
-    c.env.DB.prepare('DELETE FROM link_clicks_daily WHERE link_id = ?1').bind(id),
+  const db = c.env.DB;
+  const existing = await db.prepare('SELECT domain, alias FROM links WHERE id = ?1').bind(id).first<{ domain: string; alias: string }>();
+  if (!existing) return c.json({ success: true });
+  await db.batch([
+    db.prepare('DELETE FROM links WHERE id = ?1').bind(id),
+    db.prepare('DELETE FROM link_clicks_daily WHERE link_id = ?1').bind(id),
+    activity(db, c.var.user, { action: 'deleted', type: 'link', id, label: `${existing.domain}/${existing.alias}` }),
   ]);
   return c.json({ success: true });
 });
+
+const LINK_FIELDS: Record<string, string> = {
+  domain: 'domain',
+  alias: 'alias',
+  dest: 'destination',
+  tag: 'tag',
+  folder: 'folder',
+  comments: 'comments',
+  cloak: 'cloaking',
+  expires_at: 'expiry',
+  custom_preview: 'link preview',
+  og_title: 'preview title',
+  og_description: 'preview description',
+  og_image: 'preview image',
+};
+
+/** "archived", "restored" or "updated: destination and tag" for the activity feed. */
+function linkActivity(existing: LinkItem, input: Record<string, unknown>, domain: string, alias: string, passwordChanged: boolean) {
+  const label = `${domain}/${alias}`;
+  if (input.archived !== undefined && input.archived !== existing.archived) {
+    return { action: input.archived ? 'archived' : 'restored', type: 'link' as const, id: existing.id, label };
+  }
+  const utmChanged = input.utm && Object.entries(input.utm as Record<string, unknown>).some(([k, v]) => (existing as unknown as Record<string, unknown>)[k] !== v);
+  const fields = [changedFields(existing as unknown as Record<string, unknown>, { ...input, domain, alias }, LINK_FIELDS), utmChanged ? 'UTM' : '', passwordChanged ? 'password' : '']
+    .filter(Boolean)
+    .join(', ');
+  return { action: 'updated', type: 'link' as const, id: existing.id, label, detail: fields };
+}
 
 export default links;

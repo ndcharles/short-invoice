@@ -51,6 +51,8 @@ export async function setup(project: TestProject) {
       '--persist-to', persistDir,
       '--var', 'LINK_COOKIE_SECRET:test-secret',
       '--var', `DOMAIN_CHECK_ORIGIN:http://127.0.0.1:${PORT}`,
+      // Tests act as different people with the local-only `x-dev-user` header.
+      '--var', 'ADMIN_EMAILS:boss@test.example',
       '--show-interactive-dev-session=false',
     ],
     { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true }

@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronDown } from '@/components/icons';
+import { useMe } from '@/lib/team';
 
 const NAV = [
   {
@@ -54,6 +55,19 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    id: 'team',
+    label: 'Team',
+    href: '/settings/team',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
 ];
 
 export function SettingsNav() {
@@ -80,6 +94,9 @@ export function SettingsLayout({
   subtitle: string;
   children: React.ReactNode;
 }) {
+  const { me } = useMe();
+  // Settings are admin-only; the API refuses member writes as well.
+  const blocked = me !== null && me.role !== 'admin';
   return (
     <div className="settings-layout">
       <SettingsNav />
@@ -90,7 +107,15 @@ export function SettingsLayout({
             <p>{subtitle}</p>
           </div>
         </div>
-        {children}
+        {!me ? null : blocked ? (
+          <div className="settings-card">
+            <div className="settings-card-body" style={{ color: 'var(--muted-foreground)', fontSize: '13px' }}>
+              Only admins can view and change settings. Ask an admin if something needs to change.
+            </div>
+          </div>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { Archive, Check, Copy, Duplicate, Edit, More, Trash } from '@/components
 import type { UtmCampaign } from '@/lib/types';
 import { buildCampaignUrl, UtmFormatOptions, websitePretty } from '@/lib/utm-builder';
 import { usePopoverDismiss } from '@/lib/popover';
+import { useMe, useTeam } from '@/lib/team';
 
 type MenuPos = { top: number; left: number } | null;
 
@@ -23,6 +24,11 @@ export function UtmCard({
   onDuplicate: (campaign: UtmCampaign) => void;
 }) {
   const router = useRouter();
+  const { nameOf, initialsOf } = useTeam();
+  const admin = useMe().me?.role === 'admin';
+  const byline = campaign.created_by
+    ? `Created by ${nameOf(campaign.created_by)}${campaign.updated_by && campaign.updated_by !== campaign.created_by ? ` · last edited by ${nameOf(campaign.updated_by)}` : ''}`
+    : 'Created before sign-in was set up';
   const [copied, setCopied] = useState(false);
   const [menuPos, setMenuPos] = useState<MenuPos>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -99,7 +105,7 @@ export function UtmCard({
             {fullUrl}
           </span>
           <span className="link-dest-meta">
-            <span className="creator-avatar" title={campaign.avatar}>{campaign.avatar}</span>
+            <span className="creator-avatar" title={byline}>{campaign.created_by ? initialsOf(campaign.created_by) : campaign.avatar}</span>
             <span className="link-date">{dateStr}</span>
           </span>
         </div>
@@ -149,12 +155,16 @@ export function UtmCard({
             <span>{campaign.archived === 1 ? 'Unarchive' : 'Archive'}</span>
             <span className="kbd-hint">A</span>
           </div>
+          {admin && (
+            <>
           <div className="dropdown-sep" />
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(campaign.id); }}>
             <Trash />
             <span>Delete</span>
             <span className="kbd-hint">⌫</span>
           </div>
+            </>
+          )}
         </div>
       )}
 

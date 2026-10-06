@@ -10,7 +10,9 @@ import analytics from './routes/analytics';
 import domains, { VERIFY_PATH, verifyToken } from './routes/domains';
 import exporter from './routes/export';
 import email from './routes/email';
-import redirect, { notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
+import team from './routes/team';
+import { requireAdmin, requireUser } from './lib/auth';
+import redirect, { missingLink, notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
 import { isAppHost, readShortDomainConfig } from './lib/domains';
 import { parseAlias, parseHttpUrl } from '../src/lib/validate';
 
@@ -60,6 +62,24 @@ app.use('/api/*', async (c, next) => {
   return next();
 });
 
+// Every API call needs a signed-in, allowed person (Cloudflare Access in
+// production). Health stays open for uptime checks.
+app.use('/api/*', async (c, next) => (c.req.path === '/api/health' ? next() : requireUser(c, next)));
+
+// Members use links, UTMs and invoices; workspace configuration is admin-only.
+const adminWrites = async (c: Context<AppEnv>, next: () => Promise<void>) =>
+  c.req.method === 'GET' || c.req.method === 'HEAD' ? next() : requireAdmin(c, next);
+app.use('/api/settings/*', adminWrites);
+app.use('/api/settings', adminWrites);
+app.use('/api/domains/*', adminWrites);
+app.use('/api/domains', adminWrites);
+app.use('/api/collections/*', adminWrites);
+app.use('/api/collections', adminWrites);
+app.use('/api/email/*', requireAdmin);
+app.use('/api/export', requireAdmin);
+app.use('/api/export/*', requireAdmin);
+
+app.route('/api/team', team);
 app.route('/api/links', links);
 app.route('/api/utms', utms);
 app.route('/api/invoices', invoices);
@@ -70,6 +90,8 @@ app.route('/api/analytics', analytics);
 app.route('/api/domains', domains);
 app.route('/api/export', exporter);
 app.route('/api/email', email);
+app.get('/s', (c) => missingLink(c, '/s'));
+app.get('/s/', (c) => missingLink(c, '/s/'));
 app.route('/s', redirect);
 
 app.get('/api/health', (c) => c.json({ ok: true }));
@@ -116,7 +138,7 @@ app.on(['GET', 'HEAD', 'POST'], '/:alias', async (c) => {
   if (res) return res;
 
   const config = await readShortDomainConfig(c.env.DB);
-  return config.domains.includes(host) ? c.html(notFoundPage(`${host}/${alias.value}`), 404) : appNotFound(c);
+  return config.domains.includes(host) ? missingLink(c, `${host}/${alias.value}`) : appNotFound(c);
 });
 
 app.all('*', (c) => appNotFound(c));
