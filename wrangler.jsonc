@@ -4,15 +4,18 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
 
-  // The UI is a static Next.js export (`out/`). Only API and short-link paths
-  // run the Worker; everything else is served as a static asset, which is
-  // free and does not count toward the 100k requests/day free-plan limit.
+  // The UI is a static Next.js export (`out/`). Static files are served
+  // without running the Worker, which is free and does not count toward the
+  // 100k requests/day free-plan limit. The Worker runs first for the API,
+  // `/s/*` short links and `/` (root redirect on short domains), and runs for
+  // any path with no matching file ("none" below), which is how
+  // `<short domain>/<alias>` reaches it. It serves the app's 404 page itself.
   "assets": {
     "directory": "./out",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
-    "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*", "/s/*"]
+    "not_found_handling": "none",
+    "run_worker_first": ["/api/*", "/s/*", "/"]
   },
 
   // All persistent state lives in D1 (created in WEUR, closest region to

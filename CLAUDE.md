@@ -10,23 +10,39 @@ for the API and short-link redirects, and Cloudflare D1 for storage.
 
 ```
 src/        Next.js app (all pages are client components) -> static export in out/
-worker/     Hono Worker: /api/* and /s/:alias. Entry worker/index.ts
+worker/     Hono Worker. Entry worker/index.ts
 migrations/ D1 schema (wrangler d1 migrations)
 seed/       demo data for local dev only
+tests/      vitest: unit/ (pure libs) and api/ (black-box against wrangler dev)
 design/     original HTML design handoff (reference, not shipped)
 ```
 
-`src/lib/types.ts`, `src/lib/links/*` and `src/lib/invoices.ts` are shared by
-both sides; keep them free of React/DOM/Workers imports.
+Shared by the Worker and the UI, so free of React/DOM/Workers imports:
+`src/lib/types.ts`, `validate.ts`, `invoices.ts`, `short-url.ts`, `links/*`.
+
+## Routing
+
+The Worker runs for `/api/*`, `/s/*` and `/` (`run_worker_first`), and for any
+path with no static file (`not_found_handling: "none"`). It handles:
+
+- `/s/:alias`: short link on the default domain (any host).
+- `/<alias>` on a verified custom domain: same link lookup, keyed by the host.
+- `/` on a short domain: the root redirect setting. On the app host: the app.
+- `/.well-known/short-invoice`: token used by Settings → Verify for domains.
+- Anything else: the static app's 404 page.
+
+Cloudflare Access belongs on the **app host only**, with `/s/*` bypassed.
+Short domains (e.g. 4th.link) should not be behind Access at all.
 
 ## Commands
 
 ```bash
-npm run db:migrate:local   # first run: create local D1 schema
-npm run db:seed:local      # optional demo data
+npm run db:migrate:local   # first run (and after new migrations): local D1 schema
+npm run db:seed:local      # optional demo links/campaigns
 npm run dev                # wrangler dev :8787 + next dev :3000 (proxies /api, /s)
 npm run typecheck          # UI tsconfig + worker/tsconfig.json
 npm run lint
+npm test                   # unit + API tests (boots wrangler dev on :8791, fresh D1)
 npm run preview            # static build served by the Worker on :8787
 npm run deploy             # next build && wrangler deploy
 npm run db:migrate         # apply migrations to remote D1
@@ -56,10 +72,16 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
   every extra GROUP BY over the same rows is billed again.
 - **Every index costs writes.** Only add an index that backs a real query.
 - **CPU budget.** Link passwords use PBKDF2 via WebCrypto (`worker/lib/password.ts`),
-  not scrypt. Avoid heavy per-request work in the Worker.
+  not scrypt. After one correct entry the visitor gets a 12 h HMAC-signed
+  per-link cookie (`worker/lib/unlock.ts`, keyed by the `LINK_COOKIE_SECRET`
+  secret), so PBKDF2 runs once per visitor. Avoid heavy per-request work in the Worker.
 - Multi-statement writes use `db.batch([...])` (one round trip, atomic).
 - SQL uses bound placeholders (`?1`); never interpolate request input.
   Table names only from fixed maps (see `worker/lib/collections.ts`).
+- **Validate every input on the server** with `src/lib/validate.ts`
+  (`parseHttpUrl` for anything that ends up in a redirect, href, src or
+  iframe). Worker-rendered HTML escapes every value. API writes require JSON
+  and a same-origin `Sec-Fetch-Site` (CSRF guard in `worker/index.ts`).
 
 ## Settings
 
@@ -73,8 +95,15 @@ Settings UI. **The repo is public; never commit them.**
 ```bash
 npx wrangler d1 create short-invoice   # paste database_id into wrangler.jsonc
 npm run db:migrate
+npx wrangler secret put LINK_COOKIE_SECRET   # e.g. `openssl rand -base64 32`
 npm run deploy
 ```
+
+Run `npm run db:migrate` **before** `npm run deploy` whenever `migrations/`
+has a new file.
+
+Locally, copy `.dev.vars.example` to `.dev.vars`. Without the secret, password
+links still work but ask for the password on every click.
 
 From CI or a cloud session, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -90,7 +119,5 @@ changes take up to 60 s to propagate and links must update instantly.
 ## Known gaps (next steps)
 
 - **No authentication.** Put Cloudflare Access (free up to 50 users) in front
-  of everything except `/s/*` before sharing the deployed URL.
-- Short links resolve at `/s/:alias` on the app host; serving `4th.link/:alias`
-  needs a custom domain route and host-based routing in the Worker.
-- Parts of the analytics UI still render placeholder data.
+  of the app host, bypassing `/s/*`, before sharing the deployed URL.
+- Password-protected links have no attempt limit.

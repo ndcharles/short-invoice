@@ -2,8 +2,8 @@
 
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { ChevronDown, Edit, Globe, Info } from '@/components/icons';
-import { buildCampaignUrl, encodedUtmPairs, UtmFields, UtmFormatOptions } from '@/lib/utm-builder';
+import { ChevronDown, Download, Globe, Info } from '@/components/icons';
+import { applyPreset, buildCampaignUrl, encodedUtmPairs, UtmFields, UtmFormatOptions, UtmPreset } from '@/lib/utm-builder';
 import { CollectionItem } from '@/lib/collections';
 import { usePopoverDismiss } from '@/lib/popover';
 
@@ -15,22 +15,57 @@ interface UtmFormProps {
   /** Design uses "Live preview" on create and "Generated URL" on edit. */
   previewLabel: string;
   onFolderClick?: () => void;
+  /** Presets from Settings → UTM Builder, shown as one-click chips. */
+  presets?: UtmPreset[];
+}
+
+/** Saves the QR code next to the preview as an SVG file. */
+function downloadQr(container: HTMLElement | null, name: string) {
+  const svg = container?.querySelector('svg');
+  if (!svg) return;
+  const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name || 'campaign'}-qr.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /**
  * The two-column campaign form + preview rail shared by the create modal and
  * the edit page (design: create-utm.html / edit-utm.html).
  */
-export function UtmForm({ fields, onChange, format, folders, previewLabel }: UtmFormProps) {
+export function UtmForm({ fields, onChange, format, folders, previewLabel, presets = [] }: UtmFormProps) {
   const url = buildCampaignUrl(fields, format);
   const pairs = encodedUtmPairs(fields, format);
   const previewUrl = url || 'https://www.example.com';
   const [folderOpen, setFolderOpen] = React.useState(false);
+  const qrRef = React.useRef<HTMLDivElement>(null);
   usePopoverDismiss(folderOpen, React.useCallback(() => setFolderOpen(false), []));
 
   return (
     <div className="utm-layout">
       <div className="utm-form-col">
+        {presets.length > 0 && (
+          <div className="setting-toggle-list" style={{ marginBottom: '14px', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', color: 'var(--muted-foreground)', marginRight: '2px' }}>Presets</span>
+            {presets.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="setting-chip"
+                title={`Fill ${[preset.source, preset.medium, preset.campaign, preset.content].filter(Boolean).join(' / ') || 'nothing'}`}
+                onClick={() => onChange(applyPreset(preset))}
+              >
+                <span className="preset-badge" style={{ background: preset.color, width: 16, height: 16, fontSize: 9 }}>
+                  {preset.badge}
+                </span>
+                <span>{preset.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="utm-form-grid">
           <div className="field wide">
             <label className="field-label">
@@ -178,13 +213,20 @@ export function UtmForm({ fields, onChange, format, folders, previewLabel }: Utm
             <span className="field-hint"><Info /></span>
           </div>
           <div className="qr-block-inner">
-            <div className="qr-thumb">
+            <div className="qr-thumb" ref={qrRef}>
               <QRCodeSVG value={previewUrl} size={64} level="L" includeMargin={false} />
             </div>
             <div className="qr-actions">
               <span>Auto-generated from the URL below.</span>
-              <a href="#" onClick={(e) => e.preventDefault()}>
-                <Edit /> Customize
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (url) downloadQr(qrRef.current, fields.campaign || fields.campaign_id);
+                }}
+                aria-disabled={!url}
+              >
+                <Download /> Download SVG
               </a>
             </div>
           </div>

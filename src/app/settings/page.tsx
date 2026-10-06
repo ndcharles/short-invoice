@@ -1,153 +1,69 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
-import { SaveBar, SettingsCard, SettingsLayout, SettingsRow, SettingSelect } from '@/components/settings/settings-ui';
+import { SaveBar, SettingsCard, SettingsLayout, SettingsRow, SettingSeg } from '@/components/settings/settings-ui';
 import { FoldersCard, TagsCard } from '@/components/settings/collections-cards';
-import { Upload } from '@/components/icons';
-
-const TIMEZONES = [
-  'Africa / Lagos (GMT+1)',
-  'Europe / London (GMT+0)',
-  'America / New York (GMT-5)',
-  'Asia / Dubai (GMT+4)',
-];
-const DATE_FORMATS = ['Mar 19, 2026', '19 Mar 2026', '2026-03-19', '19/03/2026'];
-const LANGUAGES = [
-  'English (United Kingdom)',
-  'English (United States)',
-  'Français',
-  'Português (Brasil)',
-];
-const MAX_LOGO_BYTES = 300 * 1024;
-
-const TEAM = [
-  { initials: 'NC', name: 'ndcharles', email: 'nd@acme.co', role: 'Owner', you: true },
-  { initials: 'JD', name: 'Jane Doe', email: 'jane@acme.co', role: 'Editor', you: false },
-  { initials: 'SO', name: 'Seun Ola', email: 'seun@acme.co', role: 'Editor', you: false },
-];
+import { Download, Upload } from '@/components/icons';
+import { useSettingsForm } from '@/lib/settings-form';
+import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDate } from '@/lib/dates';
+import { readImageFile } from '@/lib/image-file';
 
 export default function GeneralSettingsPage() {
-  const [baseline, setBaseline] = useState<Record<string, string> | null>(null);
-  const [draft, setDraft] = useState<Record<string, string> | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('You have unsaved changes');
-  const [error, setError] = useState<string | null>(null);
+  const { draft, set, dirty, saving, error, savedAt, save, discard } = useSettingsForm();
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/settings');
-        const data = await res.json();
-        if (cancelled) return;
-        const loaded = (data.settings ?? {}) as Record<string, string>;
-        setBaseline(loaded);
-        setDraft(loaded);
-      } catch {
-        if (!cancelled) setError('Could not load settings');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const workspaceInitial = (draft?.workspace_name || 'W').trim().charAt(0).toUpperCase();
 
-  const dirty = useMemo(
-    () => !!baseline && !!draft && JSON.stringify(baseline) !== JSON.stringify(draft),
-    [baseline, draft]
-  );
-
-  const set = (key: string, value: string) => setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
-
-  const initials = 'A';
-
-  const onPickLogo = (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError('That file is not an image.');
-      return;
-    }
-    if (file.size > MAX_LOGO_BYTES) {
-      setError('Logos must be under 300 KB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setError(null);
-      set('workspace_logo', String(reader.result));
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSave = async () => {
-    if (!draft) return;
-    setSaving(true);
+  const exportData = async () => {
+    setExporting(true);
     try {
-      const res = await fetch('/api/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save');
-      const saved = (data.settings ?? {}) as Record<string, string>;
-      setBaseline(saved);
-      setDraft(saved);
-      setMessage('Saved!');
-      setTimeout(() => setMessage('You have unsaved changes'), 1500);
+      const res = await fetch('/api/export');
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `short-invoice-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setFileError(err instanceof Error ? err.message : 'Export failed');
     } finally {
-      setSaving(false);
+      setExporting(false);
     }
-  };
-
-  const handleDiscard = () => {
-    if (!baseline) return;
-    setDraft(baseline);
-    setError(null);
   };
 
   return (
     <Shell>
-      <SettingsLayout title="General" subtitle="Workspace-wide settings and your personal profile.">
+      <SettingsLayout title="General" subtitle="Workspace details, folders, tags and your profile.">
         {!draft ? (
           <div className="settings-card">
             <div className="settings-card-body" style={{ color: 'var(--muted-foreground)' }}>
-              Loading settings…
+              {error ?? 'Loading settings…'}
             </div>
           </div>
         ) : (
           <>
-            {error && (
+            {(error || fileError) && (
               <div className="settings-card">
-                <div className="settings-card-body" style={{ color: 'var(--destructive)' }}>{error}</div>
+                <div className="settings-card-body" style={{ color: 'var(--destructive)' }}>{error ?? fileError}</div>
               </div>
             )}
-            <SettingsCard
-              title="Workspace"
-              subtitle="How this workspace appears in the sidebar and on shared docs."
-              foot={
-                <>
-                  <span>Changes apply to everyone in the workspace.</span>
-                  <span>ID: ws_default</span>
-                </>
-              }
-            >
-              <SettingsRow label="Workspace name" help="Shown in the sidebar switcher and email templates.">
+
+            <SettingsCard title="Workspace" subtitle="Shown in the sidebar.">
+              <SettingsRow label="Workspace name">
                 <input
                   className="input"
+                  maxLength={60}
                   value={draft.workspace_name ?? ''}
                   onChange={(e) => set('workspace_name', e.target.value)}
                 />
               </SettingsRow>
 
-              <SettingsRow
-                label="Workspace logo"
-                help="Displayed on invoices, receipts and shared preview pages. PNG or SVG, 512×512 max."
-              >
+              <SettingsRow label="Workspace logo" help="Square PNG, JPEG, WebP or SVG, under 300 KB.">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div
                     className="workspace-avatar"
@@ -157,57 +73,50 @@ export default function GeneralSettingsPage() {
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={draft.workspace_logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
-                      initials
+                      workspaceInitial
                     )}
                   </div>
                   <input
                     ref={fileRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
                     style={{ display: 'none' }}
-                    onChange={(e) => onPickLogo(e.target.files?.[0])}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      readImageFile(
+                        file,
+                        (url) => {
+                          setFileError(null);
+                          set('workspace_logo', url);
+                        },
+                        setFileError
+                      );
+                    }}
                   />
                   <button className="btn btn-outline btn-sm" onClick={() => fileRef.current?.click()}>
                     <Upload />
                     <span>Upload logo</span>
                   </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--muted-foreground)' }}
-                    onClick={() => set('workspace_logo', '')}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </SettingsRow>
-
-              <SettingsRow label="Timezone" help="Used for scheduling, activity logs and analytics.">
-                <SettingSelect
-                  value={draft.timezone ?? TIMEZONES[0]}
-                  onChange={(v) => set('timezone', v)}
-                  options={TIMEZONES}
-                />
-              </SettingsRow>
-
-              <SettingsRow label="Date format">
-                <div className="setting-seg">
-                  {DATE_FORMATS.map((format) => (
+                  {draft.workspace_logo && (
                     <button
-                      key={format}
-                      className={draft.date_format === format ? 'active' : ''}
-                      onClick={() => set('date_format', format)}
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--muted-foreground)' }}
+                      onClick={() => set('workspace_logo', '')}
                     >
-                      {format}
+                      Remove
                     </button>
-                  ))}
+                  )}
                 </div>
               </SettingsRow>
 
-              <SettingsRow label="Language">
-                <SettingSelect
-                  value={draft.language ?? LANGUAGES[0]}
-                  onChange={(v) => set('language', v)}
-                  options={LANGUAGES}
+              <SettingsRow label="Date format" help="Used on invoices, receipts and lists.">
+                <SettingSeg
+                  value={draft.date_format || DEFAULT_DATE_FORMAT}
+                  options={[...DATE_FORMATS]}
+                  onChange={(v) => set('date_format', v)}
+                  render={(format) => formatDate(Date.UTC(2026, 2, 19), format)}
                 />
               </SettingsRow>
             </SettingsCard>
@@ -215,92 +124,41 @@ export default function GeneralSettingsPage() {
             <FoldersCard />
             <TagsCard />
 
-            <SettingsCard title="Your profile" subtitle="How you appear to teammates and clients.">
+            <SettingsCard
+              title="Your profile"
+              subtitle="Your initials mark the links, campaigns and invoices you create."
+            >
               <SettingsRow label="Full name">
                 <input
                   className="input"
+                  maxLength={80}
+                  placeholder="Ada Lovelace"
                   value={draft.profile_name ?? ''}
                   onChange={(e) => set('profile_name', e.target.value)}
                 />
               </SettingsRow>
-              <SettingsRow label="Email" help="Used for sign-in and notifications.">
+              <SettingsRow label="Email">
                 <input
                   className="input"
                   type="email"
+                  placeholder="you@company.com"
                   value={draft.profile_email ?? ''}
                   onChange={(e) => set('profile_email', e.target.value)}
                 />
               </SettingsRow>
-              <SettingsRow label="Avatar">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div className="avatar" style={{ width: '44px', height: '44px', fontSize: '15px' }}>
-                    {(draft.profile_name ?? 'NC').slice(0, 2).toUpperCase()}
-                  </div>
-                  <button className="btn btn-outline btn-sm" disabled title="Not available in this build">
-                    <Upload />
-                    <span>Upload</span>
-                  </button>
-                  <button className="btn btn-ghost btn-sm" disabled style={{ color: 'var(--muted-foreground)' }}>
-                    Remove
-                  </button>
-                </div>
-              </SettingsRow>
-              <SettingsRow label="Password" help="You last changed your password 42 days ago.">
-                <button className="btn btn-outline btn-sm" disabled>
-                  Change password
-                </button>
-              </SettingsRow>
             </SettingsCard>
 
             <SettingsCard
-              title="Team members"
-              subtitle={`${TEAM.length} members · 1 owner, ${TEAM.length - 1} editors. Invite by email to add more.`}
-            >
-              <div className="setting-list">
-                {TEAM.map((member) => (
-                  <div className="setting-list-row team-row" key={member.email}>
-                    <div className="team-avatar">{member.initials}</div>
-                    <div>
-                      <div className="primary">
-                        {member.name} {member.you ? <span className="secondary">(you)</span> : null}
-                      </div>
-                      <div className="secondary">{member.email}</div>
-                    </div>
-                    <button className="role-select" disabled>
-                      {member.role}
-                      <span className="chev">▾</span>
-                    </button>
-                    <button className="icon-btn" disabled style={{ color: 'var(--subtle-foreground)' }} aria-label="More">
-                      ⋮
-                    </button>
-                  </div>
-                ))}
-                <div className="setting-list-row dashed" title="Not available in this build">
-                  <span>+</span>
-                  <span style={{ marginLeft: '6px' }}>Invite teammate by email</span>
-                </div>
-              </div>
-            </SettingsCard>
-
-            <SettingsCard
-              danger
-              title="Danger zone"
-              subtitle="Actions here are permanent and cannot be undone."
+              title="Access & data"
+              subtitle="Sign-in is handled by Cloudflare Access in front of this app, so there are no passwords to manage here."
             >
               <SettingsRow
-                label="Transfer ownership"
-                help="Give another team member full control of this workspace. You will be downgraded to Editor."
+                label="Export everything"
+                help="Download all links, campaigns, invoices, folders, tags and settings as one JSON file."
               >
-                <button className="btn-danger" disabled title="Not available in this build">
-                  Transfer ownership
-                </button>
-              </SettingsRow>
-              <SettingsRow
-                label="Delete workspace"
-                help="Permanently deletes this workspace, all its links, invoices, and campaigns."
-              >
-                <button className="btn-danger" disabled title="Not available in this build">
-                  Delete workspace
+                <button className="btn btn-outline btn-sm" onClick={exportData} disabled={exporting}>
+                  <Download />
+                  <span>{exporting ? 'Preparing…' : 'Download JSON'}</span>
                 </button>
               </SettingsRow>
             </SettingsCard>
@@ -311,9 +169,9 @@ export default function GeneralSettingsPage() {
       <SaveBar
         visible={dirty}
         saving={saving}
-        message={message}
-        onDiscard={handleDiscard}
-        onSave={handleSave}
+        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
+        onDiscard={discard}
+        onSave={save}
       />
     </Shell>
   );

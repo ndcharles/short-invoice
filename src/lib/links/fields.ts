@@ -1,5 +1,10 @@
 /** Shared normalisation for link fields, used by both POST and PATCH. */
 
+import { customAlphabet } from 'nanoid';
+
+/** Random aliases avoid look-alike characters and never start with `-` or `_`. */
+export const randomAlias = customAlphabet('23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ', 7);
+
 export function asText(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string') return null;

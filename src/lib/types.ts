@@ -13,7 +13,9 @@ export interface LinkItem {
   folder: string;
   comments: string;
   cloak: number;
+  /** Always null in API responses; `has_password` says whether one is set. */
   password_hash: string | null;
+  has_password?: boolean;
   expires_at: number | null;
   expires_url: string | null;
   utm_source: string | null;

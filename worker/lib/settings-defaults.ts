@@ -7,13 +7,11 @@ export type SettingsMap = Record<string, string>;
  * Settings and live in D1, never in the repo.
  */
 export const DEFAULT_SETTINGS: Record<string, string> = {
-  workspace_name: 'Acme Inc.',
+  workspace_name: 'My workspace',
   workspace_logo: '',
-  timezone: 'Africa / Lagos (GMT+1)',
-  date_format: 'Mar 19, 2026',
-  language: 'English (United Kingdom)',
-  profile_name: 'ndcharles',
-  profile_email: 'nd@acme.co',
+  date_format: '19 Mar 2026',
+  profile_name: '',
+  profile_email: '',
 
   // URL shortener
   default_domain: '4th.link',
@@ -22,19 +20,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   default_expiration: 'Never expire',
   default_tags: '[]',
   default_cloak: 'false',
-  custom_preview_fallback: 'true',
-  shortener_domains: JSON.stringify([
-    { id: 'dom_4th', initial: '4', name: '4th.link', meta: 'Primary · SSL enabled', status: 'Active', added: 'Added Aug 12' },
-    { id: 'dom_ggl', initial: 'G', name: 'ggl.link', meta: 'SSL enabled', status: 'Active', added: 'Added Jul 2' },
-    {
-      id: 'dom_acme',
-      initial: 'A',
-      name: 'acme.short',
-      meta: 'Verify CNAME: cname.4th.link',
-      status: 'Pending',
-      added: 'Added today',
-    },
-  ]),
+  // Short-link domains. A domain starts "pending" and becomes "active" once
+  // it is attached to the Worker and Settings → Verify succeeds.
+  shortener_domains: JSON.stringify([{ id: 'dom_4th', name: '4th.link', status: 'pending', added: 0 }]),
 
   // UTM builder
   utm_default_source: 'newsletter',

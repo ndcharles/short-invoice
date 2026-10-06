@@ -6,7 +6,8 @@ import { LinkCard } from '@/components/links/link-card';
 import { CreateLinkModal } from '@/components/links/create-link-modal';
 import Link from 'next/link';
 import type { LinkItem } from '@/lib/types';
-import { useCollections } from '@/lib/collections';
+import { useCollections, useSettings } from '@/lib/collections';
+import { useShortUrls } from '@/lib/use-short-url';
 import { usePopoverDismiss } from '@/lib/popover';
 import {
   ChevronDown,
@@ -21,7 +22,6 @@ import {
 } from '@/components/icons';
 
 const PAGE_SIZE = 25;
-const TAGS_FALLBACK = ['Client', 'Campaign', 'Internal'];
 const SORTS = [
   { id: 'date', label: 'Newest first' },
   { id: 'clicks', label: 'Most clicks' },
@@ -46,6 +46,9 @@ export default function LinksPage() {
   const { items: folders } = useCollections('folders');
   const { items: tags } = useCollections('tags');
   const activeFolder = folders.find((f) => f.name === folderFilter);
+  const settings = useSettings();
+  const { urlFor } = useShortUrls(settings);
+  const tagColors = useMemo(() => new Map(tags.map((t) => [t.name, t.color])), [tags]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +129,7 @@ export default function LinksPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this link? This will also remove it from KV.')) return;
+    if (!confirm('Delete this link? It stops redirecting immediately and its click history is removed.')) return;
     try {
       await fetch(`/api/links/${id}`, { method: 'DELETE' });
       refresh();
@@ -141,12 +144,26 @@ export default function LinksPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // A fresh random alias; everything except the password carries over
+          // (password hashes never leave the server).
           dest: link.dest,
-          alias: `${link.alias}-copy`,
+          domain: link.domain,
           tag: link.tag,
           folder: link.folder,
           comments: link.comments,
           cloak: link.cloak === 1,
+          expires_at: link.expires_at,
+          expires_url: link.expires_url,
+          utm_source: link.utm_source,
+          utm_medium: link.utm_medium,
+          utm_campaign: link.utm_campaign,
+          utm_term: link.utm_term,
+          utm_content: link.utm_content,
+          utm_referral: link.utm_referral,
+          custom_preview: link.custom_preview === 1,
+          og_title: link.og_title,
+          og_description: link.og_description,
+          og_image: link.og_image,
         }),
       });
       refresh();
@@ -238,7 +255,7 @@ export default function LinksPage() {
                 </div>
               ))}
               <div className="dropdown-sep" />
-              <Link href="/settings/shortener" className="dropdown-item">
+              <Link href="/settings" className="dropdown-item">
                 <span>Manage folders…</span>
               </Link>
             </div>
@@ -268,10 +285,7 @@ export default function LinksPage() {
               >
                 <span>All tags</span>
               </div>
-              {(tags.length
-                ? tags
-                : TAGS_FALLBACK.map((name, i) => ({ id: name, name, color: ['yellow', 'blue', 'green'][i] ?? 'blue' }))
-              ).map((t) => (
+              {tags.map((t) => (
                 <div
                   key={t.id}
                   className={`dropdown-item${tagFilter === t.name ? ' is-current' : ''}`}
@@ -285,7 +299,7 @@ export default function LinksPage() {
                 </div>
               ))}
               <div className="dropdown-sep" />
-              <Link href="/settings/shortener" className="dropdown-item">
+              <Link href="/settings" className="dropdown-item">
                 <span>Manage tags…</span>
               </Link>
             </div>
@@ -408,6 +422,8 @@ export default function LinksPage() {
             <LinkCard
               key={link.id}
               link={link}
+              shortUrl={urlFor(link)}
+              tagColor={link.tag ? tagColors.get(link.tag) : undefined}
               onArchiveToggle={handleArchiveToggle}
               onDelete={handleDelete}
               onDuplicate={handleDuplicate}

@@ -7,10 +7,12 @@ import { UtmForm } from '@/components/utms/utm-form';
 import type { UtmCampaign } from '@/lib/types';
 import { ChevronDown, Filter, FolderIcon, More, Plus, Refresh, Search, Sort, XIcon } from '@/components/icons';
 import { useCollections, useSettings } from '@/lib/collections';
+import { parseList } from '@/lib/settings-json';
 import { usePopoverDismiss } from '@/lib/popover';
 import {
   buildCampaignUrl,
-  EMPTY_UTM_FIELDS,
+  newUtmFields,
+  UtmPreset,
   formatOptionsFromSettings,
   UtmFields,
   validateUtmFields,
@@ -19,7 +21,7 @@ import {
 const PAGE_SIZE = 25;
 const SORTS = [
   { id: 'date', label: 'Newest first' },
-  { id: 'clicks', label: 'Most clicks' },
+  { id: 'name', label: 'Campaign A–Z' },
 ] as const;
 type SortId = (typeof SORTS)[number]['id'];
 
@@ -38,12 +40,13 @@ export default function UtmsPage() {
 
   // Create modal
   const [createOpen, setCreateOpen] = useState(false);
-  const [fields, setFields] = useState<UtmFields>(EMPTY_UTM_FIELDS);
+  const [fields, setFields] = useState<UtmFields>(() => newUtmFields(null));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const settings = useSettings();
   const format = useMemo(() => formatOptionsFromSettings(settings), [settings]);
+  const presets = useMemo(() => parseList<UtmPreset>(settings?.utm_presets, []), [settings]);
   const { items: folders } = useCollections('folders');
 
   useEffect(() => {
@@ -80,20 +83,22 @@ export default function UtmsPage() {
         !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)
       ) {
         e.preventDefault();
-        setFields(EMPTY_UTM_FIELDS);
+        setFields(newUtmFields(settings));
         setCreateOpen(true);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [createOpen]);
+  }, [createOpen, settings]);
 
   const closeToolbarMenu = useCallback(() => setOpenMenu(null), []);
   usePopoverDismiss(openMenu !== null, closeToolbarMenu);
 
   const visible = useMemo(() => {
     const rows = [...campaigns];
-    rows.sort((a, b) => (sortOrder === 'clicks' ? b.clicks - a.clicks : b.created_at - a.created_at));
+    rows.sort((a, b) =>
+      sortOrder === 'name' ? (a.campaign ?? a.campaign_id ?? '').localeCompare(b.campaign ?? b.campaign_id ?? '') : b.created_at - a.created_at
+    );
     return rows;
   }, [campaigns, sortOrder]);
 
@@ -121,7 +126,7 @@ export default function UtmsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create campaign');
       setCreateOpen(false);
-      setFields(EMPTY_UTM_FIELDS);
+      setFields(newUtmFields(settings));
       refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create campaign');
@@ -175,7 +180,7 @@ export default function UtmsPage() {
           <span className="title-count">{counts.active + counts.archived} total</span>
           <ChevronDown className="page-title-chevron" />
         </div>
-        <button className="btn btn-primary" onClick={() => { setFields(EMPTY_UTM_FIELDS); setCreateOpen(true); }}>
+        <button className="btn btn-primary" onClick={() => { setFields(newUtmFields(settings)); setCreateOpen(true); }}>
           <Plus />
           <span>Create campaign</span>
           <kbd>C</kbd>
@@ -320,7 +325,7 @@ export default function UtmsPage() {
           </div>
           <h3>No campaigns yet</h3>
           <p>Build your first UTM-tagged URL to start attributing traffic to sources, mediums and campaigns.</p>
-          <button className="btn btn-primary" onClick={() => { setFields(EMPTY_UTM_FIELDS); setCreateOpen(true); }}>
+          <button className="btn btn-primary" onClick={() => { setFields(newUtmFields(settings)); setCreateOpen(true); }}>
             <Plus />
             <span>Create campaign</span>
             <kbd>C</kbd>
@@ -409,6 +414,7 @@ export default function UtmsPage() {
                 format={format}
                 folders={folders}
                 previewLabel="Live preview"
+                presets={presets}
               />
             </div>
 

@@ -24,6 +24,9 @@ import {
   Upload,
   XIcon,
 } from '@/components/icons';
+import { useSettings } from '@/lib/collections';
+import { parseList } from '@/lib/settings-json';
+import type { UtmPreset } from '@/lib/utm-builder';
 import { OG_DESC_MAX, OG_TITLE_MAX, OgContent } from '@/lib/og';
 
 /* -------------------------------------------------------------------------- */
@@ -120,12 +123,19 @@ const UTM_FIELDS: { key: keyof UtmValues; label: string; placeholder: string; ic
   { key: 'utm_referral', label: 'Referral', placeholder: 'yoursite.com', icon: <Gift /> },
 ];
 
-const UTM_TEMPLATES: { name: string; values: Partial<UtmValues> }[] = [
-  { name: 'Newsletter', values: { utm_source: 'newsletter', utm_medium: 'email', utm_campaign: 'weekly_digest' } },
-  { name: 'Paid social', values: { utm_source: 'facebook', utm_medium: 'cpc', utm_campaign: 'retargeting', utm_content: 'carousel' } },
-  { name: 'Product launch', values: { utm_source: 'product_hunt', utm_medium: 'referral', utm_campaign: 'launch_week' } },
-  { name: 'QR code', values: { utm_source: 'qr', utm_medium: 'offline', utm_campaign: 'print_flyer' } },
-];
+/** Presets from Settings → UTM Builder, shared with the campaign builder. */
+function useUtmTemplates(): { name: string; values: Partial<UtmValues> }[] {
+  const settings = useSettings();
+  return parseList<UtmPreset>(settings?.utm_presets, []).map((p) => ({
+    name: p.name,
+    values: {
+      ...(p.source ? { utm_source: p.source } : {}),
+      ...(p.medium ? { utm_medium: p.medium } : {}),
+      ...(p.campaign ? { utm_campaign: p.campaign } : {}),
+      ...(p.content ? { utm_content: p.content } : {}),
+    },
+  }));
+}
 
 export function UtmPopup({
   initial,
@@ -140,6 +150,7 @@ export function UtmPopup({
 }) {
   const [values, setValues] = useState<UtmValues>(initial);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const templates = useUtmTemplates();
   const dirty = useDirty(values, initial);
   const templatesRef = useRef<HTMLDivElement>(null);
 
@@ -175,12 +186,17 @@ export function UtmPopup({
           </button>
           {templatesOpen && (
             <div className="dropdown" style={{ bottom: 'calc(100% + 4px)', left: 0, minWidth: '190px' }}>
-              {UTM_TEMPLATES.map((t) => (
+              {templates.length === 0 && (
+                <div className="dropdown-item" style={{ color: 'var(--muted-foreground)' }}>
+                  <span>No presets yet. Add them in Settings → UTM Builder.</span>
+                </div>
+              )}
+              {templates.map((t) => (
                 <div
                   key={t.name}
                   className="dropdown-item"
                   onClick={() => {
-                    setValues({ ...EMPTY_UTM, ...t.values } as UtmValues);
+                    setValues({ ...values, ...t.values });
                     setTemplatesOpen(false);
                   }}
                 >

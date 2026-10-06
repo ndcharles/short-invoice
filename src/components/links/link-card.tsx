@@ -17,6 +17,9 @@ import { usePopoverDismiss } from '@/lib/popover';
 
 interface LinkCardProps {
   link: LinkItem;
+  /** The URL that resolves right now (see useShortUrls). */
+  shortUrl: { url: string; label: string; live: boolean };
+  tagColor?: string;
   onArchiveToggle: (id: string, currentlyArchived: boolean) => void;
   onDelete: (id: string) => void;
   onDuplicate: (link: LinkItem) => void;
@@ -24,13 +27,13 @@ interface LinkCardProps {
 
 type MenuPos = { top: number; left: number } | null;
 
-export function LinkCard({ link, onArchiveToggle, onDelete, onDuplicate }: LinkCardProps) {
+export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, onDuplicate }: LinkCardProps) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [menuPos, setMenuPos] = useState<MenuPos>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
 
-  const fullUrl = `https://${link.domain}/${link.alias}`;
+  const fullUrl = shortUrl.url;
 
   const closeMenu = useCallback(() => setMenuPos(null), []);
 
@@ -92,7 +95,7 @@ export function LinkCard({ link, onArchiveToggle, onDelete, onDuplicate }: LinkC
   };
 
   const dateStr = new Date(link.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  const tagClass = link.tag === 'Client' ? 'yellow' : link.tag === 'Campaign' ? 'blue' : link.tag === 'Internal' ? 'green' : '';
+  const tagClass = tagColor ?? '';
 
   return (
     <div
@@ -104,7 +107,10 @@ export function LinkCard({ link, onArchiveToggle, onDelete, onDuplicate }: LinkC
 
       <div className="link-info">
         <div className="link-alias-row">
-          <span className="link-alias">{link.domain}/{link.alias}</span>
+          <span className="link-alias" title={shortUrl.live ? fullUrl : `${link.domain} is not verified yet, so this link does not resolve`}>
+            {shortUrl.label}
+          </span>
+          {!shortUrl.live && <span className="tag yellow" style={{ marginLeft: 6 }}>Domain pending</span>}
           <button
             className="link-alias-copy no-nav"
             onClick={copyToClipboard}

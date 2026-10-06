@@ -155,7 +155,7 @@
 }
 .bar-row {
   display: grid;
-  grid-template-columns: 20px 1fr 40px;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(40px, auto);
   gap: 10px;
   align-items: center;
   padding: 6px 0;
@@ -769,3 +769,40 @@ textarea.popup-input { min-height: 84px; resize: none; line-height: 1.5; }
 /* Overpayment credit row on the invoice */
 .inv-totals-row.inv-overpaid .tot-label { font-weight: 400; color: var(--muted-foreground); }
 .inv-totals-row.inv-overpaid .tot-value { color: var(--accent-green-fg); }
+
+/* Sidebar workspace and profile rows are links to Settings */
+a.workspace,
+a.user-row { color: inherit; text-decoration: none; }
+
+/* ---------------------------------------------------------------------------
+   Phones: the main menu collapses to icons (as on Settings), padding shrinks,
+   and wide toolbars/cards wrap instead of overflowing.
+   --------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .app, .app-collapsed { grid-template-columns: 52px minmax(0, 1fr); }
+  .sidebar { padding: 12px 6px; }
+  .workspace { justify-content: center; padding: 8px 0 10px; }
+  .nav-section-label, .nav-sub { display: none; }
+  .nav-item { justify-content: center; padding: 7px 0; }
+  .nav-item span, .workspace-name, .workspace-chevron, .user-meta, .user-row svg { display: none; }
+  .user-row { justify-content: center; padding: 6px 0; }
+  .main-inner { padding: 14px 12px 32px; }
+  .page-header, .crumb-bar { flex-wrap: wrap; gap: 8px; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .search { width: 100%; }
+  .list-tabs { overflow-x: auto; }
+  .link-card {
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    grid-template-areas: 'icon info menu' 'icon right right';
+    gap: 6px 10px;
+  }
+  .link-card > .favicon { grid-area: icon; align-self: start; }
+  .link-card > .link-info { grid-area: info; }
+  .link-card > .link-meta-right { grid-area: right; justify-self: start; flex-wrap: wrap; }
+  .link-card > .icon-btn { grid-area: menu; align-self: start; }
+  .link-dest { flex-wrap: wrap; }
+  .link-dest .link-dest-url { max-width: 100%; }
+  .link-dest-meta { flex-wrap: wrap; border-left: none; padding-left: 0; margin-left: 0; }
+  .stat-grid, .split { grid-template-columns: minmax(0, 1fr) !important; }
+  .modal { width: calc(100vw - 16px) !important; max-height: calc(100dvh - 16px); }
+}
