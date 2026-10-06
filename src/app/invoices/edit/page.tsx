@@ -384,7 +384,7 @@ function EditInvoicePageInner() {
           clients={clients}
           defaultRate={defaultRateFrom(settings)}
           dateFormat={dateFormat}
-          numberPlaceholder={isNew ? `${nextNumberPreview(settings)} (assigned on save)` : undefined}
+          numberPlaceholder={isNew ? `Auto: ${nextNumberPreview(settings)}` : undefined}
         />
 
         <aside className="right-rail">

@@ -36,7 +36,9 @@ export function parseDomains(value: string | undefined | null): ShortDomain[] {
     out.push({
       id: typeof item.id === 'string' ? item.id : `dom_${name}`,
       name,
-      status: String(item.status).toLowerCase() === 'active' ? 'active' : 'pending',
+      // Only a real verification (which records verified_at) makes a domain
+      // active; entries saved by the old settings page said "Active" without one.
+      status: String(item.status).toLowerCase() === 'active' && typeof item.verified_at === 'number' ? 'active' : 'pending',
       added: typeof item.added === 'number' ? item.added : 0,
       verified_at: typeof item.verified_at === 'number' ? item.verified_at : null,
     });

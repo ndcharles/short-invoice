@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 import { Duplicate, Plus, Trash } from '@/components/icons';
 import {
   computeTotals,
@@ -74,43 +74,55 @@ const DAY = 86_400_000;
 
 export const emptyItem = (): InvoiceItem => ({ name: '', desc: '', qty: 1, unitPrice: 0 });
 
-/** Number input that keeps an empty field empty instead of forcing 0. */
+/**
+ * Number input that keeps an empty field empty instead of forcing 0, and
+ * shows thousands separators (2,325,000) while not being edited.
+ */
 function NumberField({
   value,
   onChange,
-  step = '0.01',
   min = 0,
   max,
   className = 'ie-input ie-num',
   ariaLabel,
   placeholder = '0',
   disabled,
+  decimals = 2,
 }: {
   value: number;
   onChange: (value: number) => void;
-  step?: string;
   min?: number;
   max?: number;
   className?: string;
   ariaLabel: string;
   placeholder?: string;
   disabled?: boolean;
+  decimals?: number;
 }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const shown =
+    editing ??
+    (Number.isFinite(value) && value !== 0 ? value.toLocaleString('en-US', { maximumFractionDigits: decimals }) : '');
   return (
     <input
       className={className}
-      type="number"
+      type="text"
       inputMode="decimal"
-      step={step}
-      min={min}
-      max={max}
       aria-label={ariaLabel}
       placeholder={placeholder}
       disabled={disabled}
-      value={Number.isFinite(value) && value !== 0 ? value : ''}
+      value={shown}
+      // Editing keeps the text exactly as typed (commas allowed), so focusing
+      // never rewrites the field and a selection or caret is never lost.
+      onFocus={() => setEditing(shown)}
+      onBlur={() => setEditing(null)}
       onChange={(e) => {
-        const next = e.target.value === '' ? 0 : Number(e.target.value);
-        if (Number.isFinite(next)) onChange(next);
+        const typed = e.target.value.replace(/[^0-9.,]/g, '');
+        setEditing(typed);
+        const raw = typed.replace(/,/g, '');
+        const next = raw === '' || raw === '.' ? 0 : Number(raw);
+        if (!Number.isFinite(next)) return;
+        onChange(Math.min(max ?? Infinity, Math.max(min, next)));
       }}
     />
   );
@@ -340,16 +352,17 @@ export function InvoiceEditor({
           <div className="ie-row" role="row" key={index}>
             <span className="ie-idx">{index + 1}</span>
             <div className="ie-desc">
-              <input
-                className="ie-input ie-strong"
+              <textarea
+                className="ie-input ie-strong ie-grow"
                 aria-label={`Item ${index + 1} name`}
                 placeholder="Item or service"
+                rows={1}
                 maxLength={200}
                 value={item.name}
-                onChange={(e) => updateItem(index, { name: e.target.value })}
+                onChange={(e) => updateItem(index, { name: e.target.value.replace(/\n/g, ' ') })}
               />
               <textarea
-                className="ie-input ie-muted"
+                className="ie-input ie-muted ie-grow"
                 aria-label={`Item ${index + 1} description`}
                 placeholder="Description (optional)"
                 rows={1}
@@ -358,7 +371,7 @@ export function InvoiceEditor({
                 onChange={(e) => updateItem(index, { desc: e.target.value })}
               />
             </div>
-            <NumberField ariaLabel={`Item ${index + 1} quantity`} step="any" value={item.qty} onChange={(qty) => updateItem(index, { qty })} placeholder="1" />
+            <NumberField ariaLabel={`Item ${index + 1} quantity`} decimals={3} value={item.qty} onChange={(qty) => updateItem(index, { qty })} placeholder="1" />
             <NumberField ariaLabel={`Item ${index + 1} rate`} value={item.unitPrice} onChange={(unitPrice) => updateItem(index, { unitPrice })} />
             <span className="r ie-amount">{fmtMoney(lineAmount(item), c)}</span>
             {showEq && <span className="r ie-muted">{eq(lineAmount(item))}</span>}
@@ -450,7 +463,6 @@ export function InvoiceEditor({
                 <NumberField
                   className="ie-input ie-num ie-num-sm"
                   ariaLabel="VAT rate in percent"
-                  step="0.1"
                   max={100}
                   value={Math.round(draft.tax_rate * 10000) / 100}
                   onChange={(pct) => onChange({ tax_rate: Math.min(100, Math.max(0, pct)) / 100 })}
@@ -507,7 +519,7 @@ export function InvoiceEditor({
                 <NumberField
                   className="ie-input ie-num ie-num-md"
                   ariaLabel={`Naira per 1 ${foreign}`}
-                  step="any"
+                  decimals={4}
                   value={draft.exchange_rate}
                   onChange={(exchange_rate) => onChange({ exchange_rate })}
                 />

@@ -182,7 +182,7 @@ export function renderInvoiceDocument(invoice: InvoiceView, profile: DocumentPro
   table.items thead th { background:var(--fg); color:#fff; font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; padding:8px 10px; text-align:left; }
   table.items thead th:first-child { border-radius:6px 0 0 6px; } table.items thead th:last-child { border-radius:0 6px 6px 0; }
   table.items td { padding:10px; border-bottom:1px solid var(--line); vertical-align:top; }
-  .n { width:28px; color:var(--muted); } .r { text-align:right; white-space:nowrap; } .strong { font-weight:600; }
+  .n { width:28px; color:var(--muted); } .r, th.r { text-align:right !important; white-space:nowrap; } .strong { font-weight:600; }
   .item { font-weight:500; } .desc { color:var(--muted); font-size:12px; margin-top:2px; }
   .eq { color:var(--muted); }
   th.eq { color:#d4d4d4 !important; }

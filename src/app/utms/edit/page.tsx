@@ -89,6 +89,29 @@ function EditUtmPageInner() {
 
   const url = fields ? buildCampaignUrl(fields, format) : '';
 
+  const [shortening, setShortening] = useState(false);
+  /** Campaign URLs are not tracked by themselves; a short link in front of one is. */
+  const shorten = async () => {
+    if (!url || dirty) {
+      if (dirty) alert('Save the campaign first.');
+      return;
+    }
+    setShortening(true);
+    try {
+      const res = await fetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dest: url, comments: `UTM campaign: ${fields?.campaign || fields?.campaign_id || url}` }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not create the short link');
+      router.push(`/links/edit?id=${encodeURIComponent(data.link.id)}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not create the short link');
+      setShortening(false);
+    }
+  };
+
   const copyUrl = () => {
     navigator.clipboard.writeText(url);
     setCopied(true);
@@ -197,11 +220,15 @@ function EditUtmPageInner() {
           {dirty && <span className="draft-saved" style={{ marginLeft: 0 }}>Unsaved changes</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div className="click-stat-large">
+          <button
+            className="btn btn-outline btn-sm"
+            title="Create a short link for this campaign URL so clicks are counted"
+            disabled={!url || shortening}
+            onClick={shorten}
+          >
             <Cursor />
-            <strong>{campaign.clicks.toLocaleString()}</strong>{' '}
-            <span style={{ color: 'var(--muted-foreground)' }}>clicks</span>
-          </div>
+            <span>{shortening ? 'Creating…' : 'Shorten & track'}</span>
+          </button>
           <button className="btn btn-outline btn-sm" onClick={copyUrl}>
             <Copy />
             <span>{copied ? 'Copied' : 'Copy URL'}</span>

@@ -155,7 +155,7 @@
 }
 .bar-row {
   display: grid;
-  grid-template-columns: 20px 1fr 40px;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(40px, auto);
   gap: 10px;
   align-items: center;
   padding: 6px 0;
@@ -824,13 +824,13 @@ select.ie-input { cursor: pointer; margin: 0; }
 .ie-items { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .ie-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 64px 120px 120px 84px;
+  grid-template-columns: 20px minmax(0, 1fr) 56px 112px 116px 64px;
   gap: 8px;
   align-items: start;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
 }
-.ie-items.has-eq .ie-row { grid-template-columns: 24px minmax(0, 1fr) 64px 120px 120px 96px 84px; }
+.ie-items.has-eq .ie-row { grid-template-columns: 20px minmax(0, 1fr) 56px 112px 116px 84px 64px; }
 .ie-row-head {
   border-top: none;
   background: var(--foreground);
@@ -845,6 +845,9 @@ select.ie-input { cursor: pointer; margin: 0; }
 .ie-idx { color: var(--muted-foreground); padding-top: 5px; font-size: 12px; }
 .ie-desc { display: flex; flex-direction: column; min-width: 0; }
 .ie-desc .ie-input { margin: 0; }
+/* Grow with their content where supported; otherwise they can be resized. */
+.ie-grow { field-sizing: content; min-height: 0; resize: none; overflow: hidden; }
+.ie-desc .ie-muted { font-size: 12px; }
 .ie-num { text-align: right; margin: 0; -moz-appearance: textfield; }
 .ie-num::-webkit-outer-spin-button, .ie-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ie-row .ie-num { border-color: var(--border); }
@@ -854,7 +857,7 @@ select.ie-input { cursor: pointer; margin: 0; }
 .ie-row .ie-muted.r { padding-top: 5px; font-size: 12px; }
 .ie-row-actions { display: flex; gap: 2px; justify-content: flex-end; opacity: 0.35; transition: opacity 0.15s; }
 .ie-row:hover .ie-row-actions, .ie-row:focus-within .ie-row-actions { opacity: 1; }
-.ie-row-actions .icon-btn { width: 24px; height: 24px; font-size: 12px; }
+.ie-row-actions .icon-btn { width: 20px; height: 22px; font-size: 12px; }
 .ie-empty { padding: 18px; text-align: center; color: var(--muted-foreground); border-top: 1px solid var(--border); }
 .ie .inv-add-item { align-self: flex-start; margin-top: -12px; }
 .ie-summary { display: grid; grid-template-columns: 1fr minmax(300px, 1.05fr); gap: 28px; align-items: start; }

@@ -75,7 +75,7 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
     try {
       const { ok, data } = await action();
       if (data.domains) apply(data);
-      if (!ok) setMessage({ tone: 'error', text: data.reason || data.error || 'Something went wrong' });
+      if (!ok || data.verified === false) setMessage({ tone: 'error', text: data.reason || data.error || 'Something went wrong' });
       else if (success) setMessage({ tone: 'ok', text: success });
     } catch {
       setMessage({ tone: 'error', text: 'Network error, try again.' });

@@ -33,6 +33,7 @@ import { useOgMetadata } from '@/lib/use-og-metadata';
 import { useCollections, useSettings } from '@/lib/collections';
 import { useShortUrls } from '@/lib/use-short-url';
 import { DomainPicker } from '@/components/links/domain-picker';
+import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { expirationFromSetting } from '@/lib/links/defaults';
 import { usePopoverDismiss } from '@/lib/popover';
 
@@ -305,6 +306,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                   title={aliasLocked ? 'Click the pen to edit' : undefined}
                 />
               </div>
+              <ShortUrlHint domain={domain} short={urlFor({ domain, alias: alias || 'link' })} />
             </div>
 
             {/* Tags */}

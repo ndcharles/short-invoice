@@ -25,7 +25,13 @@ const app = new Hono<AppEnv>();
 
 app.use('*', async (c, next) => {
   await next();
-  c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  // Responses passed through from static assets have immutable headers.
+  try {
+    c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  } catch {
+    c.res = new Response(c.res.body, c.res);
+    c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  }
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   if (c.req.path.startsWith('/api/')) c.res.headers.set('Cache-Control', 'no-store');
 });

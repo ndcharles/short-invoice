@@ -34,6 +34,7 @@ import { hasUtm, pickUtm } from '@/lib/links/utm';
 import { useCollections, useSettings } from '@/lib/collections';
 import { useShortUrls } from '@/lib/use-short-url';
 import { DomainPicker } from '@/components/links/domain-picker';
+import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { usePopoverDismiss } from '@/lib/popover';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
@@ -435,6 +436,7 @@ function EditLinkPageInner() {
                 title={aliasLocked ? 'Click the pen to edit' : undefined}
               />
             </div>
+            <ShortUrlHint domain={draft.domain} short={short} />
           </div>
 
           <div className="field" ref={pickerRef} data-popover-root style={{ marginTop: '14px', position: 'relative' }}>

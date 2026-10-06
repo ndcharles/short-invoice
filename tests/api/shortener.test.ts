@@ -284,6 +284,7 @@ describe('custom short domains', () => {
     expect(root.headers.location).toBe('https://example.com/home');
 
     const appRoot = await raw('/');
+    expect(appRoot.status).toBeLessThan(400);
     expect(appRoot.headers.get('location') ?? '').not.toBe('https://example.com/home');
     await api('PATCH', '/api/settings', { root_redirect: '' });
   });
@@ -315,5 +316,12 @@ describe('custom short domains', () => {
   it('falls back to the app 404 page for unknown paths on the app host', async () => {
     const res = await raw('/definitely-not-a-page');
     expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('text/html');
+  });
+
+  it('serves the static app at the root and sets security headers on it', async () => {
+    const res = await raw('/');
+    expect(res.status).toBeLessThan(400);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
   });
 });

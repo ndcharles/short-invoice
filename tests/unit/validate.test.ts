@@ -134,7 +134,9 @@ describe('short URLs', () => {
 
   it('parses the older stored domain shape', () => {
     const list = parseDomains(JSON.stringify([{ id: 'x', name: 'A.example', status: 'Active', added: 'Added today' }, { name: 'a.example' }, null]));
-    expect(list).toEqual([{ id: 'x', name: 'a.example', status: 'active', added: 0, verified_at: null }]);
+    // Legacy "Active" entries were never verified, so they start as pending.
+    expect(list).toEqual([{ id: 'x', name: 'a.example', status: 'pending', added: 0, verified_at: null }]);
+    expect(parseDomains(JSON.stringify([{ name: 'b.example', status: 'active', verified_at: 5 }]))[0].status).toBe('active');
   });
 });
 

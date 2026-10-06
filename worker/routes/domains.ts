@@ -109,7 +109,8 @@ domains.post('/:name/verify', async (c) => {
   domain.verified_at = verified ? Date.now() : null;
   await writeDomains(db, list);
   const body = (await state(db)).body;
-  return c.json({ ...body, verified, reason: verified ? null : reason }, verified ? 200 : 422);
+  // A failed check is a normal outcome, not an error: 200 with verified: false.
+  return c.json({ ...body, verified, reason: verified ? null : reason });
 });
 
 domains.post('/:name/default', async (c) => {

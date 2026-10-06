@@ -21,7 +21,7 @@ import {
 const PAGE_SIZE = 25;
 const SORTS = [
   { id: 'date', label: 'Newest first' },
-  { id: 'clicks', label: 'Most clicks' },
+  { id: 'name', label: 'Campaign A–Z' },
 ] as const;
 type SortId = (typeof SORTS)[number]['id'];
 
@@ -96,7 +96,9 @@ export default function UtmsPage() {
 
   const visible = useMemo(() => {
     const rows = [...campaigns];
-    rows.sort((a, b) => (sortOrder === 'clicks' ? b.clicks - a.clicks : b.created_at - a.created_at));
+    rows.sort((a, b) =>
+      sortOrder === 'name' ? (a.campaign ?? a.campaign_id ?? '').localeCompare(b.campaign ?? b.campaign_id ?? '') : b.created_at - a.created_at
+    );
     return rows;
   }, [campaigns, sortOrder]);
 
