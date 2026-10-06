@@ -4,11 +4,9 @@ import {
   parseHexColor,
   parseImageSource,
   parseMultiline,
-  parseNumber,
   parseOptionalHttpUrl,
   type Result,
 } from '../../src/lib/validate';
-import { isCurrency } from '../../src/lib/invoices';
 
 export { DEFAULT_SETTINGS, type SettingsMap };
 
@@ -35,38 +33,21 @@ const LIST_KEYS = new Set([
   'utm_presets',
   'inv_accounts',
   'inv_methods',
+  'inv_enabled_currencies',
+  'inv_currency_options',
 ]);
 
 const asString = (res: Result<string | null>): Result<string> => (res.ok ? { ok: true, value: res.value ?? '' } : res);
-const numberText = (res: Result<number>): Result<string> => (res.ok ? { ok: true, value: String(res.value) } : res);
 
 /** Per-key validation; anything not listed is free text with a length cap. */
 const VALIDATORS: Record<string, (value: string) => Result<string>> = {
   workspace_logo: (v) => asString(parseImageSource(v, 'Workspace logo')),
   inv_logo: (v) => asString(parseImageSource(v, 'Invoice logo')),
   root_redirect: (v) => asString(parseOptionalHttpUrl(v, 'Root redirect URL')),
+  // Invoice settings keep their original free-form values; only fields that end
+  // up in an <img src> or a CSS colour are restricted.
   inv_tagline_color: (v) => parseHexColor(v, 'Tagline colour'),
-  inv_contact_email: (v) => asString(parseEmail(v, 'Contact email')),
   profile_email: (v) => asString(parseEmail(v, 'Email')),
-  inv_tax_rate: (v) => numberText(parseNumber(v, 'Tax rate', { min: 0, max: 100 })),
-  inv_usd_rate: (v) => numberText(parseNumber(v, 'Exchange rate', { min: 0, max: 1_000_000 })),
-  inv_number_padding: (v) => numberText(parseNumber(v, 'Number padding', { min: 1, max: 12 })),
-  inv_next_number: (v) => {
-    const n = parseNumber(v, 'Next invoice number', { min: 1, max: 9_999_999_999 });
-    if (n.ok && !Number.isInteger(n.value)) return { ok: false, error: 'Next invoice number must be a whole number' };
-    return numberText(n);
-  },
-  inv_default_currency: (v) => {
-    const code = v.trim().slice(0, 3).toUpperCase();
-    return isCurrency(code) ? { ok: true, value: code } : { ok: false, error: 'Unsupported default currency' };
-  },
-  inv_payment_terms: (v) =>
-    // "Custom" is accepted for rows saved by the earlier settings page; it means Net 30.
-    /^(Due on receipt|Net \d{1,3}|Custom)$/.test(v) ? { ok: true, value: v } : { ok: false, error: 'Payment terms must be "Due on receipt" or "Net <days>"' },
-  inv_number_prefix: (v) =>
-    /^[A-Za-z0-9/_.-]{0,12}$/.test(v)
-      ? { ok: true, value: v }
-      : { ok: false, error: 'Invoice prefix can use up to 12 letters, digits, "-", "_", "/" or "."' },
 };
 
 function validateSetting(key: string, raw: unknown): Result<string> {

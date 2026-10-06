@@ -9,7 +9,6 @@ import metadata from './routes/metadata';
 import analytics from './routes/analytics';
 import domains, { VERIFY_PATH, verifyToken } from './routes/domains';
 import exporter from './routes/export';
-import publicInvoice from './routes/public-invoice';
 import redirect, { notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
 import { isAppHost, readShortDomainConfig } from './lib/domains';
 import { parseAlias, parseHttpUrl } from '../src/lib/validate';
@@ -69,8 +68,6 @@ app.route('/api/metadata', metadata);
 app.route('/api/analytics', analytics);
 app.route('/api/domains', domains);
 app.route('/api/export', exporter);
-// The public invoice view must be mounted before the /s/:alias redirect routes.
-app.route('/s/i', publicInvoice);
 app.route('/s', redirect);
 
 app.get('/api/health', (c) => c.json({ ok: true }));

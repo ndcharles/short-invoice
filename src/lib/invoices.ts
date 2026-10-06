@@ -1,23 +1,44 @@
-/**
- * Invoice model shared by the Worker (authoritative totals and statuses) and
- * the UI (live preview while editing). Pure functions, no runtime imports.
- *
- * Money is computed in minor units (kobo/cents) and rounded once per line and
- * once per total, so the document, the list and the API always agree.
- *
- * Currency equivalents: every invoice has one currency. The optional
- * `exchange_rate` is always "naira per 1 unit of the foreign currency":
- *   - an NGN invoice shows a USD equivalent  (amount ÷ rate)
- *   - a USD/GBP/EUR invoice shows an NGN equivalent (amount × rate)
- * A rate of 0 means "no equivalent shown".
- */
+export type InvoiceStatus = 'draft' | 'sent' | 'overdue' | 'partially-paid' | 'paid' | 'cancelled';
 
-/** What is stored. `overdue` is never stored: it is derived from the due date. */
-export type StoredStatus = 'draft' | 'sent' | 'partially-paid' | 'paid' | 'cancelled';
-export type InvoiceStatus = StoredStatus | 'overdue';
+export interface InvoiceItem {
+  name: string;
+  desc: string;
+  qty: number;
+  unitPrice: number;
+}
 
-/** Statuses a person sets directly; paid / partially paid follow from payments. */
-export const MANUAL_STATUSES: StoredStatus[] = ['draft', 'sent', 'cancelled'];
+export interface InvoicePayment {
+  amount: number;
+  date: string;
+  method: string;
+  note: string;
+}
+
+export interface Invoice {
+  id: string;
+  workspace_id: string;
+  number: string;
+  client_name: string;
+  client_email: string;
+  client_address: string;
+  issued_at: number;
+  due_at: number;
+  currency: string;
+  status: InvoiceStatus;
+  items: string;
+  payments: string;
+  subtotal: number;
+  tax_rate: number;
+  discount: number;
+  total: number;
+  notes: string;
+  terms: string;
+  folder: string;
+  tag: string | null;
+  avatar: string;
+  created_at: number;
+  updated_at: number;
+}
 
 export const INVOICE_STATUSES: { id: InvoiceStatus; label: string }[] = [
   { id: 'draft', label: 'Draft' },
@@ -28,6 +49,9 @@ export const INVOICE_STATUSES: { id: InvoiceStatus; label: string }[] = [
   { id: 'cancelled', label: 'Cancelled' },
 ];
 
+/** Statuses offered by the row menu's "Change status" submenu. */
+export const MANUAL_STATUSES: InvoiceStatus[] = ['draft', 'sent', 'overdue', 'cancelled'];
+
 export const STATUS_META: Record<InvoiceStatus, { label: string; cls: string }> = {
   draft: { label: 'Draft', cls: 'inv-status-draft' },
   sent: { label: 'Sent', cls: 'inv-status-sent' },
@@ -37,221 +61,106 @@ export const STATUS_META: Record<InvoiceStatus, { label: string; cls: string }> 
   cancelled: { label: 'Cancelled', cls: 'inv-status-cancelled' },
 };
 
-export interface InvoiceItem {
-  name: string;
-  desc: string;
-  qty: number;
-  unitPrice: number;
-}
-
-export interface InvoicePayment {
-  id: string;
-  amount: number;
-  /** YYYY-MM-DD */
-  date: string;
-  method: string;
-  note: string;
-}
-
-export const CURRENCIES: { code: string; symbol: string; name: string; major: string; minor: string }[] = [
-  { code: 'NGN', symbol: '₦', name: 'Nigerian naira', major: 'Naira', minor: 'Kobo' },
-  { code: 'USD', symbol: '$', name: 'US dollar', major: 'US Dollars', minor: 'Cents' },
-  { code: 'GBP', symbol: '£', name: 'British pound', major: 'Pounds Sterling', minor: 'Pence' },
-  { code: 'EUR', symbol: '€', name: 'Euro', major: 'Euros', minor: 'Cents' },
-  { code: 'CAD', symbol: 'C$', name: 'Canadian dollar', major: 'Canadian Dollars', minor: 'Cents' },
-  { code: 'GHS', symbol: 'GH₵', name: 'Ghanaian cedi', major: 'Cedis', minor: 'Pesewas' },
-  { code: 'KES', symbol: 'KSh', name: 'Kenyan shilling', major: 'Kenyan Shillings', minor: 'Cents' },
-  { code: 'ZAR', symbol: 'R', name: 'South African rand', major: 'Rand', minor: 'Cents' },
-];
-
-export const CURRENCY_CODES = CURRENCIES.map((c) => c.code);
-export const CURRENCY_SYMBOLS: Record<string, string> = Object.fromEntries(CURRENCIES.map((c) => [c.code, c.symbol]));
-
-export const isCurrency = (code: unknown): code is string => typeof code === 'string' && CURRENCY_CODES.includes(code);
-
-/** "NGN (₦)" (older settings format) or "NGN" → "NGN". */
-export function currencyCode(value: string | undefined | null, fallback = 'NGN'): string {
-  const code = (value ?? '').trim().slice(0, 3).toUpperCase();
-  return isCurrency(code) ? code : fallback;
-}
-
-const toMinor = (amount: number) => Math.round((Number(amount) || 0) * 100);
-const fromMinor = (minor: number) => minor / 100;
-
-/** Rounds to 2 decimal places the way the totals do. */
-export const round2 = (amount: number) => fromMinor(toMinor(amount));
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  NGN: '₦',
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+};
 
 export function fmtMoney(amount: number, currency = 'NGN'): string {
-  const value = Number(amount || 0);
-  const formatted = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${value < 0 ? '−' : ''}${CURRENCY_SYMBOLS[currency] ?? `${currency} `}${formatted}`;
+  const symbol = CURRENCY_SYMBOLS[currency] ?? '';
+  const value = Number(amount || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${symbol}${value}`;
 }
 
-/** Defensive parse of the stored items JSON. */
-export function parseItems(value: unknown): InvoiceItem[] {
-  let list: unknown = value;
-  if (typeof value === 'string') {
-    try {
-      list = JSON.parse(value || '[]');
-    } catch {
-      return [];
-    }
+export function parseItems(value: string | null | undefined): InvoiceItem[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .map((item) => ({
-      name: typeof item.name === 'string' ? item.name : '',
-      desc: typeof item.desc === 'string' ? item.desc : '',
-      qty: Number.isFinite(Number(item.qty)) ? Number(item.qty) : 0,
-      unitPrice: Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : 0,
-    }));
 }
 
-/** Defensive parse of the stored payments JSON; older rows without ids get stable ones. */
-export function parsePayments(value: unknown): InvoicePayment[] {
-  let list: unknown = value;
-  if (typeof value === 'string') {
-    try {
-      list = JSON.parse(value || '[]');
-    } catch {
-      return [];
-    }
+export function parsePayments(value: string | null | undefined): InvoicePayment[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
-    .map((p, index) => ({
-      id: typeof p.id === 'string' && p.id ? p.id : `pay_${index + 1}`,
-      amount: Number.isFinite(Number(p.amount)) ? Number(p.amount) : 0,
-      date: typeof p.date === 'string' ? p.date : '',
-      method: typeof p.method === 'string' ? p.method : '',
-      note: typeof p.note === 'string' ? p.note : '',
-    }));
-}
-
-export const lineAmount = (item: Pick<InvoiceItem, 'qty' | 'unitPrice'>) => round2(Number(item.qty) * Number(item.unitPrice));
-
-export interface TotalsInput {
-  items: InvoiceItem[];
-  discount: number;
-  discountType: 'value' | 'percent';
-  charges: number;
-  /** Fraction, e.g. 0.075 for 7.5%. */
-  taxRate: number;
 }
 
 export interface InvoiceTotals {
   subtotal: number;
-  /** The discount in money, whatever its type, never more than the subtotal. */
-  discount: number;
-  charges: number;
   tax: number;
-  total: number;
+  discount: number;
+  grand: number;
   paid: number;
   balance: number;
-  /** Amount paid beyond the total (a credit for the client). */
-  overpaid: number;
 }
 
-/**
- * subtotal − discount + charges, then tax on that, all in minor units.
- * Tax applies to charges too (delivery, setup fees are usually taxable).
- */
-export function computeTotals(input: TotalsInput, payments: Pick<InvoicePayment, 'amount'>[] = []): InvoiceTotals {
-  const subtotalMinor = input.items.reduce((sum, item) => sum + toMinor(lineAmount(item)), 0);
-  const rawDiscount =
-    input.discountType === 'percent'
-      ? Math.round((subtotalMinor * Math.min(100, Math.max(0, Number(input.discount) || 0))) / 100)
-      : toMinor(Math.max(0, Number(input.discount) || 0));
-  const discountMinor = Math.min(rawDiscount, subtotalMinor);
-  const chargesMinor = toMinor(Math.max(0, Number(input.charges) || 0));
-  const taxableMinor = subtotalMinor - discountMinor + chargesMinor;
-  const taxMinor = Math.round(taxableMinor * Math.max(0, Number(input.taxRate) || 0));
-  const totalMinor = taxableMinor + taxMinor;
-  const paidMinor = payments.reduce((sum, p) => sum + toMinor(p.amount), 0);
+/** Mirrors the design's computeTotals: real items win, otherwise back-solve from the stored total. */
+export function computeTotals(invoice: Invoice): InvoiceTotals {
+  const payments = parsePayments(invoice.payments);
+  const paid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const taxRate = Number(invoice.tax_rate ?? 0.075);
+  const discount = Number(invoice.discount ?? 0);
+  const items = parseItems(invoice.items);
 
-  return {
-    subtotal: fromMinor(subtotalMinor),
-    discount: fromMinor(discountMinor),
-    charges: fromMinor(chargesMinor),
-    tax: fromMinor(taxMinor),
-    total: fromMinor(totalMinor),
-    paid: fromMinor(paidMinor),
-    balance: fromMinor(Math.max(0, totalMinor - paidMinor)),
-    overpaid: fromMinor(Math.max(0, paidMinor - totalMinor)),
-  };
-}
+  let subtotal: number;
+  let tax: number;
+  let grand: number;
 
-/**
- * The status to store after payments or totals change. Cancelled and draft
- * invoices with no payments keep their status; otherwise payments decide.
- */
-export function settleStatus(current: StoredStatus, totals: Pick<InvoiceTotals, 'paid' | 'balance' | 'total'>): StoredStatus {
-  if (current === 'cancelled') return 'cancelled';
-  if (totals.paid > 0 && totals.balance <= 0 && totals.total > 0) return 'paid';
-  if (totals.paid > 0) return 'partially-paid';
-  return current === 'paid' || current === 'partially-paid' ? 'sent' : current;
-}
-
-/** The status people see: unpaid sent invoices past their due date are overdue. */
-export function displayStatus(stored: StoredStatus, dueAt: number, balance: number, now = Date.now()): InvoiceStatus {
-  if ((stored === 'sent' || stored === 'partially-paid') && balance > 0) {
-    const today = new Date(now);
-    const startOfToday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-    if (dueAt < startOfToday) return 'overdue';
+  if (items.length > 0) {
+    subtotal = items.reduce((sum, item) => sum + Number(item.qty) * Number(item.unitPrice), 0);
+    const discounted = Math.max(0, subtotal - discount);
+    tax = discounted * taxRate;
+    grand = discounted + tax;
+  } else {
+    grand = Number(invoice.total || 0);
+    subtotal = grand / (1 + taxRate);
+    tax = grand - subtotal;
   }
-  return stored;
+
+  return { subtotal, tax, discount, grand, paid, balance: grand - paid };
 }
 
-/** Whole days until (positive) or since (negative) the due date, by UTC calendar day. */
-export function daysUntil(dueAt: number, now = Date.now()): number {
-  const day = (ms: number) => {
-    const d = new Date(ms);
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-  };
-  return Math.round((day(dueAt) - day(now)) / 86_400_000);
+/** Totals for an in-progress draft (items + discount + tax rate). */
+export function computeTotalsFor(items: InvoiceItem[], discount: number, taxRate: number) {
+  const subtotal = items.reduce((sum, item) => sum + Number(item.qty) * Number(item.unitPrice), 0);
+  const discounted = Math.max(0, subtotal - Number(discount || 0));
+  const tax = discounted * Number(taxRate || 0);
+  const grand = discounted + tax;
+  return { subtotal, tax, grand, paid: 0, balance: grand };
 }
 
-/** The other side of the equivalent: NGN invoices show USD, foreign invoices show NGN. */
-export const equivalentCurrency = (currency: string) => (currency === 'NGN' ? 'USD' : 'NGN');
-
-/** Converts an invoice amount to its equivalent currency, or null when no rate is set. */
-export function toEquivalent(amount: number, currency: string, rate: number): number | null {
-  const r = Number(rate) || 0;
-  if (r <= 0) return null;
-  return round2(currency === 'NGN' ? amount / r : amount * r);
+export function invoiceStatusPill(status: InvoiceStatus): { label: string; cls: string } {
+  return STATUS_META[status] ?? STATUS_META.draft;
 }
 
-/** Naira value of an amount, for cross-invoice reporting. Null when it cannot be known. */
-export function toNaira(amount: number, currency: string, rate: number): number | null {
-  if (currency === 'NGN') return amount;
-  const r = Number(rate) || 0;
-  return r > 0 ? round2(amount * r) : null;
+export function formatDay(ms: number): string {
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** "₦1,500.00 = $1" style line for the rate in use. */
-export function rateLabel(currency: string, rate: number): string {
-  const foreign = currency === 'NGN' ? 'USD' : currency;
-  return `${fmtMoney(rate, 'NGN')} = ${CURRENCY_SYMBOLS[foreign] ?? foreign}1`;
-}
-
-/** Due date from a payment-terms setting such as "Net 30" or "Due on receipt". */
-export function dueDateFromTerms(terms: string | undefined, issuedAt: number): number {
-  const match = /net\s*(\d{1,3})/i.exec(terms ?? '');
-  const days = match ? Number(match[1]) : /receipt/i.test(terms ?? '') ? 0 : 30;
-  return issuedAt + days * 86_400_000;
-}
-
-/** Number from the configured prefix, padding and sequence value. */
-export function formatInvoiceNumber(prefix: string, padding: number, sequence: number): string {
-  const pad = Number.isFinite(padding) ? Math.min(12, Math.max(1, padding)) : 6;
-  return `${prefix}${String(sequence).padStart(pad, '0')}`;
+export function formatShortDay(ms: number): string {
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',
   'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
 const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+const CURRENCY_NAMES: Record<string, { major: string; minor: string }> = {
+  NGN: { major: 'Naira', minor: 'Kobo' },
+  USD: { major: 'Dollars', minor: 'Cents' },
+  EUR: { major: 'Euros', minor: 'Cents' },
+  GBP: { major: 'Pounds', minor: 'Pence' },
+};
 
 function under1000(n: number): string {
   if (n === 0) return '';
@@ -261,17 +170,14 @@ function under1000(n: number): string {
 }
 
 /**
- * "Six Thousand, Six Hundred and Sixty-Five Naira, Fifty Kobo Only": the
- * currency name follows the words and any minor units are stated explicitly.
+ * "Six Thousand, Six Hundred and Sixty-Five Naira Only" — the currency name
+ * follows the words (no symbol) and any kobo/cents are stated explicitly.
  */
 export function moneyInWords(amount: number, currency = 'NGN'): string {
   const units = ['', 'Thousand', 'Million', 'Billion', 'Trillion'];
-  const meta = CURRENCIES.find((c) => c.code === currency);
-  const major = meta?.major ?? currency;
-  const minorName = meta?.minor ?? 'Cents';
-  const minorTotal = Math.abs(toMinor(amount));
-  const whole = Math.floor(minorTotal / 100);
-  const minor = minorTotal % 100;
+  const names = CURRENCY_NAMES[currency] ?? { major: currency, minor: 'Cents' };
+  const value = Math.abs(Number(amount) || 0);
+  const whole = Math.floor(value);
 
   let words: string;
   if (whole === 0) {
@@ -288,11 +194,56 @@ export function moneyInWords(amount: number, currency = 'NGN'): string {
     }
     words = groups.join(', ');
   }
-  const minorText = minor > 0 ? `, ${under1000(minor)} ${minorName}` : '';
-  return `${words} ${major}${minorText} Only`;
+
+  const minor = Math.round((value - whole) * 100);
+  const minorText = minor > 0 ? `, ${under1000(minor)} ${names.minor}` : '';
+  return `${words} ${names.major}${minorText} Only`;
 }
 
-/** Fills {client}, {number}, {amount}, {due}, {balance}, {link}, {payment_date} in email templates. */
-export function fillTemplate(template: string, values: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match);
+/** Resolves a discount that may be a flat amount or a percentage of the subtotal. */
+export function discountAmount(draft: {
+  items: InvoiceItem[];
+  discount: number;
+  discountType?: 'value' | 'percent';
+}): number {
+  const subtotal = draft.items.reduce((sum, item) => sum + Number(item.qty) * Number(item.unitPrice), 0);
+  return draft.discountType === 'percent'
+    ? Math.round(((subtotal * Number(draft.discount || 0)) / 100) * 100) / 100
+    : Number(draft.discount || 0);
+}
+
+/** Full totals for a draft, including charges and percentage discounts. */
+export function draftTotals(draft: {
+  items: InvoiceItem[];
+  discount: number;
+  discountType?: 'value' | 'percent';
+  charges?: number;
+  taxRate?: number;
+}) {
+  const subtotal = draft.items.reduce((sum, item) => sum + Number(item.qty) * Number(item.unitPrice), 0);
+  const discount = discountAmount(draft);
+  const discounted = Math.max(0, subtotal - discount);
+  const charges = Number(draft.charges || 0);
+  const tax = (discounted + charges) * Number(draft.taxRate || 0);
+  return { subtotal, discount, charges, tax, grand: discounted + charges + tax };
+}
+
+/**
+ * Currency equivalent shown under the totals. The stored rate is NGN per USD,
+ * so NGN invoices convert to dollars and everything else converts to naira.
+ */
+export function convertAmount(
+  amount: number,
+  currency: string,
+  ngnPerUsd: number
+): { text: string; rateLine: string; code: string } {
+  const rate = Number(ngnPerUsd) || 0;
+  if (rate <= 0) return { text: '', rateLine: '', code: '' };
+  const money = (value: number, symbol: string) =>
+    `${symbol}${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  if (currency === 'NGN') {
+    return { text: `≈ ${money(amount / rate, '$')}`, rateLine: '₦' + rate.toLocaleString('en-US') + ' = $1', code: 'USD' };
+  }
+  return { text: `≈ ${money(amount * rate, '₦')}`, rateLine: '₦' + rate.toLocaleString('en-US') + ' = $1', code: 'NGN' };
 }

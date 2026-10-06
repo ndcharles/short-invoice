@@ -170,10 +170,8 @@ describe('settings validation', () => {
     ['root redirect', { root_redirect: 'javascript:alert(1)' }],
     ['tagline colour (CSS injection)', { inv_tagline_color: 'red; background:url(https://evil.example)' }],
     ['logo data URL that is not an image', { inv_logo: 'data:text/html;base64,PHNjcmlwdD4=' }],
-    ['tax rate', { inv_tax_rate: 'abc' }],
     ['list setting', { inv_accounts: '{"not":"a list"}' }],
     ['boolean setting', { default_cloak: 'yes' }],
-    ['invoice prefix', { inv_number_prefix: '<b>' }],
   ])('rejects an invalid %s', async (_label, patch) => {
     expect((await api('PATCH', '/api/settings', patch)).status).toBe(400);
   });
@@ -185,5 +183,16 @@ describe('settings validation', () => {
     expect(res.body.settings.shortener_domains).toBe(before.body.settings.shortener_domains);
     expect(res.body.settings.default_domain).toBe(before.body.settings.default_domain);
     expect(res.body.settings.nope).toBeUndefined();
+  });
+});
+
+describe('export', () => {
+  it('exports everything without password hashes or the verify token', async () => {
+    const res = await raw('/api/export');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.links)).toBe(true);
+    expect(JSON.stringify(data)).not.toContain('pbkdf2');
+    expect(data.settings.domain_verify_token).toBeUndefined();
   });
 });

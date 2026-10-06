@@ -19,16 +19,12 @@ const USES: Record<CollectionKind, [string, string][]> = {
   folders: [
     ['links', 'folder'],
     ['utms', 'folder'],
-    ['invoices', 'folder'],
   ],
-  tags: [
-    ['links', 'tag'],
-    ['invoices', 'tag'],
-  ],
+  tags: [['links', 'tag']],
 };
 
 /** Fallback folder per module when a folder is deleted. */
-const MODULE_FOLDER: Record<string, string> = { utms: 'Campaigns', invoices: 'Invoices' };
+const MODULE_FOLDER: Record<string, string> = { utms: 'Campaigns' };
 
 export const COLLECTION_COLORS = ['green', 'blue', 'yellow'] as const;
 

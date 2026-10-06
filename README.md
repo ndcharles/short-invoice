@@ -6,9 +6,8 @@ An internal multi-tool workspace for a small team:
   folders, tags, UTM params, passwords, expiry, cloaking, custom link
   previews, QR codes and click analytics
 - **UTM builder**: tagged campaign URLs with presets and QR codes
-- **Invoice generator**: naira-first invoices with VAT, discounts, charges
-  and an optional USD equivalent for foreign clients; payments, receipts,
-  automatic overdue, a private client link with PDF download, and analytics
+- **Invoice generator**: Draft → Sent → Overdue → Partially paid → Paid →
+  Cancelled, payment logging, receipts, PDF export and analytics
 - **Settings** for all three modules
 
 Built to run on the **Cloudflare Workers free plan**.
@@ -29,7 +28,6 @@ See [CLAUDE.md](CLAUDE.md) for the free-tier rules this codebase follows.
 npm install
 npm run db:migrate:local
 npm run db:seed:local            # optional demo links and campaigns
-npm run db:demo:invoices:local   # optional demo invoices (every status)
 npm run dev                      # http://localhost:3000
 npm test                         # unit + API tests
 ```
@@ -44,15 +42,12 @@ npm run deploy
 ```
 
 Put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
-in front of the app host (bypass `/s/*`, which serves short links and client
-invoice links) before sharing it. The app has no login of its own yet.
+in front of the app host (bypass `/s/*`, which serves short links) before
+sharing it. The app has no login of its own yet.
 
 To serve short links on your own domain, attach it to the Worker in the
 Cloudflare dashboard (Workers & Pages → short-invoice → Settings → Domains &
 Routes → Custom domain), add it in Settings → URL Shortener and press Verify.
-
-Demo invoices can be loaded into the deployed database and removed again:
-`npm run db:demo:invoices` / `npm run db:demo:invoices:clean`.
 
 ## Design reference
 

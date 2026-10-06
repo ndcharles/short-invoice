@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Copy, XIcon } from '@/components/icons';
+import { XIcon } from '@/components/icons';
 import { CURRENCY_SYMBOLS, fmtMoney } from '@/lib/invoices';
-import { toDateInput } from '@/lib/dates';
+
+const NOTE_LIMIT = 2000;
 
 export interface PaymentDraft {
   amount: number;
@@ -12,63 +13,41 @@ export interface PaymentDraft {
   note: string;
 }
 
-const NOTE_LIMIT = 500;
+const toDateInput = (d = new Date()) => d.toISOString().slice(0, 10);
 
-function Modal({ title, onClose, children, footer, className = '' }: {
-  title: React.ReactNode;
-  onClose: () => void;
-  children: React.ReactNode;
-  footer: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
-    >
-      <div className={`modal ${className}`} role="dialog" aria-modal="true">
-        <div className="modal-header">
-          <div className="modal-title">{title}</div>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
-            <XIcon />
-          </button>
-        </div>
-        {children}
-        <div className="modal-footer">{footer}</div>
-      </div>
-    </div>
-  );
-}
-
-/** Records money received against an invoice. Status follows automatically. */
+/** Log Payment modal (design: shell.js `log-payment-modal`). */
 export function LogPaymentModal({
+  initialFullyPaid = true,
   currency,
-  balance,
+  outstanding,
   methods,
   onClose,
   onSubmit,
 }: {
+  initialFullyPaid?: boolean;
   currency: string;
-  balance: number;
+  outstanding: number;
   methods: string[];
   onClose: () => void;
-  onSubmit: (payment: PaymentDraft) => Promise<void>;
+  onSubmit: (payment: PaymentDraft) => Promise<void> | void;
 }) {
-  const [amount, setAmount] = useState(balance > 0 ? balance : 0);
-  const [today] = useState(() => toDateInput(Date.now()));
-  const [date, setDate] = useState(today);
+  const [fullyPaid, setFullyPaid] = useState(initialFullyPaid);
+  const [amount, setAmount] = useState(outstanding > 0 ? outstanding : 0);
+  const [date, setDate] = useState(toDateInput());
   const [method, setMethod] = useState(methods[0] ?? 'Bank transfer');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const symbol = CURRENCY_SYMBOLS[currency] ?? currency;
-  const remaining = Math.max(0, Math.round((balance - amount) * 100) / 100);
+
+  const symbol = CURRENCY_SYMBOLS[currency] ?? '';
+
+  const toggleFullyPaid = (checked: boolean) => {
+    setFullyPaid(checked);
+    if (checked) setAmount(outstanding > 0 ? outstanding : 0);
+  };
 
   const submit = async () => {
-    if (!(amount > 0)) {
+    if (!amount || amount <= 0) {
       setError('Enter the amount received.');
       return;
     }
@@ -78,196 +57,255 @@ export function LogPaymentModal({
       await onSubmit({ amount, date, method, note });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not log the payment');
+    } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal
-      className="log-payment-modal"
-      onClose={onClose}
-      title={<span>Log payment</span>}
-      footer={
-        <>
-          <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', maxWidth: '300px' }}>
-            {amount >= balance && balance > 0
-              ? 'This settles the invoice; it will be marked Paid.'
-              : `Leaves ${fmtMoney(remaining, currency)} outstanding; the invoice will be Partially paid.`}
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal log-payment-modal" role="dialog" aria-label="Log Payment">
+        <div className="modal-header">
+          <div className="modal-title">
+            <span style={{ fontWeight: 600 }}>{symbol}</span>
+            <span>Log Payment</span>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <XIcon />
+          </button>
+        </div>
+
+        <div className="log-payment-body">
+          <label className="log-check">
+            <input type="checkbox" checked={fullyPaid} onChange={(e) => toggleFullyPaid(e.target.checked)} />
+            <span>Fully paid</span>
+            <span className="log-check-hint">
+              Outstanding balance: <strong>{fmtMoney(outstanding, currency)}</strong>
+            </span>
+          </label>
+
+          <div className="log-field">
+            <label>Amount paid</label>
+            <div className="log-amount-wrap">
+              <span className="log-amount-sym">{symbol}</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                disabled={fullyPaid}
+                title={fullyPaid ? 'Amount is set to the outstanding balance' : 'Enter the amount received'}
+                value={amount || ''}
+                onChange={(e) => {
+                  setAmount(Number(e.target.value));
+                  setFullyPaid(Math.abs(Number(e.target.value) - outstanding) < 0.01);
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="log-field-row">
+            <div className="log-field">
+              <label>Date</label>
+              <input
+                type="text"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                placeholder={toDateInput()}
+              />
+            </div>
+            <div className="log-field">
+              <label>Method</label>
+              <select value={method} onChange={(e) => setMethod(e.target.value)}>
+                {methods.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="log-field">
+            <label>Note</label>
+            <textarea
+              maxLength={NOTE_LIMIT}
+              placeholder="Optional reference, cheque number, or context…"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <span className="log-charcount">
+              {note.length} / {NOTE_LIMIT} characters at most
+            </span>
+          </div>
+
+          {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
+        </div>
+
+        <div className="modal-footer">
+          <div style={{ fontSize: '13px', color: 'var(--muted-foreground)', maxWidth: '320px' }}>
+            Full payment marks as <strong style={{ color: 'var(--foreground)' }}>Paid</strong>; partial marks as{' '}
+            <strong style={{ color: 'var(--foreground)' }}>Partially paid</strong>.
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="btn btn-outline" onClick={onClose} disabled={saving}>
-              Cancel
+              Close
             </button>
             <button className="btn btn-primary" onClick={submit} disabled={saving}>
-              {saving ? 'Saving…' : 'Add payment'}
+              {saving ? 'Adding…' : 'Add Payment'}
             </button>
           </div>
-        </>
-      }
-    >
-      <div className="log-payment-body">
-        <div className="log-field">
-          <label htmlFor="pay-amount">Amount received</label>
-          <div className="log-amount-wrap">
-            <span className="log-amount-sym">{symbol}</span>
-            <input
-              id="pay-amount"
-              type="number"
-              min="0.01"
-              step="0.01"
-              autoFocus
-              value={amount || ''}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--muted-foreground)' }}>
-            <span>Balance due: {fmtMoney(balance, currency)}</span>
-            {balance > 0 && amount !== balance && (
-              <button type="button" className="btn btn-ghost btn-sm" style={{ padding: '0 4px', height: 'auto' }} onClick={() => setAmount(balance)}>
-                Pay full balance
-              </button>
-            )}
-          </div>
         </div>
-
-        <div className="log-field-row">
-          <div className="log-field">
-            <label htmlFor="pay-date">Date received</label>
-            <input id="pay-date" type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
-          </div>
-          <div className="log-field">
-            <label htmlFor="pay-method">Method</label>
-            <select id="pay-method" value={method} onChange={(e) => setMethod(e.target.value)}>
-              {(methods.length ? methods : ['Bank transfer']).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="log-field">
-          <label htmlFor="pay-note">Note</label>
-          <textarea
-            id="pay-note"
-            maxLength={NOTE_LIMIT}
-            placeholder="Optional: transfer reference, cheque number…"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </div>
-
-        {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
       </div>
-    </Modal>
+    </div>
   );
 }
 
-/**
- * Prepares the email to the client. There is no mail server on the free
- * plan, so this opens the user's own email app with everything filled in
- * (and offers to copy it), then marks a draft invoice as sent.
- */
+/** Send modal (design: shell.js `send-modal`, templates from Settings → Invoice). */
 export function SendModal({
-  to: initialTo,
-  subject: initialSubject,
-  body: initialBody,
-  link,
-  isDraft,
+  clientEmail,
+  subject,
+  message,
+  receiptMode,
   onClose,
-  onSent,
+  onSubmit,
 }: {
-  to: string;
+  clientEmail: string;
   subject: string;
-  body: string;
-  link: string;
-  isDraft: boolean;
+  message: string;
+  receiptMode: boolean;
   onClose: () => void;
-  onSent: () => Promise<void>;
+  onSubmit: () => Promise<void> | void;
 }) {
-  const [to, setTo] = useState(initialTo);
-  const [subject, setSubject] = useState(initialSubject);
-  const [body, setBody] = useState(initialBody);
-  const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [to, setTo] = useState(clientEmail);
+  const [cc, setCc] = useState('');
+  const [mailSubject, setMailSubject] = useState(subject);
+  const [body, setBody] = useState(message);
+  const [attach, setAttach] = useState(receiptMode ? 'receipt' : 'invoice');
+  const [sendCopy, setSendCopy] = useState(true);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const markSent = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await onSent();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not update the invoice');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const choices = [
+    { id: 'receipt', title: 'Receipt only', sub: 'Recommended after payment — clean receipt document.' },
+    { id: 'invoice', title: 'Invoice only', sub: 'Resend the original bill (e.g. if the client requests it).' },
+    { id: 'both', title: 'Invoice + Receipt', sub: 'Attach both documents in one email.' },
+  ];
 
-  const openEmail = async () => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())) {
-      setError('Enter a valid recipient email.');
+  const submit = async () => {
+    if (!to.trim()) {
+      setError('A recipient email is required.');
       return;
     }
-    const href = `mailto:${encodeURIComponent(to.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = href;
-    await markSent();
+    setSending(true);
+    setError(null);
+    try {
+      await onSubmit();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send the invoice');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
-    <Modal
-      className="send-modal"
-      onClose={onClose}
-      title={<span>Send to client</span>}
-      footer={
-        <>
-          <button
-            className="btn btn-outline"
-            onClick={async () => {
-              await navigator.clipboard.writeText(`${subject}\n\n${body}`);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-              await markSent();
-            }}
-            disabled={busy}
-          >
-            <Copy />
-            <span>{copied ? 'Copied' : 'Copy message'}</span>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal send-modal" role="dialog" aria-label="Send to client">
+        <div className="modal-header">
+          <div className="modal-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+            <span>Send to client</span>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <XIcon />
           </button>
+        </div>
+
+        <div className="send-modal-body">
+          <div className="log-field">
+            <label>
+              Recipient email <span className="required-mark">*</span>
+            </label>
+            <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@company.com" />
+          </div>
+
+          <div className="log-field">
+            <label>CC (optional)</label>
+            <input
+              type="email"
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+              placeholder="finance@yourcompany.com"
+            />
+          </div>
+
+          <div className="log-field">
+            <label>Subject</label>
+            <input value={mailSubject} onChange={(e) => setMailSubject(e.target.value)} />
+          </div>
+
+          <div className="log-field">
+            <label>Message</label>
+            <textarea
+              style={{ minHeight: '120px' }}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder={`Hi {client},\n\n…`}
+            />
+          </div>
+
+          <div className="send-attach">
+            <div className="send-attach-label">Attachments</div>
+            {choices.map((choice) => (
+              <label
+                key={choice.id}
+                className={`send-choice${attach === choice.id ? ' is-selected' : ''}`}
+                style={attach === choice.id ? { borderColor: 'var(--foreground)', background: 'var(--muted-2)' } : undefined}
+              >
+                <input
+                  type="radio"
+                  name="invoice-attachment"
+                  checked={attach === choice.id}
+                  onChange={() => setAttach(choice.id)}
+                />
+                <span>
+                  <span className="send-choice-title">{choice.title}</span>
+                  <span className="send-choice-sub">{choice.sub}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
+        </div>
+
+        <div className="modal-footer">
+          <label className="log-check" style={{ border: 'none', background: 'transparent', padding: 0, gap: '8px' }}>
+            <input type="checkbox" checked={sendCopy} onChange={(e) => setSendCopy(e.target.checked)} />
+            <span style={{ fontWeight: 400, fontSize: '13px' }}>Send me a copy</span>
+          </label>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn btn-outline" onClick={onClose} disabled={busy}>
-              Close
+            <button className="btn btn-outline" onClick={onClose} disabled={sending}>
+              Cancel
             </button>
-            <button className="btn btn-primary" onClick={openEmail} disabled={busy}>
-              Open in email app
+            <button className="btn btn-primary" onClick={submit} disabled={sending}>
+              {sending ? 'Sending…' : 'Send'}
             </button>
           </div>
-        </>
-      }
-    >
-      <div className="send-modal-body">
-        <div className="log-field">
-          <label htmlFor="send-to">To</label>
-          <input id="send-to" type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="billing@client.com" />
         </div>
-        <div className="log-field">
-          <label htmlFor="send-subject">Subject</label>
-          <input id="send-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
-        </div>
-        <div className="log-field">
-          <label htmlFor="send-body">Message</label>
-          <textarea id="send-body" style={{ minHeight: '160px' }} value={body} onChange={(e) => setBody(e.target.value)} />
-        </div>
-        <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', lineHeight: 1.5 }}>
-          The message links to the client view of this invoice:{' '}
-          <a href={link} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>
-            {link}
-          </a>
-          . The client can download a PDF from there.{isDraft ? ' Sending marks the invoice as Sent.' : ''}
-        </div>
-        {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
       </div>
-    </Modal>
+    </div>
   );
 }
