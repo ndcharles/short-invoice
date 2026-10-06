@@ -3,17 +3,40 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
 import type { InvoiceRow } from '@/lib/types';
-import { ChevronDown, Clock, ExternalLink, Globe, LinkIcon } from '@/components/icons';
+import { Clock, ExternalLink, Globe, LinkIcon } from '@/components/icons';
 import {
-  computeTotals,
-  CURRENCY_SYMBOLS,
+  BASE_CURRENCY,
   fmtMoney,
   formatDay,
   INVOICE_STATUSES,
   InvoiceStatus,
+  invoiceTotals,
   parsePayments,
+  round2,
   STATUS_META,
 } from '@/lib/invoices';
+import { useInvoiceSettings } from '@/lib/invoice-settings';
+import type { InvoiceRow as Row } from '@/lib/types';
+
+/**
+ * Analytics report in naira. Other-currency invoices are converted with their
+ * own exchange rate (naira per unit); ones without a rate cannot be summed.
+ */
+function inBase(invoice: Row, amount: number): number | null {
+  if (invoice.currency === BASE_CURRENCY) return amount;
+  const rate = Number(invoice.exchange_rate);
+  return rate > 0 ? round2(amount * rate) : null;
+}
+
+/** Invoices that count as billed: not drafts, not cancelled. */
+const isBilled = (invoice: Row) => invoice.status !== 'draft' && invoice.status !== 'cancelled';
+
+function csvCell(value: unknown): string {
+  const text = String(value ?? '');
+  // Leading = + - @ would run as a formula in spreadsheet apps.
+  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -22,9 +45,30 @@ function pctWidth(value: number, max: number) {
   return `${Math.max(2, Math.round((value / max) * 100))}%`;
 }
 
+function exportCsv(rows: Row[]) {
+  const header = ['Number', 'Client', 'Email', 'Status', 'Currency', 'Issued', 'Due', 'Subtotal', 'Discount', 'Charges', 'Tax', 'Total', 'Paid', 'Balance', 'Exchange rate (NGN)', 'Equivalent', 'Folder', 'Tag'];
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const lines = rows.map((inv) => {
+    const t = invoiceTotals(inv);
+    const rate = Number(inv.exchange_rate) || 0;
+    const equivalent = rate > 0 ? (Number(inv.equivalent_amount) > 0 ? Number(inv.equivalent_amount) : inv.currency === BASE_CURRENCY ? round2(t.grand / rate) : round2(t.grand * rate)) : '';
+    return [inv.number, inv.client_name, inv.client_email, inv.status, inv.currency, day(inv.issued_at), day(inv.due_at), t.subtotal, t.discount, t.charges, t.tax, t.grand, t.paid, t.balance, rate || '', equivalent, inv.folder, inv.tag ?? '']
+      .map(csvCell)
+      .join(',');
+  });
+  const blob = new Blob([[header.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `invoices-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function InvoiceAnalyticsPage() {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const cfg = useInvoiceSettings();
 
   useEffect(() => {
     let cancelled = false;
@@ -45,10 +89,16 @@ export default function InvoiceAnalyticsPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const totals = invoices.map((inv) => ({ inv, t: computeTotals(inv as never) }));
-    const totalValue = totals.reduce((sum, r) => sum + r.t.grand, 0);
-    const outstanding = totals.reduce((sum, r) => sum + Math.max(0, r.t.balance), 0);
-    const collected = totals.reduce((sum, r) => sum + r.t.paid, 0);
+    const grandOf = (inv: Row) => inBase(inv, invoiceTotals(inv).grand) ?? 0;
+    const billed = invoices.filter(isBilled);
+    const unconverted = billed.filter((inv) => inBase(inv, 1) === null);
+    const totals = billed.map((inv) => ({ inv, t: invoiceTotals(inv) }));
+    const totalValue = totals.reduce((sum, r) => sum + (inBase(r.inv, r.t.grand) ?? 0), 0);
+    const outstanding = totals.reduce((sum, r) => sum + (inBase(r.inv, r.t.balance) ?? 0), 0);
+    const collected = totals.reduce((sum, r) => sum + (inBase(r.inv, r.t.paid) ?? 0), 0);
+    const overdueValue = totals
+      .filter((r) => r.inv.status === 'overdue')
+      .reduce((sum, r) => sum + (inBase(r.inv, r.t.balance) ?? 0), 0);
     const clients = new Set(invoices.map((inv) => inv.client_name));
 
     // Payment velocity: days from issue to each payment date.
@@ -69,11 +119,11 @@ export default function InvoiceAnalyticsPage() {
     for (let i = 7; i >= 0; i -= 1) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const next = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      const rows = invoices.filter((inv) => inv.issued_at >= d.getTime() && inv.issued_at < next.getTime());
+      const rows = billed.filter((inv) => inv.issued_at >= d.getTime() && inv.issued_at < next.getTime());
       months.push({
         label: MONTHS[d.getMonth()],
         count: rows.length,
-        value: rows.reduce((sum, inv) => sum + computeTotals(inv as never).grand, 0),
+        value: rows.reduce((sum, inv) => sum + grandOf(inv), 0),
       });
     }
 
@@ -83,7 +133,7 @@ export default function InvoiceAnalyticsPage() {
       return {
         ...s,
         count: rows.length,
-        value: rows.reduce((sum, inv) => sum + computeTotals(inv as never).grand, 0),
+        value: rows.reduce((sum, inv) => sum + grandOf(inv), 0),
       };
     });
 
@@ -91,7 +141,7 @@ export default function InvoiceAnalyticsPage() {
     const clientMap = new Map<string, { name: string; total: number; statuses: Record<string, number> }>();
     for (const inv of invoices) {
       const entry = clientMap.get(inv.client_name) ?? { name: inv.client_name, total: 0, statuses: {} };
-      entry.total += computeTotals(inv as never).grand;
+      if (isBilled(inv)) entry.total += grandOf(inv);
       entry.statuses[inv.status] = (entry.statuses[inv.status] ?? 0) + 1;
       clientMap.set(inv.client_name, entry);
     }
@@ -103,7 +153,7 @@ export default function InvoiceAnalyticsPage() {
       for (const payment of parsePayments(inv.payments)) {
         const entry = methodMap.get(payment.method) ?? { name: payment.method, count: 0, value: 0 };
         entry.count += 1;
-        entry.value += Number(payment.amount || 0);
+        entry.value += inBase(inv, Number(payment.amount || 0)) ?? 0;
         methodMap.set(payment.method, entry);
       }
     }
@@ -113,6 +163,9 @@ export default function InvoiceAnalyticsPage() {
       totalValue,
       outstanding,
       collected,
+      overdueValue,
+      billedCount: billed.length,
+      unconverted: unconverted.length,
       clientCount: clients.size,
       avgDays,
       fastest,
@@ -167,14 +220,9 @@ export default function InvoiceAnalyticsPage() {
           <span className="placeholder-veil" style={{ marginLeft: '6px' }}>Invoices</span>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-outline btn-sm">
-            <Clock />
-            <span>Last 8 months</span>
-            <ChevronDown />
-          </button>
-          <button className="btn btn-outline btn-sm">
+          <button className="btn btn-outline btn-sm" disabled={invoices.length === 0} onClick={() => exportCsv(invoices)}>
             <ExternalLink />
-            <span>Export</span>
+            <span>Export CSV</span>
           </button>
         </div>
       </div>
@@ -187,12 +235,15 @@ export default function InvoiceAnalyticsPage() {
             <div className="stat-card">
               <div className="stat-label"><LinkIcon width="11" height="11" /><span>Total invoices</span></div>
               <div className="stat-value">{invoices.length}</div>
-              <div className="stat-delta">{stats.clientCount} unique clients</div>
+              <div className="stat-delta">{stats.clientCount} unique clients · {stats.billedCount} issued</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label"><Globe /><span>Total invoice value</span></div>
+              <div className="stat-label"><Globe /><span>Total invoiced</span></div>
               <div className="stat-value">{fmtMoney(stats.totalValue, 'NGN')}</div>
-              <div className="stat-delta">Summed value across all statuses</div>
+              <div className="stat-delta">
+                Issued invoices, excluding drafts and cancelled
+                {stats.unconverted > 0 ? ` · ${stats.unconverted} without an exchange rate not counted` : ''}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Globe /><span>Collected</span></div>
@@ -202,7 +253,7 @@ export default function InvoiceAnalyticsPage() {
             <div className="stat-card">
               <div className="stat-label"><Clock /><span>Outstanding</span></div>
               <div className="stat-value">{fmtMoney(stats.outstanding, 'NGN')}</div>
-              <div className="stat-delta">Open balance</div>
+              <div className="stat-delta">{stats.overdueValue > 0 ? `${fmtMoney(stats.overdueValue, 'NGN')} overdue` : 'Nothing overdue'}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label"><Clock /><span>Avg days to payment</span></div>
@@ -215,10 +266,31 @@ export default function InvoiceAnalyticsPage() {
             </div>
           </div>
 
+          {stats.lastInvoice && (
+            <div className="split" style={{ gridTemplateColumns: '1fr' }}>
+              <div className="split-card">
+                <h4><span>Latest invoice</span><span className="placeholder-veil">Activity</span></h4>
+                <div className="bar-row" style={{ gridTemplateColumns: '1fr auto auto' }}>
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{stats.lastInvoice.number} · {stats.lastInvoice.client_name}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--muted-foreground)' }}>
+                      Issued {formatDay(stats.lastInvoice.issued_at, cfg.dateFormat)} · Due {formatDay(stats.lastInvoice.due_at, cfg.dateFormat)}
+                    </div>
+                  </div>
+                  <span className={`inv-status ${STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.cls ?? 'inv-status-draft'}`}>
+                    <span className="inv-status-dot" />
+                    {STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.label ?? 'Draft'}
+                  </span>
+                  <div className="bar-count">{fmtMoney(invoiceTotals(stats.lastInvoice).grand, stats.lastInvoice.currency)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="chart-card">
             <div className="chart-header">
               <div className="chart-title">Invoices processed month on month</div>
-              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>Value invoiced</div>
+              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>Value invoiced, last 8 months (₦)</div>
             </div>
             <div className="chart-placeholder">{renderChart()}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--muted-foreground)', marginTop: '6px' }}>
@@ -329,29 +401,6 @@ export default function InvoiceAnalyticsPage() {
             </div>
           </div>
 
-          {stats.lastInvoice && (
-            <div className="split" style={{ gridTemplateColumns: '1fr' }}>
-              <div className="split-card">
-                <h4><span>Latest invoice</span><span className="placeholder-veil">Activity</span></h4>
-                <div className="bar-row" style={{ gridTemplateColumns: '1fr auto auto' }}>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{stats.lastInvoice.number} · {stats.lastInvoice.client_name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--muted-foreground)' }}>
-                      Issued {formatDay(stats.lastInvoice.issued_at)} · Due {formatDay(stats.lastInvoice.due_at)}
-                    </div>
-                  </div>
-                  <span className={`inv-status ${STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.cls ?? 'inv-status-draft'}`}>
-                    <span className="inv-status-dot" />
-                    {STATUS_META[stats.lastInvoice.status as InvoiceStatus]?.label ?? 'Draft'}
-                  </span>
-                  <div className="bar-count">
-                    {CURRENCY_SYMBOLS[stats.lastInvoice.currency] ?? ''}
-                    {computeTotals(stats.lastInvoice as never).grand.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </Shell>

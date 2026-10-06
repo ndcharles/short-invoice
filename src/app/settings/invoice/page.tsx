@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
 import {
   Code,
@@ -15,6 +15,9 @@ import { Edit, Plus, Trash, Upload } from '@/components/icons';
 import { useSettingsForm } from '@/lib/settings-form';
 import { useCollections } from '@/lib/collections';
 import { newId, parseList, serializeList, toggleListValue } from '@/lib/settings-json';
+import { readImageFile } from '@/lib/image-file';
+import { PAYMENT_TERMS, parsePayments } from '@/lib/invoices';
+import type { InvoiceRow } from '@/lib/types';
 
 interface Account {
   id: string;
@@ -33,9 +36,15 @@ const EXTRA_LABELS = ['Sort code / Branch', 'Routing / SWIFT', 'IBAN / BIC', 'BS
 interface Method {
   id: string;
   name: string;
-  uses: number;
+  uses?: number;
   enabled: boolean;
 }
+
+const SMTP_SECURITY = [
+  { id: 'tls', label: 'SSL/TLS (port 465)', port: '465' },
+  { id: 'starttls', label: 'STARTTLS (port 587)', port: '587' },
+  { id: 'none', label: 'None (local testing only)', port: '' },
+];
 
 const TAGLINE_COLORS = [
   { value: '#1d4ed8', title: 'Blue' },
@@ -53,6 +62,63 @@ export default function InvoiceSettingsPage() {
   const { items: folders } = useCollections('folders');
   const { items: tags } = useCollections('tags');
   const [newCurrency, setNewCurrency] = useState('');
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  /** Tries the SMTP details as typed (saved or not); a blank password uses the saved one. */
+  const sendTest = async () => {
+    if (!draft) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/email/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: testTo.trim() || undefined,
+          smtp_host: draft.smtp_host ?? '',
+          smtp_port: draft.smtp_port ?? '',
+          smtp_security: draft.smtp_security ?? 'tls',
+          smtp_username: draft.smtp_username ?? '',
+          smtp_password: draft.smtp_password ?? '',
+          smtp_from_name: draft.smtp_from_name ?? '',
+          smtp_from_email: draft.smtp_from_email ?? '',
+          smtp_reply_to: draft.smtp_reply_to ?? '',
+        }),
+      });
+      const data = await res.json();
+      setTestResult(res.ok ? { ok: true, text: `Sent to ${data.to}. Check the inbox (and spam).` } : { ok: false, text: data.error || 'Could not send' });
+    } catch {
+      setTestResult({ ok: false, text: 'Could not reach the app server' });
+    } finally {
+      setTesting(false);
+    }
+  };
+  const logoRef = useRef<HTMLInputElement>(null);
+  // How often each method was used, counted from the payments actually logged.
+  const [methodUses, setMethodUses] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/invoices?status=all')
+      .then((res) => res.json())
+      .then((data: { invoices?: InvoiceRow[] }) => {
+        if (cancelled) return;
+        const uses: Record<string, number> = {};
+        for (const invoice of data.invoices ?? []) {
+          for (const payment of parsePayments(invoice.payments)) {
+            const key = payment.method.trim().toLowerCase();
+            if (key) uses[key] = (uses[key] ?? 0) + 1;
+          }
+        }
+        setMethodUses(uses);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const accounts = parseList<Account>(draft?.inv_accounts, []);
   const methods = parseList<Method>(draft?.inv_methods, []);
@@ -71,6 +137,7 @@ export default function InvoiceSettingsPage() {
     setAccounts(accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)));
 
   const taxRate = draft?.inv_tax_rate ?? '7.5';
+  const usdRate = draft?.inv_usd_rate ?? '';
   const padding = Number(draft?.inv_number_padding ?? 6);
   const nextNumber = draft?.inv_next_number ?? '435431';
   const numberPreview = `${draft?.inv_number_prefix ?? 'INV-'}${nextNumber.padStart(
@@ -133,32 +200,60 @@ export default function InvoiceSettingsPage() {
                   onChange={(e) => set('inv_contact_email', e.target.value)}
                 />
               </SettingsRow>
-              <SettingsRow label="Company logo" help="Shown top-left of every invoice and receipt. 512×512 PNG or SVG.">
+              <SettingsRow label="Company logo" help="Shown top-left of every invoice and receipt. PNG, JPEG, WebP or SVG under 300 KB; a wide logo on a transparent background looks best.">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div
                     className="inv-logo-slot"
-                    style={{ width: '120px', height: '44px', overflow: 'hidden' }}
-                    title="Company logo"
+                    role="button"
+                    tabIndex={0}
+                    style={{ width: '120px', height: '44px', overflow: 'hidden', background: draft.inv_logo ? 'white' : undefined }}
+                    title="Upload a logo"
+                    onClick={() => logoRef.current?.click()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') logoRef.current?.click();
+                    }}
                   >
                     {draft.inv_logo ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={draft.inv_logo} alt="" style={{ maxWidth: '100%', maxHeight: '100%' }} />
+                      <img src={draft.inv_logo} alt="Company logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                     ) : (
                       'Upload logo'
                     )}
                   </div>
-                  <button className="btn btn-outline btn-sm" disabled title="Uploads are not available in this build">
+                  <input
+                    ref={logoRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      readImageFile(
+                        file,
+                        (url) => {
+                          setLogoError(null);
+                          set('inv_logo', url);
+                        },
+                        setLogoError
+                      );
+                    }}
+                  />
+                  <button className="btn btn-outline btn-sm" onClick={() => logoRef.current?.click()}>
                     <Upload />
-                    <span>Upload</span>
+                    <span>{draft.inv_logo ? 'Replace' : 'Upload'}</span>
                   </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--muted-foreground)' }}
-                    onClick={() => set('inv_logo', '')}
-                  >
-                    Remove
-                  </button>
+                  {draft.inv_logo && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--muted-foreground)' }}
+                      onClick={() => set('inv_logo', '')}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
+                {logoError && <div style={{ color: 'var(--destructive)', fontSize: '12px', marginTop: '6px' }}>{logoError}</div>}
               </SettingsRow>
             </SettingsCard>
 
@@ -240,7 +335,7 @@ export default function InvoiceSettingsPage() {
 
               <SettingsRow
                 label="Tax rate"
-                help="Applied to the subtotal on every new invoice. Individual line items can still override."
+                help="VAT applied to new invoices (after discount and charges). You can change it on any single invoice, e.g. 0% for exempt clients."
               >
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '200px' }}>
                   <input
@@ -253,6 +348,24 @@ export default function InvoiceSettingsPage() {
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--muted-foreground)', marginTop: '4px' }}>
                   Label shown on invoice: <strong style={{ color: 'var(--foreground)' }}>Tax ({taxRate}%)</strong>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                label="USD exchange rate"
+                help="Naira per US dollar. Used when you press “+ Add USD equivalent” on an invoice; each invoice keeps its own rate after that."
+              >
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '260px' }}>
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: '13px' }}>₦</span>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    style={{ textAlign: 'right' }}
+                    placeholder="1500"
+                    value={usdRate}
+                    onChange={(e) => set('inv_usd_rate', e.target.value.replace(/[^0-9.]/g, ''))}
+                  />
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: '13px', whiteSpace: 'nowrap' }}>= $1</span>
                 </div>
               </SettingsRow>
             </SettingsCard>
@@ -417,7 +530,7 @@ export default function InvoiceSettingsPage() {
 
             <SettingsCard
               title="Payment methods"
-              subtitle="Which methods appear in the Log Payment dropdown. Toggle on to enable."
+              subtitle="Methods offered on the invoice and in the Log Payment popup. Toggle on to enable."
             >
               <div className="setting-list">
                 {methods.map((method) => (
@@ -449,7 +562,11 @@ export default function InvoiceSettingsPage() {
                         {method.name}
                       </div>
                     )}
-                    <span className="secondary">{method.uses} uses</span>
+                    <span className="secondary">
+                      {methodUses
+                        ? `${methodUses[method.name.trim().toLowerCase()] ?? 0} ${methodUses[method.name.trim().toLowerCase()] === 1 ? 'use' : 'uses'}`
+                        : ''}
+                    </span>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'flex-end' }}>
                       <button
                         className="icon-btn"
@@ -476,13 +593,24 @@ export default function InvoiceSettingsPage() {
                   role="button"
                   tabIndex={0}
                   onClick={() =>
-                    setMethods([...methods, { id: newId('mth'), name: 'New method', uses: 0, enabled: true }])
+                    setMethods([...methods, { id: newId('mth'), name: 'New method', enabled: true }])
                   }
                 >
                   <Plus />
                   <span style={{ marginLeft: '6px' }}>Add custom method</span>
                 </div>
               </div>
+              <SettingsRow label="Default method" help="Preselected on new invoices.">
+                <SettingSelect
+                  value={
+                    methods.some((m) => m.enabled && m.name === draft.inv_default_method)
+                      ? (draft.inv_default_method as string)
+                      : methods.find((m) => m.enabled)?.name ?? ''
+                  }
+                  onChange={(v) => set('inv_default_method', v)}
+                  options={methods.filter((m) => m.enabled).map((m) => m.name)}
+                />
+              </SettingsRow>
             </SettingsCard>
 
             <SettingsCard title="Organisation" subtitle="Where new invoices land and how they are labelled.">
@@ -503,11 +631,11 @@ export default function InvoiceSettingsPage() {
             </SettingsCard>
 
             <SettingsCard title="Payment terms & numbering" subtitle="Defaults for every new invoice.">
-              <SettingsRow label="Default payment terms" help="Sets the due date on new invoices (Net = days after issue).">
+              <SettingsRow label="Default payment terms" help="Sets the due date on new invoices (Net = days after the invoice date). Custom uses 30 days; change the date per invoice.">
                 <SettingSelect
                   value={draft.inv_payment_terms ?? 'Net 30'}
                   onChange={(v) => set('inv_payment_terms', v)}
-                  options={['Net 14', 'Net 30', 'Net 45', 'Net 60', 'Due on receipt', 'Custom']}
+                  options={PAYMENT_TERMS}
                 />
               </SettingsRow>
               <SettingsRow
@@ -608,6 +736,135 @@ export default function InvoiceSettingsPage() {
               </SettingsRow>
             </SettingsCard>
 
+            <div id="email-sending" />
+            <SettingsCard
+              title="Email sending (SMTP)"
+              subtitle="Invoices and receipts are emailed from the app through your own mail server, with the PDFs attached."
+              foot={
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
+                  <input
+                    className="input"
+                    style={{ maxWidth: '240px' }}
+                    placeholder={draft.smtp_from_email || 'you@example.com'}
+                    value={testTo}
+                    onChange={(e) => setTestTo(e.target.value)}
+                    aria-label="Send the test email to"
+                  />
+                  <button className="btn btn-outline btn-sm" disabled={testing} onClick={sendTest}>
+                    {testing ? 'Sending…' : 'Send test email'}
+                  </button>
+                  {testResult && (
+                    <span role="status" style={{ fontSize: '12px', color: testResult.ok ? 'var(--accent-green-fg)' : 'var(--destructive)' }}>
+                      {testResult.text}
+                    </span>
+                  )}
+                </div>
+              }
+            >
+              <SettingsRow label="SMTP server" help="From your email provider, e.g. smtp.gmail.com, smtp.zoho.com, smtp-relay.brevo.com.">
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 90px', gap: '8px', maxWidth: '420px' }}>
+                  <input
+                    className="input"
+                    placeholder="smtp.example.com"
+                    autoComplete="off"
+                    value={draft.smtp_host ?? ''}
+                    onChange={(e) => set('smtp_host', e.target.value.trim())}
+                  />
+                  <input
+                    className="input"
+                    inputMode="numeric"
+                    placeholder="465"
+                    aria-label="Port"
+                    value={draft.smtp_port ?? ''}
+                    onChange={(e) => set('smtp_port', e.target.value.replace(/[^0-9]/g, ''))}
+                  />
+                </div>
+              </SettingsRow>
+              <SettingsRow label="Security" help="465 uses SSL/TLS, 587 uses STARTTLS. Port 25 is blocked on Cloudflare.">
+                <SettingSelect
+                  value={SMTP_SECURITY.find((o) => o.id === (draft.smtp_security || 'tls'))?.label ?? SMTP_SECURITY[0].label}
+                  onChange={(label) => {
+                    const option = SMTP_SECURITY.find((o) => o.label === label) ?? SMTP_SECURITY[0];
+                    set('smtp_security', option.id);
+                    if (option.port && (!draft.smtp_port || draft.smtp_port === '465' || draft.smtp_port === '587')) set('smtp_port', option.port);
+                  }}
+                  options={SMTP_SECURITY.map((o) => o.label)}
+                />
+              </SettingsRow>
+              <SettingsRow label="Username" help="Usually your full email address.">
+                <input
+                  className="input"
+                  autoComplete="off"
+                  value={draft.smtp_username ?? ''}
+                  onChange={(e) => set('smtp_username', e.target.value.trim())}
+                />
+              </SettingsRow>
+              <SettingsRow
+                label="Password"
+                help="Stored in your database and never shown again. Gmail and Outlook need an app password, not your normal one."
+              >
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '420px' }}>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={
+                      draft.smtp_password_clear === 'true'
+                        ? 'Will be removed on save'
+                        : draft.smtp_password_set === 'true'
+                          ? '•••••••• saved; type to replace'
+                          : 'App password'
+                    }
+                    value={draft.smtp_password ?? ''}
+                    onChange={(e) => {
+                      set('smtp_password', e.target.value);
+                      if (draft.smtp_password_clear) set('smtp_password_clear', '');
+                    }}
+                  />
+                  {draft.smtp_password_set === 'true' && draft.smtp_password_clear !== 'true' && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--muted-foreground)' }}
+                      onClick={() => {
+                        set('smtp_password', '');
+                        set('smtp_password_clear', 'true');
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </SettingsRow>
+              <SettingsRow label="Send as" help="The sender clients see. Most providers require the address you log in with (or a verified alias).">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', maxWidth: '420px' }}>
+                  <input
+                    className="input"
+                    placeholder={draft.inv_legal_name || 'Company name'}
+                    aria-label="Sender name"
+                    value={draft.smtp_from_name ?? ''}
+                    onChange={(e) => set('smtp_from_name', e.target.value)}
+                  />
+                  <input
+                    className="input"
+                    type="email"
+                    placeholder="billing@yourcompany.com"
+                    aria-label="Sender email"
+                    value={draft.smtp_from_email ?? ''}
+                    onChange={(e) => set('smtp_from_email', e.target.value.trim())}
+                  />
+                </div>
+              </SettingsRow>
+              <SettingsRow label="Replies go to" help="Optional. Defaults to the contact email above; also used for “Send me a copy”.">
+                <input
+                  className="input"
+                  type="email"
+                  placeholder={draft.inv_contact_email || 'you@yourcompany.com'}
+                  value={draft.smtp_reply_to ?? ''}
+                  onChange={(e) => set('smtp_reply_to', e.target.value.trim())}
+                />
+              </SettingsRow>
+            </SettingsCard>
+
             <SettingsCard
               title="Email templates"
               subtitle="Default subject and message body when sending invoices and receipts from the Send modal."
@@ -624,7 +881,7 @@ export default function InvoiceSettingsPage() {
                 help={
                   <>
                     Use <Code>{'{client}'}</Code>, <Code>{'{number}'}</Code>, <Code>{'{amount}'}</Code>,{' '}
-                    <Code>{'{due}'}</Code>.
+                    <Code>{'{due}'}</Code> and <Code>{'{company}'}</Code> (your legal name, for the sign-off).
                   </>
                 }
               >
@@ -642,7 +899,14 @@ export default function InvoiceSettingsPage() {
                   onChange={(e) => set('inv_email_receipt_subject', e.target.value)}
                 />
               </SettingsRow>
-              <SettingsRow label="Receipt email body">
+              <SettingsRow
+                label="Receipt email body"
+                help={
+                  <>
+                    Also <Code>{'{payment_date}'}</Code>. Subjects accept the same placeholders.
+                  </>
+                }
+              >
                 <textarea
                   className="input"
                   style={{ minHeight: '100px' }}

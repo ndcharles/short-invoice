@@ -90,6 +90,59 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
 Real business details (legal name, bank accounts, tax id) belong in D1 via the
 Settings UI. **The repo is public; never commit them.**
 
+## Invoices
+
+- Keep the existing invoice UI (canvas, right rail, footer bar, modals,
+  `src/app/shared.css`). Change behaviour inside those components; do not add
+  a new editor or layout.
+- Maths and status rules live in `src/lib/invoices.ts`, shared by the Worker
+  and the UI: subtotal − discount + additional charges, then tax; every row is
+  rounded to kobo. The Worker recomputes `subtotal`/`total` and the status on
+  every write, so the client never sends them.
+- Status: Draft and Cancelled are set by hand. Paid / Partially paid follow the
+  logged payments. Sent becomes Overdue the day after the due date (one UPDATE
+  before each invoice read, `markOverdue` in `worker/routes/invoices.ts`).
+- Currency: NGN is the base. `exchange_rate` is naira per one unit of the other
+  currency (₦1,550 = $1); 0 means no equivalent is shown. A naira invoice
+  shows its USD equivalent; a foreign-currency invoice shows its naira one.
+  `equivalent_amount` > 0 overrides the converted figure (an agreed price).
+- Switching an invoice between NGN and USD offers to convert every price at
+  the rate and always removes the equivalent line, so a USD invoice for a
+  foreign client shows no naira unless one is added back.
+- With payments logged the canvas shows the receipt; `documentView: 'invoice'`
+  shows the original invoice as issued (no payments, stamp or balance).
+- New invoices take every default from Settings → Invoice (currency, tax rate,
+  payment terms → due date, terms note, default method, folder, tag, USD rate).
+- Invoice input is validated by `worker/lib/invoice-input.ts`.
+- Demo data: `seed/demo-invoices.sql` (ids `inv_demo_*`, numbers `DEMO-*`),
+  loaded by `npm run db:seed:local`. It is generated so every stored total
+  matches `invoiceTotals`; the API test `demo seed` checks that.
+- Download PDF is the browser's print dialog; `@media print` in `shared.css`
+  prints only the invoice.
+
+## Email (SMTP)
+
+- Send emails invoices/receipts through the SMTP server in Settings → Invoice
+  (`worker/lib/smtp.ts`, Workers TCP sockets: 465 SSL/TLS or 587 STARTTLS;
+  Cloudflare blocks port 25). Plain connections may only log in to localhost.
+- Attachments are PDFs rendered in the browser from the canvas
+  (`src/lib/invoice-pdf.ts`: html2canvas-pro + pdf-lib, lazy-loaded; the
+  `.is-capturing` rules mirror `@media print`). The Worker only checks they are
+  PDFs and passes them through, which keeps it inside the 10 ms CPU budget.
+- `smtp_password` is write-only: `publicSettings()` strips it from every API
+  response (the UI sees `smtp_password_set`), the export skips it, and
+  `smtp_password_clear: 'true'` removes it. Any new secret goes in `SECRET_KEYS`.
+- Every attempt is logged in `invoice_emails` (migration 0002) and shown on the
+  invoice; the log also caps sends at 100 per 24 h. There is no login yet, so
+  put Cloudflare Access in front of the app before saving real SMTP details.
+- `tests/api/email.test.ts` runs a fake SMTP server in the test process.
+
+## UI gotchas
+
+- basecoat-css pins every `[data-popover]` to the left edge. A dropdown that
+  should open to the left of its button needs `data-align="end"` as well as
+  `right: 0`, or it runs off the screen.
+
 ## Deploying (first time)
 
 ```bash

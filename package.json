@@ -11,7 +11,7 @@
     "deploy": "next build && wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply short-invoice --local",
     "db:migrate": "wrangler d1 migrations apply short-invoice --remote",
-    "db:seed:local": "wrangler d1 execute short-invoice --local --file=seed/demo.sql",
+    "db:seed:local": "wrangler d1 execute short-invoice --local --file=seed/demo.sql && wrangler d1 execute short-invoice --local --file=seed/demo-invoices.sql",
     "tail": "wrangler tail",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
@@ -20,8 +20,10 @@
   "dependencies": {
     "basecoat-css": "^1.0.2",
     "hono": "^4.13.13",
+    "html2canvas-pro": "2.4.5",
     "nanoid": "^6.0.1",
     "next": "16.3.5",
+    "pdf-lib": "1.17.1",
     "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

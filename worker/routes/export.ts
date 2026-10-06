@@ -16,7 +16,7 @@ exporter.get('/', async (c) => {
     db.prepare('SELECT * FROM invoices ORDER BY issued_at'),
     db.prepare('SELECT * FROM folders ORDER BY created_at'),
     db.prepare('SELECT * FROM tags ORDER BY created_at'),
-    db.prepare("SELECT key, value FROM settings WHERE key != 'domain_verify_token' ORDER BY key"),
+    db.prepare("SELECT key, value FROM settings WHERE key NOT IN ('domain_verify_token', 'smtp_password') ORDER BY key"),
   ]);
   const body = {
     exported_at: new Date().toISOString(),

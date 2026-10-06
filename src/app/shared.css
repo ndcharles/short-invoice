@@ -1610,7 +1610,7 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
 .inv-total-words-value { font-style: italic; }
 
 /* Discount input row */
-.inv-discount-row .inv-discount-input {
+.inv-totals .inv-discount-input {
   width: 100px;
   padding: 3px 8px;
   border: 1px solid var(--border);
@@ -1623,7 +1623,7 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
   font-variant-numeric: tabular-nums;
   outline: none;
 }
-.inv-discount-row .inv-discount-input:focus { border-color: var(--border-strong); }
+.inv-totals .inv-discount-input:focus { border-color: var(--border-strong); }
 
 /* Divider */
 .inv-hr {
@@ -2591,3 +2591,252 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
   border: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
 }
+
+/* Invoice totals: inline inputs (discount, charges, tax rate, equivalent, rate)
+   share one right-aligned layout so every row lines up with the values. */
+.inv-totals-row .tot-input {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.inv-totals-row .tot-label.tot-input { justify-content: flex-start; }
+.inv-totals-row .tot-sym { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.inv-totals-row .tot-hint { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.inv-totals .inv-discount-input.inv-rate-input { width: 64px; }
+.inv-totals .inv-discount-input.inv-eq-input { width: 110px; }
+.inv-totals-row .tot-remove { width: 22px; height: 22px; color: var(--muted-foreground); }
+.inv-totals-row .tot-remove svg { width: 12px; height: 12px; }
+.inv-totals-row .tot-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.inv-totals-row.inv-equivalent .tot-label,
+.inv-totals-row.inv-rate-row .tot-label { color: var(--muted-foreground); font-weight: 500; }
+.inv-totals-row.inv-rate-row { padding-top: 4px; }
+.inv-totals-row.inv-equivalent + .inv-totals-row.inv-rate-row,
+.inv-totals-row.inv-equivalent + .inv-totals-row.inv-equivalent { border-top: none; padding-top: 2px; }
+button.inv-totals-row.inv-add-equivalent {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+button.inv-totals-row.inv-add-equivalent .tot-value { color: var(--subtle-foreground); font-size: 12px; }
+.inv-totals > .inv-totals-row:first-child { border-top: none; }
+
+.inv-number { display: flex; align-items: baseline; gap: 2px; }
+.inv-number-input {
+  font: inherit;
+  color: inherit;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0 4px;
+  margin-left: -2px;
+  outline: none;
+  min-width: 0;
+  max-width: 100%;
+}
+.inv-number-input:hover { background: var(--muted-2); }
+.inv-number-input:focus { background: white; border-color: var(--border-strong); }
+.inv-logo-img { display: block; max-width: 180px; max-height: 56px; object-fit: contain; }
+a.inv-logo-slot { text-decoration: none; }
+.inv-items-empty { color: var(--muted-foreground); font-size: 13px; display: block; text-align: center; }
+.inv-item-row.is-dragging { opacity: 0.45; }
+.inv-notes-title { margin-top: 16px; }
+.inv-print-only { display: none !important; }
+
+/* Print / "Download PDF": just the invoice document, on white, A4. */
+@media print {
+  @page { size: A4; margin: 12mm; }
+  html, body { background: white !important; }
+  .sidebar, .crumb-bar, .right-rail, .save-bar, .inv-print-hide, .inv-footer-bar,
+  .modal-backdrop { display: none !important; }
+  .inv-print-only { display: revert !important; }
+  .app, .app-collapsed { display: block !important; }
+  .main, .main-inner { padding: 0 !important; margin: 0 !important; max-width: none !important; overflow: visible !important; }
+  .edit-invoice-layout { display: block !important; }
+  .invoice-canvas { border: none !important; padding: 0 !important; max-width: none !important; box-shadow: none !important; }
+  .invoice-canvas input, .invoice-canvas textarea, .invoice-canvas .pay-method-select {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .invoice-canvas textarea { resize: none; }
+  .invoice-canvas .pay-method-select { min-width: 0; padding: 0; justify-content: flex-end; }
+  .inv-items, .inv-totals, .inv-account-card, .inv-stamp-wrap, .inv-total-words { break-inside: avoid; }
+  .inv-items-head, .inv-tagline-strip, .inv-stamp, .inv-status-big, .inv-account-flag {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Invoice list: tag chip + secondary amount line; editor rail fields */
+.inv-card .link-meta-right { display: flex; align-items: center; gap: 8px; }
+.inv-amount-sub { font-size: 11px; font-weight: 500; color: var(--muted-foreground); margin-top: 1px; }
+.dropdown-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  padding: 6px 8px 4px;
+}
+.btn.is-active { border-color: var(--border-strong); background: var(--muted-2); }
+.rail-field {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 6px;
+}
+.rail-field .setting-select { min-width: 0; width: 100%; }
+.rail-payment-remove { width: 24px; height: 24px; color: var(--subtle-foreground); flex-shrink: 0; }
+.rail-payment-remove:hover { color: var(--destructive); }
+.rail-payment-remove svg { width: 12px; height: 12px; }
+
+/* The footer bar sits inside the canvas, so it sizes to the canvas, not the window. */
+.invoice-canvas { container-type: inline-size; }
+.inv-footer-bar { gap: 10px; }
+.inv-number-input { field-sizing: content; }
+@container (max-width: 900px) {
+  .inv-brand-mini { display: none; }
+}
+
+/* Narrow canvas (phones, small windows): stack the two-column sections. */
+@media (max-width: 760px) {
+  .invoice-canvas { padding: 18px 14px 14px; }
+  .crumb-bar > div:last-child { flex-wrap: wrap; }
+  .modal.invoice-modal .modal-body { padding: 10px 8px; }
+}
+@container (max-width: 640px) {
+  .inv-top { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .inv-status-big { align-items: flex-start; }
+  .inv-parties, .inv-meta-row, .inv-totals-wrap, .inv-payment-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .inv-party.inv-right, .inv-meta-right-col { text-align: left; align-items: flex-start; }
+  .pay-method-select { min-width: 0; width: 100%; }
+  .inv-items-head.items-simple, .inv-item-row.items-simple { grid-template-columns: 22px minmax(0, 1fr) 112px 26px; }
+  .inv-items-head.items-detailed, .inv-item-row.items-detailed { grid-template-columns: 22px minmax(0, 1fr) 38px 74px 84px 26px; }
+  .inv-items-head, .inv-item-row { padding-left: 8px; padding-right: 8px; gap: 6px; }
+  .inv-totals .inv-discount-input { width: 84px; }
+}
+
+/* Invoiced To / Pay To share one line rhythm (23px), inputs included. */
+.inv-party .inv-party-input,
+.inv-party .inv-party-input:hover,
+.inv-party .inv-party-input:focus { height: 23px; padding-top: 0; padding-bottom: 0; line-height: 21px; }
+.inv-party .inv-party-line { line-height: 23px; }
+.inv-party .inv-party-strong { height: 25px; line-height: 25px; }
+.inv-party .inv-party-input.inv-party-strong { line-height: 23px; }
+
+/* Header dates: formatted text that opens the date picker on click. */
+.inv-due-line { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.inv-date-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-right: -6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.inv-date-field strong { color: var(--foreground); font-weight: 600; }
+.inv-date-field:hover { background: var(--muted-2); border-color: var(--border); }
+.inv-date-field:focus-within { border-color: var(--border-strong); background: white; }
+.inv-date-field input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+}
+.inv-date-field.is-disabled { cursor: default; }
+.inv-date-field.is-disabled:hover { background: transparent; border-color: transparent; }
+.inv-date-field.is-disabled input { cursor: default; }
+@container (max-width: 640px) {
+  .inv-due-line { justify-content: flex-start; }
+}
+@media print {
+  .inv-date-field { padding: 0; margin: 0; border: none; }
+}
+.inv-status-big .inv-due-line + .inv-due-line { margin-top: -6px; }
+.currency-select.currency-picker { position: relative; }
+.currency-select.currency-picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.currency-select.currency-picker:focus-within { border-color: var(--border-strong); }
+
+/* Small choice dialog (currency conversion, …) */
+.modal.choice-modal { width: min(440px, calc(100vw - 32px)); }
+.choice-modal-body { padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; line-height: 1.5; color: var(--foreground); }
+.choice-modal-compare {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--muted-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+.choice-modal-compare span { color: var(--muted-foreground); }
+.choice-modal-hint { color: var(--muted-foreground); font-size: 12px; }
+
+/* PDF capture for email attachments (src/lib/invoice-pdf.ts): the same
+   document the print stylesheet produces, on a fixed A4-width canvas. */
+.invoice-canvas.is-capturing {
+  max-width: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  box-shadow: none !important;
+}
+.invoice-canvas.is-capturing .inv-print-hide,
+.invoice-canvas.is-capturing .inv-footer-bar { display: none !important; }
+.invoice-canvas.is-capturing .inv-print-only { display: revert !important; }
+.invoice-canvas.is-capturing .inv-date-field { padding: 0; margin: 0; border: none; }
+.invoice-canvas.is-capturing .pdf-field {
+  display: block;
+  border-color: transparent !important;
+  background: transparent !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.invoice-canvas.is-capturing .inv-number .pdf-field { display: inline; padding: 0 0 0 4px; }
+.invoice-canvas.is-capturing .inv-account-grid .pdf-field { padding: 5px 8px; border: 1px solid var(--border) !important; background: white !important; border-radius: var(--radius-sm); font-size: 12px; }
+.send-choice.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.send-setup-note {
+  padding: 10px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400e;
+}
+.send-setup-note a { color: inherit; font-weight: 600; }
+.rail-email-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green-fg); margin: 5px 5px 0; flex-shrink: 0; }
+.rail-email-dot.is-failed { background: var(--destructive); }
+.rail-email-to { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-email-error { font-size: 11px; color: var(--destructive); line-height: 1.4; margin-top: 2px; overflow-wrap: anywhere; }
+.send-choice-title, .send-choice-sub { display: block; }
+.invoice-canvas.is-capturing .inv-number .pdf-field { white-space: nowrap; }

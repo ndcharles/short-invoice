@@ -6,13 +6,15 @@ import { Shell } from '@/components/layout/shell';
 import { InvoiceCard } from '@/components/invoices/invoice-card';
 import type { InvoiceRow } from '@/lib/types';
 import { ChevronDown, Filter, FolderIcon, More, Plus, Refresh, Search, Sort } from '@/components/icons';
-import { useCollections, useSettings } from '@/lib/collections';
-import { parseList } from '@/lib/settings-json';
-import { CanvasAccount, InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canvas';
+import { useCollections } from '@/lib/collections';
+import { InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canvas';
 import { InvoiceGuideModal } from '@/components/invoices/invoice-guide-modal';
+import { LogPaymentModal, PaymentDraft } from '@/components/invoices/invoice-modals';
+import { useConfirm } from '@/components/invoices/choice-modal';
 import { XIcon } from '@/components/icons';
 import { usePopoverDismiss } from '@/lib/popover';
-import { discountAmount, draftTotals, InvoiceStatus, INVOICE_STATUSES, computeTotals } from '@/lib/invoices';
+import { draftFromInvoice, draftProblem, invoicePayload, newInvoiceDraft, useInvoiceSettings } from '@/lib/invoice-settings';
+import { InvoiceStatus, INVOICE_STATUSES, invoiceTotals, parsePayments } from '@/lib/invoices';
 
 const PAGE_SIZE = 25;
 const SORTS = [
@@ -29,25 +31,24 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<'all' | InvoiceStatus>('all');
   const [search, setSearch] = useState('');
-  const [folderFilter, setFolderFilter] = useState('Invoices');
+  const [folderFilter, setFolderFilter] = useState('All');
+  const [tagFilter, setTagFilter] = useState('');
+  const [currencyFilter, setCurrencyFilter] = useState('');
   const [sortOrder, setSortOrder] = useState<SortId>('issued');
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
-  const [openMenu, setOpenMenu] = useState<'folder' | 'sort' | 'more' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'folder' | 'filter' | 'sort' | 'more' | null>(null);
   const [busy, setBusy] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const settings = useSettings();
+  const cfg = useInvoiceSettings();
+  const [ask, confirmModal] = useConfirm();
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
-  const canvasAccounts = parseList<CanvasAccount>(settings?.inv_accounts, []);
-  const canvasTagline = {
-    on: settings?.inv_tagline_on === 'true',
-    text: settings?.inv_tagline_text ?? '',
-    color: settings?.inv_tagline_color ?? '#1d4ed8',
-  };
+  const [paying, setPaying] = useState<InvoiceRow | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const { items: folders } = useCollections('folders');
+  const { items: tags } = useCollections('tags');
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +57,7 @@ export default function InvoicesPage() {
         const params = new URLSearchParams({ status });
         if (search.trim()) params.set('search', search.trim());
         if (folderFilter && folderFilter !== 'All') params.set('folder', folderFilter);
+        if (tagFilter) params.set('tag', tagFilter);
         const res = await fetch(`/api/invoices?${params.toString()}`);
         const data = await res.json();
         if (cancelled) return;
@@ -70,75 +72,37 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [status, search, folderFilter, reloadKey]);
+  }, [status, search, folderFilter, tagFilter, reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
   const openCreate = useCallback(() => {
-    const prefix = settings?.inv_number_prefix ?? 'INV-';
-    const padding = Number(settings?.inv_number_padding ?? 6) || 6;
-    const next = Number(settings?.inv_next_number ?? 1) || 1;
-    setDraft({
-      number: `${prefix}${String(next).padStart(padding, '0')}`, // preview only; the server owns the sequence
-      clientName: '',
-      clientContact: '',
-      clientAddr1: '',
-      clientAddr2: '',
-      clientCountry: '',
-      clientEmail: '',
-      issuedAt: Date.now(),
-      dueAt: Date.now() + 30 * 86_400_000,
-      currency: 'NGN',
-      status: 'draft',
-      items: [{ name: 'Services', desc: '', qty: 1, unitPrice: 0 }],
-      charges: 0,
-      discount: 0,
-      discountType: 'value' as const,
-      equivalentAmount: 0,
-      exchangeRate: Number(settings?.inv_usd_rate ?? 0) || 0,
-      taxRate: 0.075,
-      terms: settings?.inv_terms_note ?? 'Net 30. Late payments accrue 1.5% interest per month.',
-      notes: '',
-      paymentMethod: 'Paystack (Debit/Credit Cards)',
-    });
+    const next = newInvoiceDraft(cfg);
+    // New invoices land in the folder being viewed, else the default from Settings.
+    if (folderFilter !== 'All') next.folder = folderFilter;
+    if (tagFilter) next.tag = tagFilter;
+    setDraft(next);
     setCreateError(null);
     setCreateOpen(true);
-  }, [settings]);
+  }, [cfg, folderFilter, tagFilter]);
 
   const submitCreate = useCallback(async () => {
     if (!draft) return;
-    if (!draft.clientName.trim()) {
-      setCreateError('A client name is required');
+    const problem = draftProblem(draft);
+    if (problem) {
+      setCreateError(problem);
       return;
     }
     setBusy(true);
     setCreateError(null);
     try {
-      const totalsForDraft = draftTotals(draft);
-      const subtotal = totalsForDraft.subtotal;
-      const total = totalsForDraft.grand;
+      const payload = invoicePayload(draft);
+      // The previewed number is only a guess; let the server assign the next
+      // one in the sequence unless a different number was typed.
+      const body = draft.number.trim() === cfg.numberPreview ? { ...payload, number: undefined } : payload;
       const res = await fetch('/api/invoices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: draft.clientName,
-          client_email: draft.clientEmail,
-          client_address: [draft.clientName, draft.clientContact, draft.clientAddr1, draft.clientAddr2, draft.clientCountry]
-            .filter(Boolean)
-            .join('\n'),
-          issued_at: draft.issuedAt,
-          due_at: draft.dueAt,
-          currency: draft.currency,
-          status: draft.status,
-          items: draft.items,
-          subtotal,
-          tax_rate: draft.taxRate,
-          discount: discountAmount(draft),
-          charges: draft.charges,
-          discount_type: draft.discountType,
-          total,
-          notes: draft.notes,
-          folder: folderFilter === 'All' ? 'Invoices' : folderFilter,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create invoice');
@@ -149,44 +113,53 @@ export default function InvoicesPage() {
     } finally {
       setBusy(false);
     }
-  }, [draft, folderFilter, router]);
+  }, [draft, cfg.numberPreview, router]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        (e.key === 'c' || e.key === 'C') &&
-        !busy &&
-        !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)
-      ) {
+      if (createOpen) {
+        if (e.key === 'Escape') setCreateOpen(false);
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) {
+          e.preventDefault();
+          void submitCreate();
+        }
+        return;
+      }
+      if (paying || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
+      if ((e.key === 'c' || e.key === 'C') && !busy) {
         e.preventDefault();
         openCreate();
       }
+      if (e.key === 'r' || e.key === 'R') refresh();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [busy, openCreate]);
+  }, [busy, openCreate, submitCreate, createOpen, paying, refresh]);
 
   const closeToolbarMenu = useCallback(() => setOpenMenu(null), []);
   usePopoverDismiss(openMenu !== null, closeToolbarMenu);
 
+  const currencies = useMemo(() => Array.from(new Set(invoices.map((inv) => inv.currency))).sort(), [invoices]);
+
   const visible = useMemo(() => {
-    const rows = [...invoices];
+    const rows = currencyFilter ? invoices.filter((inv) => inv.currency === currencyFilter) : [...invoices];
     rows.sort((a, b) => {
       if (sortOrder === 'due') return a.due_at - b.due_at;
-      if (sortOrder === 'amount') {
-        return computeTotals(b as never).grand - computeTotals(a as never).grand;
-      }
+      if (sortOrder === 'amount') return invoiceTotals(b).grand - invoiceTotals(a).grand;
       return b.issued_at - a.issued_at;
     });
     return rows;
-  }, [invoices, sortOrder]);
+  }, [invoices, sortOrder, currencyFilter]);
+  const filterCount = (tagFilter ? 1 : 0) + (currencyFilter ? 1 : 0);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const rangeStart = visible.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
   const rangeEnd = (currentPage - 1) * PAGE_SIZE + paged.length;
-  const isEmpty = !loading && (counts.all ?? 0) === 0;
+  const isEmpty = !loading && (counts.all ?? 0) === 0 && folderFilter === 'All' && !tagFilter && !search;
 
   const handleStatusChange = async (id: string, next: InvoiceStatus) => {
     await fetch(`/api/invoices/${id}`, {
@@ -198,55 +171,41 @@ export default function InvoicesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this invoice? The record will be removed permanently.')) return;
+    const ok = await ask({
+      title: 'Delete this invoice?',
+      message: 'The record is removed permanently. Marking it Cancelled instead keeps your numbering intact.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/invoices/${id}`, { method: 'DELETE' });
     refresh();
   };
 
   const handleDuplicate = async (invoice: InvoiceRow) => {
-    await fetch('/api/invoices', {
+    // Same client, items and pricing as a fresh draft: new number, today's
+    // date and due date from the payment terms, no payments.
+    const { number: _number, status: _status, issued_at: _issued, due_at: _due, ...rest } = invoicePayload(draftFromInvoice(invoice));
+    void [_number, _status, _issued, _due];
+    const res = await fetch('/api/invoices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_name: invoice.client_name,
-        client_email: invoice.client_email,
-        client_address: invoice.client_address,
-        issued_at: Date.now(),
-        due_at: Date.now() + 30 * 86_400_000,
-        currency: invoice.currency,
-        status: 'draft',
-        items: JSON.parse(invoice.items || '[]'),
-        subtotal: invoice.subtotal,
-        tax_rate: invoice.tax_rate,
-        discount: invoice.discount,
-        total: invoice.total,
-        notes: invoice.notes,
-        terms: invoice.terms,
-        folder: invoice.folder,
-        tag: invoice.tag,
-      }),
+      body: JSON.stringify({ ...rest, status: 'draft' }),
     });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Could not duplicate the invoice');
     refresh();
   };
 
-  const handleLogPayment = async (invoice: InvoiceRow) => {
-    const raw = prompt(`Amount received for ${invoice.number} (${invoice.currency}):`);
-    if (!raw) return;
-    const amount = Number(raw);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-
-    const payments = JSON.parse(invoice.payments || '[]');
-    payments.push({ amount, date: new Date().toISOString().slice(0, 10), method: 'Bank transfer', note: '' });
-
-    const totals = computeTotals(invoice as never);
-    const paid = totals.paid + amount;
-    const nextStatus: InvoiceStatus = paid >= totals.grand - 0.01 ? 'paid' : 'partially-paid';
-
-    await fetch(`/api/invoices/${invoice.id}`, {
+  const submitPayment = async (invoice: InvoiceRow, payment: PaymentDraft) => {
+    const res = await fetch(`/api/invoices/${invoice.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payments, status: nextStatus }),
+      body: JSON.stringify({ payments: [...parsePayments(invoice.payments), payment] }),
     });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not log the payment');
+    setPaying(null);
     refresh();
   };
 
@@ -316,11 +275,52 @@ export default function InvoicesPage() {
           )}
         </div>
 
-        <button className="btn btn-outline btn-sm" disabled={isEmpty}>
-          <Filter />
-          <span>Filter</span>
-          <ChevronDown />
-        </button>
+        <div className="toolbar-menu" data-popover-root>
+          <button
+            className={`btn btn-outline btn-sm${filterCount ? ' is-active' : ''}`}
+            disabled={isEmpty}
+            onClick={() => setOpenMenu(openMenu === 'filter' ? null : 'filter')}
+          >
+            <Filter />
+            <span>{filterCount ? `Filter · ${filterCount}` : 'Filter'}</span>
+            <ChevronDown />
+          </button>
+          {openMenu === 'filter' && (
+            <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', left: 0, minWidth: '200px' }}>
+              <div className="dropdown-label">Tag</div>
+              <div className={`dropdown-item${tagFilter === '' ? ' is-current' : ''}`} onClick={() => { setTagFilter(''); setPage(1); }}>
+                <span>Any tag</span>
+              </div>
+              {tags.map((t) => (
+                <div key={t.id} className={`dropdown-item${tagFilter === t.name ? ' is-current' : ''}`} onClick={() => { setTagFilter(t.name); setPage(1); }}>
+                  <span className={`tag ${t.color}`}>{t.name}</span>
+                </div>
+              ))}
+              {currencies.length > 1 && (
+                <>
+                  <div className="dropdown-sep" />
+                  <div className="dropdown-label">Currency</div>
+                  <div className={`dropdown-item${currencyFilter === '' ? ' is-current' : ''}`} onClick={() => { setCurrencyFilter(''); setPage(1); }}>
+                    <span>Any currency</span>
+                  </div>
+                  {currencies.map((code) => (
+                    <div key={code} className={`dropdown-item${currencyFilter === code ? ' is-current' : ''}`} onClick={() => { setCurrencyFilter(code); setPage(1); }}>
+                      <span>{code}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+              {filterCount > 0 && (
+                <>
+                  <div className="dropdown-sep" />
+                  <div className="dropdown-item" onClick={() => { setTagFilter(''); setCurrencyFilter(''); setPage(1); setOpenMenu(null); }}>
+                    <span>Clear filters</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="toolbar-menu" data-popover-root>
           <button className="btn btn-outline btn-sm" disabled={isEmpty} onClick={() => setOpenMenu(openMenu === 'sort' ? null : 'sort')}>
@@ -357,7 +357,7 @@ export default function InvoicesPage() {
               <More />
             </button>
             {openMenu === 'more' && (
-              <div className="dropdown" data-popover style={{ top: 'calc(100% + 4px)', right: 0 }}>
+              <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
                 <div className="dropdown-item" onClick={() => { setOpenMenu(null); refresh(); }}>
                   <Refresh />
                   <span>Refresh</span>
@@ -405,7 +405,7 @@ export default function InvoicesPage() {
           </div>
           <h3>No invoices found</h3>
           <p>Try a different status, folder or search term.</p>
-          <button className="btn btn-outline" onClick={() => { setSearch(''); setStatus('all'); setFolderFilter('All'); }}>
+          <button className="btn btn-outline" onClick={() => { setSearch(''); setStatus('all'); setFolderFilter('All'); setTagFilter(''); setCurrencyFilter(''); }}>
             <span>Clear filters</span>
           </button>
         </div>
@@ -418,7 +418,9 @@ export default function InvoicesPage() {
               onStatusChange={handleStatusChange}
               onDelete={handleDelete}
               onDuplicate={handleDuplicate}
-              onLogPayment={handleLogPayment}
+              onLogPayment={(inv) => setPaying(inv)}
+              dateFormat={cfg.dateFormat}
+              tagColor={tags.find((t) => t.name === invoice.tag)?.color}
             />
           ))}
         </div>
@@ -461,46 +463,49 @@ export default function InvoicesPage() {
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
-                  Draft saved
+                  Saved as a draft on create
                 </span>
               </div>
               <button className="modal-close" onClick={() => setCreateOpen(false)} aria-label="Close">
                 <XIcon />
               </button>
             </div>
-            {createError && (
-              <div style={{ margin: '12px 20px 0', padding: '8px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                {createError}
-              </div>
-            )}
             <div className="modal-body">
               <InvoiceCanvas
                 draft={draft}
-                onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
-                accounts={canvasAccounts}
-                tagline={canvasTagline}
-                defaultTerms={settings?.inv_terms_note}
-                variant="modal"
-                payTo={{
-                  name: settings?.inv_legal_name ?? '',
-                  addr1: settings?.inv_address_1 ?? '',
-                  addr2: settings?.inv_address_2 ?? '',
-                  email: settings?.inv_contact_email ?? '',
-                  taxId: settings?.inv_tax_id ?? '—',
+                onChange={(patch) => {
+                  setCreateError(null);
+                  setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
                 }}
+                accounts={cfg.accounts}
+                tagline={cfg.tagline}
+                logo={cfg.logo}
+                dateFormat={cfg.dateFormat}
+                currencies={cfg.currencies}
+                defaultRate={cfg.defaultRate}
+                defaultTerms={cfg.defaultTerms}
+                variant="modal"
+                payTo={cfg.payTo}
               />
             </div>
             <div className="modal-footer">
-              <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>
-                Required: client name. The number comes from your Invoice settings sequence.
-              </div>
+              {createError ? (
+                <div role="alert" style={{ fontSize: '12px', color: 'var(--destructive)', fontWeight: 500 }}>
+                  {createError}
+                </div>
+              ) : (
+                <div style={{ fontSize: '12px', color: 'var(--muted-foreground)' }}>
+                  Required: client name. Saved as a draft in <strong>{draft.folder}</strong>
+                  {draft.tag ? <> tagged <strong>{draft.tag}</strong></> : null}; send it when it is ready.
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn btn-outline" onClick={() => setCreateOpen(false)}>
                   Cancel
                 </button>
                 <button className="btn btn-primary" onClick={submitCreate} disabled={busy}>
                   <span>{busy ? 'Creating…' : 'Create invoice'}</span>
-                  <kbd>↵</kbd>
+                  <kbd>⌘↵</kbd>
                 </button>
               </div>
             </div>
@@ -508,6 +513,18 @@ export default function InvoicesPage() {
         </div>
       )}
 
+      {paying && (
+        <LogPaymentModal
+          currency={paying.currency}
+          outstanding={invoiceTotals(paying).balance}
+          methods={cfg.methods}
+          defaultMethod={paying.payment_method}
+          onClose={() => setPaying(null)}
+          onSubmit={(payment) => submitPayment(paying, payment)}
+        />
+      )}
+
+      {confirmModal}
       {guideOpen && <InvoiceGuideModal onClose={() => setGuideOpen(false)} />}
     </Shell>
   );
