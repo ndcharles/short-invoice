@@ -6,6 +6,7 @@ import { activity } from '../lib/activity';
 import { parseText } from '../../src/lib/validate';
 import {
   checkAccountPassword,
+  cleanupStatements,
   clearSessionCookie,
   clientIp,
   hashAccountPassword,
@@ -105,6 +106,7 @@ auth.post('/setup', async (c) => {
       )
       .bind(await hashAccountPassword(c.env, String(body?.password)), name.value, now, email),
     activity(db, { email, name: name.value, role: row.role, initials: '' }, { action: 'joined', type: 'team', id: email, label: name.value }, now),
+    ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);
   return c.json({ ok: true });
@@ -145,6 +147,7 @@ auth.post('/login', async (c) => {
   await db.batch([
     db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL, last_seen_at = ?1 WHERE email = ?2').bind(now, email),
     activity(db, { email, name: row.name, role: row.role, initials: '' }, { action: 'signed in', type: 'team', id: email, label: row.name || email }, now),
+    ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);
   return c.json({ ok: true });

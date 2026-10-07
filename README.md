@@ -30,6 +30,7 @@ npm run db:migrate:local
 npm run db:seed:local            # optional demo links and campaigns
 npm run dev                      # http://localhost:3000
 npm test                         # unit + API tests
+npm run test:e2e                 # browser tests (needs Google Chrome)
 ```
 
 ## Deploying

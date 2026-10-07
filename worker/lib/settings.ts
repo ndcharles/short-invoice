@@ -24,13 +24,21 @@ export async function getSettings(db: D1Database): Promise<SettingsMap> {
 /** Never sent to the browser; the UI only learns whether one is set. */
 export const SECRET_KEYS = new Set(['smtp_password']);
 
-/** Settings safe to return to the UI: secrets removed, `<key>_set` flags added. */
-export function publicSettings(settings: SettingsMap): SettingsMap {
+/** Mail-server details only admins need; members just learn whether sending is set up. */
+const ADMIN_ONLY_KEYS = new Set(['smtp_host', 'smtp_port', 'smtp_security', 'smtp_username', 'smtp_from_name', 'smtp_from_email', 'smtp_reply_to']);
+
+/**
+ * Settings safe to return to the UI: secrets removed (with `<key>_set` flags),
+ * and for members the mail-server details too (with a `smtp_ready` flag).
+ */
+export function publicSettings(settings: SettingsMap, isAdmin = true): SettingsMap {
   const out: SettingsMap = {};
   for (const [key, value] of Object.entries(settings)) {
     if (SECRET_KEYS.has(key)) out[`${key}_set`] = value ? 'true' : 'false';
+    else if (!isAdmin && ADMIN_ONLY_KEYS.has(key)) continue;
     else out[key] = value;
   }
+  out.smtp_ready = settings.smtp_host && settings.smtp_from_email ? 'true' : 'false';
   return out;
 }
 
@@ -74,7 +82,7 @@ const VALIDATORS: Record<string, (value: string) => Result<string>> = {
   smtp_security: (v) =>
     ['tls', 'starttls', 'none'].includes(v) ? { ok: true, value: v } : { ok: false, error: 'SMTP security must be tls, starttls or none' },
   smtp_username: (v) => asString(parseText(v, 'SMTP username', 254)),
-  smtp_password: (v) => (v.length > 512 || /[\r\n]/.test(v) ? { ok: false, error: 'SMTP password is not valid' } : { ok: true, value: v }),
+  smtp_password: (v) => (v.length > 1024 || /[\r\n]/.test(v) ? { ok: false, error: 'SMTP password is not valid' } : { ok: true, value: v }),
   smtp_from_name: (v) => asString(parseText(v, 'Sender name', 100)),
   smtp_from_email: (v) => asString(parseEmail(v, 'Sender email')),
   smtp_reply_to: (v) => asString(parseEmail(v, 'Reply-to email')),

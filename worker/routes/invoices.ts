@@ -22,6 +22,7 @@ import { requireAdmin, type CurrentUser } from '../lib/auth';
 import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
+import { decryptSecret } from '../lib/secrets';
 
 const invoices = new Hono<AppEnv>();
 
@@ -268,7 +269,7 @@ invoices.get('/:id', async (c) => {
  */
 invoices.post('/:id/send', async (c) => {
   const id = c.req.param('id');
-  const body = await readJsonObject(c);
+  const body = await readJsonObject(c, 12_000_000);
   if (!body) return c.json({ error: 'Invalid payload' }, 400);
   const parsed = parseSendRequest(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -287,6 +288,7 @@ invoices.post('/:id/send', async (c) => {
   }
 
   const settings = await getSettings(db);
+  settings.smtp_password = await decryptSecret(c.env, settings.smtp_password);
   const setup = mailSetup(settings);
   if (!setup.ok) return c.json({ error: setup.error }, 400);
   const bcc = req.copyMe && setup.value.replyTo && !req.to.includes(setup.value.replyTo) ? [setup.value.replyTo] : [];

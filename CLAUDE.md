@@ -13,7 +13,8 @@ src/        Next.js app (all pages are client components) -> static export in ou
 worker/     Hono Worker. Entry worker/index.ts
 migrations/ D1 schema (wrangler d1 migrations)
 seed/       demo data for local dev only
-tests/      vitest: unit/ (pure libs) and api/ (black-box against wrangler dev)
+tests/      vitest: unit/ (pure libs), api/ (black-box against wrangler dev),
+            e2e/ (real Chrome driving the built app)
 design/     original HTML design handoff (reference, not shipped)
 ```
 
@@ -45,6 +46,7 @@ npm run dev                # wrangler dev :8787 + next dev :3000 (proxies /api, 
 npm run typecheck          # UI tsconfig + worker/tsconfig.json
 npm run lint
 npm test                   # unit + API tests (boots wrangler dev on :8791, fresh D1)
+npm run test:e2e           # browser tests: needs Google Chrome; rebuilds the app, wrangler dev on :8792
 npm run preview            # static build served by the Worker on :8787
 npm run deploy             # next build && wrangler deploy
 npm run db:migrate         # apply migrations to remote D1
@@ -84,6 +86,41 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
   (`parseHttpUrl` for anything that ends up in a redirect, href, src or
   iframe). Worker-rendered HTML escapes every value. API writes require JSON
   and a same-origin `Sec-Fetch-Site` (CSRF guard in `worker/index.ts`).
+
+## Security rules
+
+Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
+
+- **Every outbound fetch goes through `worker/lib/ssrf.ts`.** `checkFetchUrl`
+  allows only http(s) on ports 80/443 with no credentials in the URL, and
+  `isBlockedHost` refuses localhost, private/link-local/CGNAT/reserved IPv4,
+  IPv6 loopback/ULA/mapped/NAT64/6to4 and odd spellings (`2130706433`,
+  `0x7f.1`). Redirects are followed by hand (max 4) and **each hop is
+  re-checked**; bodies are read with `readLimited`, never `res.text()`.
+  The link-preview endpoint is also limited to 60 requests / 10 min per user.
+- **Headers.** `worker/index.ts` adds nosniff, Referrer-Policy, COOP,
+  `X-Frame-Options: DENY` and HSTS to every response; `public/_headers` does the
+  same for static files. Worker-generated pages (password, cloak, expired) carry
+  a locked-down CSP and load nothing from third parties (no web fonts). The
+  app's own CSP still needs `'unsafe-inline'` scripts for Next's bootstrap.
+- **Body limits.** 1 MB for every API write, 12 MB for `/api/invoices/:id/send`
+  (PDF attachments). `readJsonObject` enforces it even without Content-Length.
+- **The client IP is `cf-connecting-ip` only** (`clientIp`); never trust
+  `x-forwarded-for`.
+- **Members never see mail-server details.** `publicSettings(settings, isAdmin)`
+  hides every `smtp_*` key from members and gives them `smtp_ready` instead;
+  the UI's `emailReady` reads that. Members may add folders/tags
+  (`collectionEdits`) but not rename or delete them.
+- **`smtp_password` is encrypted at rest** (`worker/lib/secrets.ts`, AES-GCM,
+  key derived from `AUTH_PEPPER`, stored as `enc1:iv:cipher`). Rotating
+  `AUTH_PEPPER` locks everyone out *and* makes the saved SMTP password
+  unreadable (re-enter it). Decrypt only in the send/test routes.
+- `login`/`setup` batches also prune expired sessions and old `auth_limits`
+  rows (`cleanupStatements`), so those tables cannot grow without bound.
+- Accepted, by design: `/api/auth/check` tells a *listed* email from an unlisted
+  one (needed for the two-step sign-in; per-IP limited), and wrong guesses can
+  lock a known account for 15 minutes. Members can email arbitrary recipients
+  through the company SMTP (100/day, 10 recipients per message).
 
 ## Settings
 
@@ -133,10 +170,13 @@ Settings UI. **The repo is public; never commit them.**
   PDFs and passes them through, which keeps it inside the 10 ms CPU budget.
 - `smtp_password` is write-only: `publicSettings()` strips it from every API
   response (the UI sees `smtp_password_set`), the export skips it, and
-  `smtp_password_clear: 'true'` removes it. Any new secret goes in `SECRET_KEYS`.
+  `smtp_password_clear: 'true'` removes it. It is stored encrypted (see
+  Security rules). Any new secret goes in `SECRET_KEYS`.
+- The pure message builder lives in `worker/lib/mime.ts` (testable in Node);
+  `smtp.ts` imports `cloudflare:sockets`, which only loads in the Worker.
 - Every attempt is logged in `invoice_emails` (migration 0002) and shown on the
-  invoice; the log also caps sends at 100 per 24 h. There is no login yet, so
-  sending also requires a signed-in admin or member.
+  invoice; the log also caps sends at 100 per 24 h. Sending requires a signed-in
+  admin or member.
 - `tests/api/email.test.ts` runs a fake SMTP server in the test process.
 
 ## People, roles and activity
@@ -175,6 +215,34 @@ Settings UI. **The repo is public; never commit them.**
 - basecoat-css pins every `[data-popover]` to the left edge. A dropdown that
   should open to the left of its button needs `data-align="end"` as well as
   `right: 0`, or it runs off the screen.
+- **Dialogs use `<Portal>`** (`src/components/portal.tsx`). The sidebar is its
+  own stacking context, so a backdrop rendered inside it only dims the sidebar.
+  Any new `.modal-backdrop` / `.popup-backdrop` must be wrapped in `<Portal>`.
+- **Menus** use `usePopoverDismiss` (`src/lib/popover.ts`): it closes every
+  other open menu and ignores clicks inside `[data-popover]`, `[data-row-menu]`
+  and `.dropdown`. Closing on `mousedown` outside a menu item made every item
+  dead in a real browser (synthetic `.click()` hid it), so test menus with real
+  mouse clicks.
+- **No flashing placeholders.** Pages render a neutral `.skeleton` until settings
+  (and, on the sign-in page, the workspace brand) have loaded. Never default a
+  workspace name, logo letter or "domain pending" before the data arrives.
+- Use `useConfirm()` / `useNotice()` (`choice-modal.tsx`), never `window.confirm`
+  or `alert`.
+- No keyboard shortcuts for now (decided; do not add them back unasked).
+- `MoneyInput` selects its text on focus; keep that, the editors rely on it.
+
+## Testing
+
+- `tests/unit`: pure functions. `worker-libs.test.ts` imports Worker code, so it
+  is compiled by `worker/tsconfig.json` (and excluded from the root tsconfig).
+- `tests/api`: black-box HTTP against `wrangler dev` with a fresh D1;
+  `security.test.ts` covers auth, CSRF, roles, SSRF, headers and body limits.
+- `tests/e2e`: Playwright (playwright-core) driving system Chrome against the
+  **built** static app (`next build`) served by `wrangler dev`; never against
+  `next dev` (its overlay and HMR hang headless Chrome). Uses its own matchers
+  (`matchers.ts`) because vitest has no Playwright `expect`. When you add a
+  button, menu or page, add a case there; it caught real bugs the API tests
+  could not (dead menus, phone overflow, members' silent failures).
 
 ## Deploying (first time)
 
@@ -201,6 +269,10 @@ the D1 primary (WEUR). A redirect that reads D1 measured ~398 ms TTFB vs
 is the network path and TLS handshake to London. A per-colo cache would
 save about 15 ms, so it is not worth the complexity yet. KV was rejected: its
 changes take up to 60 s to propagate and links must update instantly.
+
+Re-measured later the same way: ~440 ms total per click from Nigeria, of which
+the app and D1 are only 30-50 ms; the rest is the round trip to London (~130 ms
+RTT, several of them). There is no app-side fix; do not cache redirects.
 
 ## Known gaps (next steps)
 

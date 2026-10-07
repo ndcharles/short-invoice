@@ -150,7 +150,16 @@ export async function withinLimit(db: D1Database, rawKey: string, limit: number,
   return (row?.count ?? 0) <= limit;
 }
 
-export const clientIp = (c: Context<AppEnv>) => c.req.header('cf-connecting-ip') ?? c.req.header('x-real-ip') ?? 'unknown';
+/** Housekeeping that rides along with each successful sign-in: expired sessions and old rate-limit counters. */
+export function cleanupStatements(db: D1Database, now = Date.now()): D1PreparedStatement[] {
+  return [
+    db.prepare('DELETE FROM sessions WHERE expires_at < ?1').bind(now),
+    db.prepare('DELETE FROM auth_limits WHERE window_start < ?1').bind(now - 2 * 60 * 60 * 1000),
+  ];
+}
+
+/** Cloudflare sets this on every request and overwrites anything the client sent. */
+export const clientIp = (c: Context<AppEnv>) => c.req.header('cf-connecting-ip') ?? 'unknown';
 
 /** Starts a 365-day session for this device and sets the cookie. */
 export async function startSession(c: Context<AppEnv>, email: string, now = Date.now()): Promise<void> {

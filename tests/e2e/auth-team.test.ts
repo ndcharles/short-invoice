@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
-import { addMember, api, chromeAvailable, launch, openSession, setUpAccount, unique, type Session } from './helpers';
+import { addMember, api, chromeAvailable, launch, openSession, setUpAccount, unique } from './helpers';
 
 const run = chromeAvailable ? describe : describe.skip;
 

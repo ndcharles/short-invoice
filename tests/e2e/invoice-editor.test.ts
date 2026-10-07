@@ -20,7 +20,6 @@ afterAll(async () => {
 const canvas = (p: Page) => p.locator('.edit-invoice-layout .invoice-canvas');
 const dialog = (p: Page) => p.getByRole('dialog');
 const totalRow = (p: Page) => p.locator('.inv-totals-row.grand').first().locator('.tot-value');
-const grandText = (p: Page) => totalRow(p).innerText();
 
 async function openInvoice(over: Record<string, unknown> = {}) {
   const inv = await seedInvoice(over);

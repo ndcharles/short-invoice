@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
-import { api, chromeAvailable, launch, openSession, seedInvoice, seedLink, seedUtm, unique, type Session } from './helpers';
+import { api, chromeAvailable, launch, openSession, seedLink, unique, type Session } from './helpers';
 
 /**
  * The three list pages (Links, UTMs, Invoices) with a real mouse in real Chrome:
