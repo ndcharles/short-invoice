@@ -48,7 +48,7 @@ export async function openSession(
   });
   page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
   page.on('console', (msg) => {
-    if (msg.type() === 'error' && !/favicon|Failed to load resource.*(401|404)/.test(msg.text())) errors.push(`console: ${msg.text()}`);
+    if (msg.type() === 'error' && !/favicon|Failed to load resource.*(401|404|410)/.test(msg.text())) errors.push(`console: ${msg.text()}`);
   });
   return { context, page, errors, nativeDialogs };
 }

@@ -10,6 +10,7 @@ import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
 import { cloakPage } from '../lib/cloak';
 import { clientIp, withinLimit } from '../lib/auth';
+import { GENERATED_PAGE_CSP } from '../lib/page-csp';
 
 /**
  * Which domain an alias is looked up on:
@@ -27,7 +28,7 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 /** Minimal page shell reusing the workspace's design tokens. */
-function htmlPage(title: string, body: string): string {
+function htmlPage(title: string, body: string, head = ''): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,6 +36,7 @@ function htmlPage(title: string, body: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
+${head}
 <style>
   :root { --border:#e5e5e5; --muted:#f5f5f5; --muted-2:#fafafa; --muted-foreground:#737373; --foreground:#0a0a0a; --destructive:#dc2626; }
   * { box-sizing: border-box; }
@@ -52,6 +54,7 @@ function htmlPage(title: string, body: string): string {
   button:hover { background:#262626; }
   .error { color:var(--destructive); font-size:12px; margin:0 0 12px; }
   .meta { font-family:'SFMono-Regular', ui-monospace, monospace; font-size:12px; color:var(--muted-foreground); word-break:break-all; }
+  a { color:var(--foreground); font-weight:500; }
 </style>
 </head>
 <body><div class="card">${body}</div></body>
@@ -128,6 +131,60 @@ function passwordPage(action: string, state: PasswordState) {
     </form>`);
 }
 
+/** How long the "expired" notice stays up before visitors move on to the redirect. */
+const EXPIRED_NOTICE_SECONDS = 2;
+
+/**
+ * The notice moves on by itself with location.replace, not a meta refresh: a refresh leaves the notice in the
+ * browser history, so Back from the destination returned to the notice, which sent the visitor forward again.
+ * Clicking "Go there now" replaces too. The script is fixed text, allowed by its hash in the page's policy
+ * (a test keeps the two in step); a slower meta refresh is the fallback if scripts are ever blocked.
+ */
+const EXPIRED_SCRIPT = `(function(){var a=document.getElementById("go");function go(){location.replace(a.href)}a.addEventListener("click",function(e){e.preventDefault();go()});setTimeout(go,${EXPIRED_NOTICE_SECONDS * 1000})})()`;
+
+let expiredScriptHash: Promise<string> | null = null;
+function scriptHash(): Promise<string> {
+  expiredScriptHash ??= crypto.subtle
+    .digest('SHA-256', new TextEncoder().encode(EXPIRED_SCRIPT))
+    .then((digest) => btoa(String.fromCharCode(...new Uint8Array(digest))));
+  return expiredScriptHash;
+}
+
+/**
+ * "This link has expired", then on to `next` (the link's own expiration URL, or the Settings redirect)
+ * after a couple of seconds, or straight away from the link. With nowhere to go this is the expired page itself.
+ */
+async function expiredResponse(c: RedirectContext, label: string, next: string | null) {
+  const clock = `<div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>`;
+  // Never cached: the owner may extend the date, and visitors must see that straight away.
+  const headers: Record<string, string> = { 'Cache-Control': 'no-store' };
+  if (!next) {
+    return c.html(
+      htmlPage('Link expired', `${clock}
+        <h1>This link has expired</h1>
+        <p>The owner set an expiration date and it has passed.</p>
+        <div class="meta">${escapeHtml(label)}</div>`),
+      410,
+      headers
+    );
+  }
+  headers['Content-Security-Policy'] = `${GENERATED_PAGE_CSP}; script-src 'sha256-${await scriptHash()}'`;
+  return c.html(
+    htmlPage(
+      'Link expired',
+      `${clock}
+        <h1>This link has expired</h1>
+        <p>Taking you to ${escapeHtml(new URL(next).hostname)} in a moment…</p>
+        <p><a id="go" href="${escapeHtml(next)}">Go there now</a></p>
+        <div class="meta">${escapeHtml(label)}</div>
+        <script>${EXPIRED_SCRIPT}</script>`,
+      `<meta http-equiv="refresh" content="${EXPIRED_NOTICE_SECONDS + 2};url=${escapeHtml(next)}">`
+    ),
+    410,
+    headers
+  );
+}
+
 /** Wrong guesses allowed per visitor (IP) per window, and per link per hour across everyone. */
 const PASSWORDS_PER_VISITOR = 10;
 const PASSWORD_WINDOW_MS = 10 * 60_000;
@@ -176,21 +233,13 @@ export async function serveLink(
   if (!record) return null;
   const label = `${record.domain}/${alias}`;
 
-  // Expiration wins over everything else. Where visitors go instead: the link's own expiration URL,
-  // else the Redirect URL from Settings → URL Shortener (the same place a missing link goes), else
-  // a plain "expired" page.
+  // Expiration wins over everything else. Visitors see "This link has expired" and then move on to the
+  // link's own expiration URL, else the Redirect URL from Settings → URL Shortener (the same place a
+  // missing link goes); with neither, the notice stays.
   if (record.expires_at && Date.now() > record.expires_at) {
     const own = record.expires_url ? parseHttpUrl(record.expires_url) : null;
-    const fallback = own?.ok ? own.value : await settingsRedirect(c);
-    if (fallback) return c.redirect(fallback, c.req.method === 'POST' ? 303 : 302);
-    return c.html(
-      htmlPage('Link expired', `
-        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-        <h1>This link has expired</h1>
-        <p>The owner set an expiration date and it has passed.</p>
-        <div class="meta">${escapeHtml(label)}</div>`),
-      410
-    );
+    const next = own?.ok ? own.value : await settingsRedirect(c);
+    return expiredResponse(c, label, next);
   }
 
   // Password gate. The password arrives as a POST body so it never lands in

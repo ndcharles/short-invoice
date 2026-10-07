@@ -101,13 +101,68 @@ run('Expiration, as a visitor in Chrome', () => {
     }
   });
 
-  it('an expired link sends visitors to its fallback address instead', async () => {
+  it('an expired link says so, then moves on to its own fallback address', async () => {
     const link = await seedLink({ dest: `${dest}/gone`, expires_at: Date.now() - 60_000, expires_url: `${dest}/sorry-it-ended` });
     const v = await visitor();
     try {
       await v.page.goto(`/s/${link.alias}`);
-      await v.page.waitForURL((url) => url.origin === dest);
+      await expect(v.page.getByText('This link has expired')).toBeVisible();
+      expect(v.page.url()).toContain(`/s/${link.alias}`); // still on the notice
+      await v.page.waitForURL((url) => url.origin === dest, { timeout: 15_000 });
       await expect(v.page.locator('#dest')).toContainText('/sorry-it-ended');
+      expect(v.errors).toEqual([]);
+    } finally {
+      await v.context.close();
+    }
+  });
+
+  it('Back from the destination returns to where the visitor came from, not to the notice', async () => {
+    const link = await seedLink({ dest: `${dest}/gone`, expires_at: Date.now() - 60_000, expires_url: `${dest}/after` });
+    const v = await visitor();
+    try {
+      const p = v.page;
+      await p.goto(`${dest}/before`);
+      await p.goto(`/s/${link.alias}`);
+      await expect(p.getByText('This link has expired')).toBeVisible();
+      await p.waitForURL((url) => url.pathname === '/after', { timeout: 15_000 });
+      await p.goBack();
+      await p.waitForURL((url) => url.pathname === '/before');
+      await p.waitForTimeout(3_000); // longer than the notice's wait: it must not bounce forward again
+      expect(new URL(p.url()).pathname).toBe('/before');
+      expect(v.errors).toEqual([]);
+    } finally {
+      await v.context.close();
+    }
+  });
+
+  it('"Go there now" skips the wait, and Back is not trapped after it either', async () => {
+    const link = await seedLink({ dest: `${dest}/gone`, expires_at: Date.now() - 60_000, expires_url: `${dest}/right-away` });
+    const v = await visitor();
+    try {
+      await v.page.goto(`${dest}/before`);
+      await v.page.goto(`/s/${link.alias}`);
+      const started = Date.now();
+      await v.page.getByRole('link', { name: 'Go there now' }).click();
+      await v.page.waitForURL((url) => url.origin === dest && url.pathname === '/right-away');
+      expect(Date.now() - started).toBeLessThan(1_500); // well inside the 2 second wait
+      await v.page.goBack();
+      await v.page.waitForURL((url) => url.pathname === '/before');
+      await v.page.waitForTimeout(2_500);
+      expect(new URL(v.page.url()).pathname).toBe('/before');
+    } finally {
+      await v.context.close();
+    }
+  });
+
+  it('with nowhere to go, the notice stays put', async () => {
+    const link = await seedLink({ dest: `${dest}/gone`, expires_at: Date.now() - 60_000 });
+    const v = await visitor();
+    try {
+      await v.page.goto(`/s/${link.alias}`);
+      await expect(v.page.getByText('This link has expired')).toBeVisible();
+      await v.page.waitForTimeout(4_500); // longer than the wait a redirect would have had
+      expect(v.page.url()).toContain(`/s/${link.alias}`);
+      await expect(v.page.getByText('This link has expired')).toBeVisible();
     } finally {
       await v.context.close();
     }
@@ -119,7 +174,8 @@ run('Expiration, as a visitor in Chrome', () => {
     const v = await visitor();
     try {
       await v.page.goto(`/s/${link.alias}`);
-      await v.page.waitForURL((url) => url.origin === dest);
+      await expect(v.page.getByText('This link has expired')).toBeVisible();
+      await v.page.waitForURL((url) => url.origin === dest, { timeout: 15_000 });
       await expect(v.page.locator('#dest')).toContainText('/company-home');
     } finally {
       await api('PATCH', '/api/settings', { root_redirect: '' });

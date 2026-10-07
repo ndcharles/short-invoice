@@ -30,9 +30,17 @@ path with no static file (`not_found_handling: "none"`). It handles:
 - `/<alias>` on a verified custom domain: same link lookup, keyed by the host.
 - `/` on a short domain: the root redirect setting. On the app host: the app.
 - `/.well-known/short-invoice`: token used by Settings → Verify for domains.
-- A missing link, or an expired link: where the visitor goes is, in order, the
-  link's own expiration URL (expired links only), the Redirect URL from Settings
-  (`root_redirect`), then the plain "not found" / "expired" (410) page.
+- A missing link goes at once to the Redirect URL from Settings (`root_redirect`),
+  or shows "link not found" when none is set.
+- An expired link shows "This link has expired" (HTTP 410, never cached) for 2
+  seconds, then moves on to its own expiration URL, else the Settings Redirect
+  URL; "Go there now" skips the wait. With neither set it is simply the expired
+  page. Expiry beats the password prompt.
+  - The move is `location.replace` (an inline script allowed by its sha256 in
+    the page's own CSP; `link-gates.test.ts` keeps the two in step). Do not
+    switch to a meta refresh: it leaves the notice in the browser history, and
+    Back from the destination then bounces the visitor forward again.
+    A slower meta refresh (4 s) stays in only as the fallback if scripts are blocked.
 - Anything else: the static app's 404 page.
 
 The app is served only from its custom domain (`workers_dev` and

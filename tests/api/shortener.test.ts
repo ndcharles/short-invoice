@@ -169,11 +169,14 @@ describe('expiring links', () => {
     expect(await res.text()).toContain('expired');
   });
 
-  it('redirects to the expired-link URL when set', async () => {
+  it('says it has expired, then moves on to the expired-link URL when set', async () => {
     const link = await create({ dest: 'https://example.com', expires_at: Date.now() - 1000, expires_url: 'https://example.com/expired' });
     const res = await raw(`/s/${link.alias}`);
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('https://example.com/expired');
+    expect(res.status).toBe(410);
+    const html = await res.text();
+    expect(html).toContain('This link has expired');
+    expect(html).toContain('<a id="go" href="https://example.com/expired">Go there now</a>');
+    expect(html).toContain('location.replace');
   });
 
   it('works normally before the expiry time and accepts ISO dates', async () => {

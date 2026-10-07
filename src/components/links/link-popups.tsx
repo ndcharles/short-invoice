@@ -750,7 +750,7 @@ export function ExpirationPopup({
       {urlError ? (
         <div className="popup-hint" style={{ color: 'var(--destructive)' }}>{urlError}</div>
       ) : (
-        <div className="popup-hint">Optional. Visitors go here once the link has expired. Without it, they go to the Redirect URL in Settings, or see an &quot;expired&quot; page if that is empty.</div>
+        <div className="popup-hint">Optional. Visitors see &quot;This link has expired&quot; for a moment, then go here. Without it, they go to the Redirect URL in Settings; if that is empty too, they stay on the expired notice.</div>
       )}
     </Popup>
   );
