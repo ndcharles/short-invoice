@@ -31,7 +31,9 @@ path with no static file (`not_found_handling: "none"`). It handles:
 - `/.well-known/short-invoice`: token used by Settings → Verify for domains.
 - Anything else: the static app's 404 page.
 
-Sign-in is built in (see People, roles and activity). Short links on a short
+The app is served only from its custom domain (`workers_dev` and
+`preview_urls` are off in wrangler.jsonc). Sign-in is built in (see People,
+roles and activity). Short links on a short
 domain are always public; everything under `/api/*` needs a session.
 
 ## Commands

@@ -4,6 +4,12 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
 
+  // The app is served only from its custom domain (Workers → Domains &
+  // Routes). The *.workers.dev address and per-version preview URLs are off,
+  // so there is exactly one place the app lives.
+  "workers_dev": false,
+  "preview_urls": false,
+
   // The UI is a static Next.js export (`out/`). Static files are served
   // without running the Worker, which is free and does not count toward the
   // 100k requests/day free-plan limit. The Worker runs first for the API,
