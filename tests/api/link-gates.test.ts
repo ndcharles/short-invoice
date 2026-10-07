@@ -182,3 +182,88 @@ describe('expiration', () => {
     }
   });
 });
+
+describe('where an expired link sends visitors', () => {
+  const home = 'https://example.com/company-home';
+  const past = () => Date.now() - 60_000;
+
+  /** Runs with the Settings → URL Shortener "Redirect URL" set, and always puts it back. */
+  async function withRedirectUrl(url: string, run: () => Promise<void>) {
+    expect((await api('PATCH', '/api/settings', { root_redirect: url })).status).toBe(200);
+    try {
+      await run();
+    } finally {
+      await api('PATCH', '/api/settings', { root_redirect: '' });
+    }
+  }
+
+  it('to the link\'s own expiration URL when it has one, even when Settings has a Redirect URL', async () => {
+    const alias = uniqueAlias('own');
+    await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past(), expires_url: 'https://example.com/own-fallback' });
+    await withRedirectUrl(home, async () => {
+      const res = await raw(`/s/${alias}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('https://example.com/own-fallback');
+    });
+  });
+
+  it('otherwise to the Redirect URL from Settings, the same place a missing link goes', async () => {
+    const alias = uniqueAlias('settings');
+    await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past() });
+    await withRedirectUrl(home, async () => {
+      const expired = await raw(`/s/${alias}`);
+      expect(expired.status).toBe(302);
+      expect(expired.headers.get('location')).toBe(home);
+      const missing = await raw('/s/this-alias-does-not-exist');
+      expect(missing.headers.get('location')).toBe(home);
+    });
+  });
+
+  it('otherwise the plain expired page (HTTP 410)', async () => {
+    const alias = uniqueAlias('plain');
+    await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past() });
+    const res = await raw(`/s/${alias}`);
+    expect(res.status).toBe(410);
+    expect(await res.text()).toContain('This link has expired');
+  });
+
+  it('is not used by links that have not expired, and stops being used once the Settings URL is cleared', async () => {
+    const live = uniqueAlias('live');
+    const gone = uniqueAlias('gone');
+    await api('POST', '/api/links', { dest: 'https://example.com/still-works', alias: live, expires_at: Date.now() + 3_600_000 });
+    await api('POST', '/api/links', { dest: 'https://example.com/x', alias: gone, expires_at: past() });
+    await withRedirectUrl(home, async () => {
+      expect((await raw(`/s/${live}`)).headers.get('location')).toBe('https://example.com/still-works');
+      expect((await raw(`/s/${gone}`)).headers.get('location')).toBe(home);
+    });
+    expect((await raw(`/s/${gone}`)).status).toBe(410);
+  });
+
+  it('skips the password prompt, and a form posted just as it expired still ends up there', async () => {
+    const alias = uniqueAlias('pwexp');
+    await api('POST', '/api/links', { dest: 'https://example.com/hidden', alias, password: 'a password here', expires_at: past() });
+    await withRedirectUrl(home, async () => {
+      const visit = await raw(`/s/${alias}`);
+      expect(visit.status).toBe(302);
+      expect(visit.headers.get('location')).toBe(home);
+      const post = await submit(alias, 'a password here', '203.0.113.99');
+      expect(post.status).toBe(303); // 303 so the browser follows with a GET
+      expect(post.headers.get('location')).toBe(home);
+      expect(post.headers.get('set-cookie')).toBeNull();
+    });
+  });
+
+  it('works on a short domain (like trim.ng) too', async () => {
+    const domain = `exp${Date.now().toString(36)}.example`;
+    await api('POST', '/api/domains', { name: domain });
+    await asHost(domain, '/.well-known/short-invoice?ping=1');
+    const alias = uniqueAlias('hostexp');
+    const created = await api('POST', '/api/links', { dest: 'https://example.com/x', alias, domain, expires_at: past() });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    await withRedirectUrl(home, async () => {
+      const res = await asHost(domain, `/${alias}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe(home);
+    });
+  });
+});

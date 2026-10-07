@@ -176,10 +176,13 @@ export async function serveLink(
   if (!record) return null;
   const label = `${record.domain}/${alias}`;
 
-  // Expiration wins over everything else.
+  // Expiration wins over everything else. Where visitors go instead: the link's own expiration URL,
+  // else the Redirect URL from Settings → URL Shortener (the same place a missing link goes), else
+  // a plain "expired" page.
   if (record.expires_at && Date.now() > record.expires_at) {
-    const fallback = record.expires_url ? parseHttpUrl(record.expires_url) : null;
-    if (fallback?.ok) return c.redirect(fallback.value, 302);
+    const own = record.expires_url ? parseHttpUrl(record.expires_url) : null;
+    const fallback = own?.ok ? own.value : await settingsRedirect(c);
+    if (fallback) return c.redirect(fallback, c.req.method === 'POST' ? 303 : 302);
     return c.html(
       htmlPage('Link expired', `
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
@@ -261,10 +264,16 @@ async function suppliedPassword(c: RedirectContext): Promise<string> {
  * the "link not found" page.
  */
 export async function missingLink(c: RedirectContext, label: string): Promise<Response> {
+  const target = await settingsRedirect(c);
+  if (target) return c.redirect(target, 302);
+  return c.html(notFoundPage(label), 404);
+}
+
+/** The "Redirect URL" from Settings → URL Shortener, when one is set and valid. */
+async function settingsRedirect(c: RedirectContext): Promise<string | null> {
   const row = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'root_redirect'").first<{ value: string }>();
   const target = row?.value ? parseHttpUrl(row.value) : null;
-  if (target?.ok) return c.redirect(target.value, 302);
-  return c.html(notFoundPage(label), 404);
+  return target?.ok ? target.value : null;
 }
 
 /** `/s/:alias`, available on every host. */
