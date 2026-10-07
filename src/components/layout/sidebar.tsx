@@ -32,7 +32,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
     <aside className="sidebar" data-collapsed={collapsed ? 'true' : undefined}>
       {/* Workspace (name and logo from Settings → General) */}
       {settings ? (
-        <Link href={admin ? '/settings' : '/links'} className="workspace" title={admin ? 'Workspace settings' : workspaceName}>
+        <Link href="/links" className="workspace" title={workspaceName}>
           <div className="workspace-avatar" style={workspaceLogo ? { overflow: 'hidden', padding: 0 } : undefined}>
             {workspaceLogo ? (
               // eslint-disable-next-line @next/next/no-img-element

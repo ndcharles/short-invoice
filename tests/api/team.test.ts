@@ -17,7 +17,20 @@ interface Activity {
   detail: string;
 }
 
-const feed = async (query = '') => (await api('GET', `/api/team/activity${query}`, undefined, as(BOSS))).body.activity as Activity[];
+/** Every row for a query, following the cursor through the 20-row pages. */
+const feed = async (query = '') => {
+  const rows: Activity[] = [];
+  let cursor: string | null = null;
+  for (let i = 0; i < 200; i += 1) {
+    const params = new URLSearchParams(query.replace(/^\?/, ''));
+    if (cursor) params.set('cursor', cursor);
+    const res: { body: { activity: Activity[]; next: string | null } } = await api('GET', `/api/team/activity?${params}`, undefined, as(BOSS));
+    rows.push(...res.body.activity);
+    cursor = res.body.next;
+    if (!cursor) break;
+  }
+  return rows;
+};
 
 beforeAll(async () => {
   // The admin (from ADMIN_EMAILS) adds Ada and Carol; everyone else is unknown.
@@ -112,6 +125,8 @@ describe('what members can do', () => {
     expect(link.created_by).toBe(ADA);
     expect(link.avatar).toBe('AO');
 
+    // Members pick from the tags an admin has made, so one has to exist first.
+    await api('POST', '/api/collections', { kind: 'tags', name: 'Client' }, as(BOSS)); // 409 if an earlier test made it
     const edited = await api('PATCH', `/api/links/${link.id}`, { dest: 'https://example.com/b', tag: 'Client' }, as(FRIEND));
     expect(edited.body.link).toMatchObject({ created_by: ADA, updated_by: FRIEND });
 
