@@ -61,8 +61,10 @@ run('Link editor', () => {
     await expect(page.locator('.toggle.on')).toBeVisible();
     await saveBar(page).getByRole('button', { name: /Save/ }).click();
     await expect.poll(async () => (await storedLink(link.id)).cloak).toBe(1);
+    await expect(page.locator('.save-bar.visible')).toHaveCount(0); // the page has finished re-rendering after the save
     await toggle.focus();
     await page.keyboard.press('Enter');
+    await expect(page.locator('.save-bar.visible')).toBeVisible(); // the keyboard toggle registered
     await saveBar(page).getByRole('button', { name: /Save/ }).click();
     await expect.poll(async () => (await storedLink(link.id)).cloak).toBe(0);
   });

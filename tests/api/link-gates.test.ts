@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { api, baseUrl, raw, uniqueAlias } from './helpers';
@@ -183,6 +184,35 @@ describe('expiration', () => {
   });
 });
 
+/**
+ * The expired notice: HTTP 410, never cached. With somewhere to go it moves on after 2 seconds by script (which
+ * replaces the page in the browser history, so Back is not trapped), that script is allowed by its hash in the
+ * page's own policy, and a slower meta refresh is the fallback. With nowhere to go it is just the expired page.
+ */
+function readNotice(res: { status: number; cacheControl: string | null | undefined; csp: string | null | undefined; html: string }) {
+  expect(res.status).toBe(410);
+  expect(res.cacheControl).toBe('no-store');
+  expect(res.html).toContain('This link has expired');
+  const refresh = /<meta http-equiv="refresh" content="4;url=([^"]+)">/.exec(res.html);
+  const script = /<script>([\s\S]*?)<\/script>/.exec(res.html);
+  if (!refresh) {
+    expect(script).toBeNull();
+    expect(res.html).not.toContain('http-equiv');
+    expect(res.csp ?? '').not.toContain('script-src');
+    return null;
+  }
+  expect(script).not.toBeNull();
+  expect(script![1]).toContain('location.replace');
+  expect(script![1]).toContain('setTimeout(go,2000)');
+  const hash = createHash('sha256').update(script![1]).digest('base64');
+  expect(res.csp).toContain(`script-src 'sha256-${hash}'`);
+  expect(res.csp).toContain("default-src 'none'");
+  expect(res.html).toContain(`<a id="go" href="${refresh[1]}">Go there now</a>`);
+  return refresh[1].replace(/&amp;/g, '&');
+}
+const noticeOf = async (res: Response) =>
+  readNotice({ status: res.status, cacheControl: res.headers.get('cache-control'), csp: res.headers.get('content-security-policy'), html: await res.text() });
+
 describe('where an expired link sends visitors', () => {
   const home = 'https://example.com/company-home';
   const past = () => Date.now() - 60_000;
@@ -197,34 +227,30 @@ describe('where an expired link sends visitors', () => {
     }
   }
 
-  it('to the link\'s own expiration URL when it has one, even when Settings has a Redirect URL', async () => {
+  it('shows "This link has expired", then moves on to the link\'s own expiration URL, even when Settings has a Redirect URL', async () => {
     const alias = uniqueAlias('own');
-    await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past(), expires_url: 'https://example.com/own-fallback' });
+    await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past(), expires_url: 'https://example.com/own-fallback?a=1&b=2' });
     await withRedirectUrl(home, async () => {
-      const res = await raw(`/s/${alias}`);
-      expect(res.status).toBe(302);
-      expect(res.headers.get('location')).toBe('https://example.com/own-fallback');
+      expect(await noticeOf(await raw(`/s/${alias}`))).toBe('https://example.com/own-fallback?a=1&b=2');
     });
   });
 
-  it('otherwise to the Redirect URL from Settings, the same place a missing link goes', async () => {
+  it('otherwise moves on to the Redirect URL from Settings (a missing link goes there at once, with no notice)', async () => {
     const alias = uniqueAlias('settings');
     await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past() });
     await withRedirectUrl(home, async () => {
-      const expired = await raw(`/s/${alias}`);
-      expect(expired.status).toBe(302);
-      expect(expired.headers.get('location')).toBe(home);
+      expect(await noticeOf(await raw(`/s/${alias}`))).toBe(home);
       const missing = await raw('/s/this-alias-does-not-exist');
+      expect(missing.status).toBe(302);
       expect(missing.headers.get('location')).toBe(home);
     });
   });
 
-  it('otherwise the plain expired page (HTTP 410)', async () => {
+  it('with nowhere to go, the notice just stays', async () => {
     const alias = uniqueAlias('plain');
     await api('POST', '/api/links', { dest: 'https://example.com/x', alias, expires_at: past() });
     const res = await raw(`/s/${alias}`);
-    expect(res.status).toBe(410);
-    expect(await res.text()).toContain('This link has expired');
+    expect(await noticeOf(res)).toBeNull();
   });
 
   it('is not used by links that have not expired, and stops being used once the Settings URL is cleared', async () => {
@@ -233,23 +259,25 @@ describe('where an expired link sends visitors', () => {
     await api('POST', '/api/links', { dest: 'https://example.com/still-works', alias: live, expires_at: Date.now() + 3_600_000 });
     await api('POST', '/api/links', { dest: 'https://example.com/x', alias: gone, expires_at: past() });
     await withRedirectUrl(home, async () => {
-      expect((await raw(`/s/${live}`)).headers.get('location')).toBe('https://example.com/still-works');
-      expect((await raw(`/s/${gone}`)).headers.get('location')).toBe(home);
+      const ok = await raw(`/s/${live}`);
+      expect(ok.status).toBe(302);
+      expect(ok.headers.get('location')).toBe('https://example.com/still-works');
+      expect(await noticeOf(await raw(`/s/${gone}`))).toBe(home);
     });
-    expect((await raw(`/s/${gone}`)).status).toBe(410);
+    expect(await noticeOf(await raw(`/s/${gone}`))).toBeNull();
   });
 
-  it('skips the password prompt, and a form posted just as it expired still ends up there', async () => {
+  it('skips the password prompt, and a form posted just as it expired gets the same notice', async () => {
     const alias = uniqueAlias('pwexp');
     await api('POST', '/api/links', { dest: 'https://example.com/hidden', alias, password: 'a password here', expires_at: past() });
     await withRedirectUrl(home, async () => {
       const visit = await raw(`/s/${alias}`);
-      expect(visit.status).toBe(302);
-      expect(visit.headers.get('location')).toBe(home);
+      const html = await visit.text();
+      expect(html).not.toContain('password protected');
+      expect(readNotice({ status: visit.status, cacheControl: visit.headers.get('cache-control'), csp: visit.headers.get('content-security-policy'), html })).toBe(home);
       const post = await submit(alias, 'a password here', '203.0.113.99');
-      expect(post.status).toBe(303); // 303 so the browser follows with a GET
-      expect(post.headers.get('location')).toBe(home);
       expect(post.headers.get('set-cookie')).toBeNull();
+      expect(await noticeOf(post)).toBe(home);
     });
   });
 
@@ -262,8 +290,9 @@ describe('where an expired link sends visitors', () => {
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     await withRedirectUrl(home, async () => {
       const res = await asHost(domain, `/${alias}`);
-      expect(res.status).toBe(302);
-      expect(res.headers.location).toBe(home);
+      expect(
+        readNotice({ status: res.status, cacheControl: String(res.headers['cache-control']), csp: String(res.headers['content-security-policy']), html: res.body })
+      ).toBe(home);
     });
   });
 });

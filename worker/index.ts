@@ -13,6 +13,7 @@ import email from './routes/email';
 import team from './routes/team';
 import authRoutes from './routes/auth';
 import { requireAdmin, requireUser } from './lib/auth';
+import { GENERATED_PAGE_CSP } from './lib/page-csp';
 import redirect, { missingLink, notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
 import { isAppHost, readShortDomainConfig } from './lib/domains';
 import { parseAlias, parseHttpUrl } from '../src/lib/validate';
@@ -25,14 +26,6 @@ import { parseAlias, parseHttpUrl } from '../src/lib/validate';
  * does not count against the daily request quota.
  */
 const app = new Hono<AppEnv>();
-
-/**
- * Pages the Worker writes itself (password prompt, link not found, expired)
- * load nothing from anywhere and cannot be framed. Static pages carry their
- * own policy from public/_headers, and the cloaked-link page sets its own.
- */
-const GENERATED_PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 app.use('*', async (c, next) => {
   await next();

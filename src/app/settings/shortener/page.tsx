@@ -270,8 +270,8 @@ export default function ShortenerSettingsPage() {
                 help={
                   <>
                     <Code>https://{draft.default_domain}</Code>, <Code>/s/</Code>, any missing or deleted short link, and any
-                    expired link without its own expiration URL go here. Leave empty to show a &ldquo;link not found&rdquo; or
-                    &ldquo;expired&rdquo; page instead.
+                    expired link without its own expiration URL go here (expired links show &ldquo;This link has expired&rdquo; for
+                    a few seconds first). Leave empty to show a &ldquo;link not found&rdquo; or &ldquo;expired&rdquo; page instead.
                   </>
                 }
               >
