@@ -7,7 +7,7 @@ import collections from './routes/collections';
 import settings from './routes/settings';
 import metadata from './routes/metadata';
 import analytics from './routes/analytics';
-import domains, { VERIFY_PATH, verifyToken } from './routes/domains';
+import domains, { markVerifiedByHost, VERIFY_PATH, verifyToken } from './routes/domains';
 import exporter from './routes/export';
 import email from './routes/email';
 import team from './routes/team';
@@ -100,7 +100,12 @@ app.route('/s', redirect);
 
 app.get('/api/health', (c) => c.json({ ok: true }));
 // Answered on every host, so Settings → Verify can prove a domain reaches this deployment.
-app.get(VERIFY_PATH, async (c) => c.json({ app: 'short-invoice', token: await verifyToken(c.env.DB) }));
+// A request arriving here through a pending short domain is the proof that it is attached.
+app.get(VERIFY_PATH, async (c) => {
+  const host = new URL(c.req.url).hostname.toLowerCase();
+  if (!isAppHost(host)) await markVerifiedByHost(c.env.DB, host);
+  return c.json({ app: 'short-invoice', token: await verifyToken(c.env.DB) });
+});
 app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
 
 app.onError((err, c) => {

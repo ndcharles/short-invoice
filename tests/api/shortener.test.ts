@@ -277,6 +277,26 @@ describe('custom short domains', () => {
     expect(missing.body).toContain('Link not found');
   });
 
+  it('marks a domain verified when a request reaches the app through it', async () => {
+    // In production a Worker cannot fetch its own custom domain (HTTP 523), so the
+    // Settings page pings the domain from the browser instead.
+    const attached = `pv${Date.now().toString(36)}.example`;
+    await api('POST', '/api/domains', { name: attached });
+    const before = await api('GET', '/api/domains');
+    expect(before.body.domains.find((d: { name: string }) => d.name === attached).status).toBe('pending');
+
+    const ping = await requestWithHost(attached, '/.well-known/short-invoice?ping=1');
+    expect(ping.status).toBe(200);
+    const after = await api('GET', '/api/domains');
+    const entry = after.body.domains.find((d: { name: string }) => d.name === attached);
+    expect(entry.status).toBe('active');
+    expect(typeof entry.verified_at).toBe('number');
+
+    // Unknown hosts are ignored.
+    await requestWithHost('not-added.example', '/.well-known/short-invoice');
+    expect((await api('GET', '/api/domains')).body.domains.some((d: { name: string }) => d.name === 'not-added.example')).toBe(false);
+  });
+
   it('applies the root redirect on a short domain only', async () => {
     await api('PATCH', '/api/settings', { root_redirect: 'https://example.com/home' });
     const root = await requestWithHost(domain, '/');
