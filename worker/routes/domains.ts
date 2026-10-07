@@ -12,9 +12,13 @@ import type { ShortDomain } from '../../src/lib/short-url';
  * only changed through these endpoints (the generic settings PATCH ignores it),
  * so a stale settings form can never overwrite a verification result.
  *
- * Attaching a domain to the Worker happens in the Cloudflare dashboard; Verify
- * then proves the domain really reaches this deployment by fetching
- * `https://<domain>/.well-known/short-invoice` and comparing a per-install token.
+ * Attaching a domain to the Worker happens in the Cloudflare dashboard. Proof
+ * that it reaches this deployment: any request for
+ * `https://<domain>/.well-known/short-invoice` that arrives here through that
+ * domain marks it verified (`markVerifiedByHost`); the Settings page triggers
+ * one from the browser. A Worker cannot fetch its own custom domain (Cloudflare
+ * sends such loops to the origin, which a Worker domain lacks: HTTP 523), so
+ * the server-side fetch below only helps for domains served elsewhere and in tests.
  */
 const domains = new Hono<AppEnv>();
 
@@ -60,6 +64,17 @@ export async function verifyToken(db: D1Database): Promise<string> {
   return row?.value ?? fresh;
 }
 
+/** Marks a pending domain verified when a request reached this Worker through it. */
+export async function markVerifiedByHost(db: D1Database, host: string): Promise<boolean> {
+  const { list } = await state(db);
+  const domain = list.find((d) => d.name === host);
+  if (!domain || domain.status === 'active') return false;
+  domain.status = 'active';
+  domain.verified_at = Date.now();
+  await writeDomains(db, list);
+  return true;
+}
+
 domains.get('/', async (c) => c.json((await state(c.env.DB)).body));
 
 domains.post('/', async (c) => {
@@ -84,6 +99,8 @@ domains.post('/:name/verify', async (c) => {
   const { list } = await state(db);
   const domain = list.find((d) => d.name === c.req.param('name'));
   if (!domain) return c.json({ error: 'Domain not found' }, 404);
+  // Already proven by a request that came in through the domain itself.
+  const alreadyActive = domain.status === 'active' && typeof domain.verified_at === 'number';
 
   const token = await verifyToken(db);
   // Tests point this at the local Worker; production always uses https://<domain>.
@@ -101,14 +118,15 @@ domains.post('/:name/verify', async (c) => {
     if (!verified) {
       reason = res.ok
         ? `${domain.name} answers, but not from this app. Attach it to this Worker under Settings → Domains & Routes.`
-        : `${domain.name} responded with HTTP ${res.status}. Attach it to this Worker under Settings → Domains & Routes.`;
+        : `${domain.name} is not answering for this app yet. Attach it under Workers → short-invoice → Settings → Domains & Routes; new domains can take a few minutes to start working.`;
     }
   } catch {
-    reason = `Could not reach ${domain.name}. Check that DNS is set up and the domain is attached to this Worker.`;
+    reason = `Could not reach ${domain.name} yet. Attach it under Workers → short-invoice → Settings → Domains & Routes; new domains can take a few minutes to start working.`;
   }
+  verified = verified || alreadyActive;
 
   domain.status = verified ? 'active' : 'pending';
-  domain.verified_at = verified ? Date.now() : null;
+  domain.verified_at = verified ? domain.verified_at ?? Date.now() : null;
   await writeDomains(db, list);
   await activity(db, c.var.user, { action: verified ? 'verified' : 'verify failed', type: 'domain', label: domain.name }).run();
   const body = (await state(db)).body;

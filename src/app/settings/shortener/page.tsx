@@ -137,7 +137,14 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
                 className="btn btn-outline btn-sm"
                 disabled={busy !== null}
                 onClick={() =>
-                  run(`verify-${domain.name}`, () => domainsApi(`/${encodeURIComponent(domain.name)}/verify`, 'POST'), `${domain.name} is verified and live.`)
+                  run(
+                    `verify-${domain.name}`,
+                    async () => {
+                      await pingDomain(domain.name);
+                      return domainsApi(`/${encodeURIComponent(domain.name)}/verify`, 'POST');
+                    },
+                    `${domain.name} is verified and live.`
+                  )
                 }
               >
                 <Refresh />
@@ -191,6 +198,25 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
       )}
     </SettingsCard>
   );
+}
+
+/**
+ * Opens https://<domain>/.well-known/short-invoice from the browser (as an
+ * image request, which the page's security policy allows). If the domain is
+ * attached to this Worker, that request itself marks it verified; a Worker
+ * cannot make this request to its own domain.
+ */
+function pingDomain(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const done = () => resolve();
+    const timer = setTimeout(done, 8000);
+    img.onload = img.onerror = () => {
+      clearTimeout(timer);
+      done();
+    };
+    img.src = `https://${name}/.well-known/short-invoice?ping=${Date.now()}`;
+  });
 }
 
 export default function ShortenerSettingsPage() {
