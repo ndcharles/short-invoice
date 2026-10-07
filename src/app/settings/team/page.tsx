@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
 import { SettingsCard, SettingsLayout } from '@/components/settings/settings-ui';
@@ -110,8 +110,16 @@ export default function TeamSettingsPage() {
   const [issued, setIssued] = useState<{ email: string; code: string; expires_at: number } | null>(null);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [more, setMore] = useState(false);
+  const [next, setNext] = useState<string | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
+  // cursors[i] is where page i starts (null = the newest), so Newer needs no request to find its way back.
+  const [pager, setPager] = useState<{ cursors: (string | null)[]; page: number }>({ cursors: [null], page: 0 });
   const [actor, setActor] = useState('');
   const [type, setType] = useState('');
+  const activityTop = useRef<HTMLDivElement>(null);
+  const feedRequest = useRef(0);
+  const scrollAfterLoad = useRef(false);
+  const cursor = pager.cursors[pager.page];
   const [reload, setReload] = useState(0);
 
   // Only the owner adds or removes people and chooses who is an admin.
@@ -137,27 +145,55 @@ export default function TeamSettingsPage() {
     };
   }, [me?.role, reload]);
 
-  const loadActivity = useCallback(
-    async (before?: number) => {
-      const params = new URLSearchParams();
-      if (actor) params.set('actor', actor);
-      if (type) params.set('type', type);
-      if (before) params.set('before', String(before));
-      const res = await fetch(`/api/team/activity?${params.toString()}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setActivity((prev) => (before ? [...prev, ...(data.activity ?? [])] : data.activity ?? []));
-      setMore(!!data.more);
-    },
-    [actor, type]
-  );
-
+  // One page of 20 at a time. A later click can overtake an earlier one, so only the newest answer is shown.
   useEffect(() => {
     if (me?.role !== 'admin') return;
+    const id = (feedRequest.current += 1);
+    const params = new URLSearchParams();
+    if (actor) params.set('actor', actor);
+    if (type) params.set('type', type);
+    if (cursor) params.set('cursor', cursor);
     // Loading the feed is fetching data for this view, not deriving state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadActivity();
-  }, [me?.role, loadActivity, reload]);
+    setActivityLoading(true);
+    fetch(`/api/team/activity?${params.toString()}`)
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (id !== feedRequest.current) return;
+        if (data) {
+          setActivity(data.activity ?? []);
+          setMore(!!data.more);
+          setNext(data.next ?? null);
+        }
+        setActivityLoading(false);
+        if (scrollAfterLoad.current) {
+          scrollAfterLoad.current = false;
+          activityTop.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      })
+      .catch(() => {
+        if (id === feedRequest.current) setActivityLoading(false);
+      });
+  }, [me?.role, actor, type, cursor, reload]);
+
+  const firstPage = () => setPager({ cursors: [null], page: 0 });
+  const pickActor = (email: string) => {
+    setActor(email);
+    firstPage();
+  };
+  const pickType = (value: string) => {
+    setType(value);
+    firstPage();
+  };
+  const olderPage = () => {
+    if (!next) return;
+    scrollAfterLoad.current = true;
+    setPager(({ cursors, page }) => ({ cursors: [...cursors.slice(0, page + 1), next], page: page + 1 }));
+  };
+  const newerPage = () => {
+    scrollAfterLoad.current = true;
+    setPager(({ cursors, page }) => ({ cursors, page: Math.max(0, page - 1) }));
+  };
 
   const sendInvite = async () => {
     const email = invite.trim().toLowerCase();
@@ -330,7 +366,7 @@ export default function TeamSettingsPage() {
                       {user.email !== me?.email && (
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => void setActor(user.email)}
+                          onClick={() => pickActor(user.email)}
                           title="Show only this person's activity"
                         >
                           Activity
@@ -391,10 +427,11 @@ export default function TeamSettingsPage() {
               </table>
             </SettingsCard>
 
-            <SettingsCard title="Activity" subtitle="Every change to links, UTMs, invoices, settings and the team, newest first.">
+            <SettingsCard title="Activity" subtitle="Every change to links, UTMs, invoices, settings and the team, newest first, 20 at a time.">
+              <div ref={activityTop} className="activity-top" />
               <div className="team-filters">
                 <span className="setting-select" style={{ maxWidth: '220px' }}>
-                  <select value={actor} onChange={(e) => setActor(e.target.value)} aria-label="Person">
+                  <select value={actor} onChange={(e) => pickActor(e.target.value)} aria-label="Person">
                     <option value="">Everyone</option>
                     {users.map((u) => (
                       <option key={u.email} value={u.email}>
@@ -405,7 +442,7 @@ export default function TeamSettingsPage() {
                   <span className="chev">▾</span>
                 </span>
                 <span className="setting-select" style={{ maxWidth: '180px' }}>
-                  <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+                  <select value={type} onChange={(e) => pickType(e.target.value)} aria-label="Type">
                     {TYPES.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.label}
@@ -415,8 +452,8 @@ export default function TeamSettingsPage() {
                   <span className="chev">▾</span>
                 </span>
               </div>
-              <div className="activity-list">
-                {activity.length === 0 && <div className="row-help" style={{ padding: '12px 0' }}>Nothing yet.</div>}
+              <div className={`activity-list${activityLoading ? ' is-loading' : ''}`} aria-busy={activityLoading}>
+                {!activityLoading && activity.length === 0 && <div className="row-help" style={{ padding: '12px 0' }}>Nothing yet.</div>}
                 {activity.map((row) => {
                   const href = hrefFor(row);
                   const word = TYPE_WORD[row.entity_type] ?? row.entity_type;
@@ -437,10 +474,18 @@ export default function TeamSettingsPage() {
                   );
                 })}
               </div>
-              {more && (
-                <button className="btn btn-outline btn-sm" style={{ marginTop: '10px' }} onClick={() => void loadActivity(activity[activity.length - 1]?.at)}>
-                  Load older
-                </button>
+              {(pager.page > 0 || more) && (
+                <nav className="activity-pager" aria-label="Activity pages">
+                  <button className="btn btn-outline btn-sm" disabled={pager.page === 0 || activityLoading} onClick={newerPage}>
+                    ‹ Newer
+                  </button>
+                  <span className="activity-page" aria-live="polite">
+                    Page {pager.page + 1}
+                  </span>
+                  <button className="btn btn-outline btn-sm" disabled={!more || activityLoading} onClick={olderPage}>
+                    Older ›
+                  </button>
+                </nav>
               )}
             </SettingsCard>
           </>

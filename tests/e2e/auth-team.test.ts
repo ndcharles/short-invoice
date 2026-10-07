@@ -463,3 +463,93 @@ run('Settings → Team (admin)', () => {
     }
   });
 });
+
+run('Activity pages and the header link', () => {
+  it('clicking the workspace name in the header goes to Links for everyone, not Settings', async () => {
+    const member = await addMember('header');
+    for (const [who, pages] of [
+      ['an owner', { user: undefined, from: ['/settings/team', '/invoices', '/utms'] }],
+      ['a member', { user: member.email, from: ['/invoices', '/utms'] }],
+    ] as const) {
+      const session = await openSession(browser, pages.user === undefined ? {} : { user: pages.user });
+      try {
+        for (const from of pages.from) {
+          await session.page.goto(from);
+          await session.page.locator('.sidebar a.workspace').click();
+          await session.page.waitForURL((url) => url.pathname === '/links');
+          expect(session.page.url(), `${who} from ${from}`).toMatch(/\/links$/);
+        }
+        expect(session.errors).toEqual([]);
+      } finally {
+        await session.context.close();
+      }
+    }
+  });
+
+  it('shows 20 changes at a time with Newer and Older, and goes back to page 1 when the filter changes', async () => {
+    const who = await addMember('pager');
+    for (let i = 0; i < 45; i += 1) {
+      const res = await api('POST', '/api/links', { dest: `https://example.com/p${i}`, alias: unique('pg') }, { 'x-dev-user': who.email });
+      expect(res.status).toBe(201);
+    }
+    const quiet = await addMember('quiet');
+
+    const admin = await openSession(browser);
+    try {
+      const p = admin.page;
+      const rows = p.locator('.activity-row');
+      const pager = p.getByRole('navigation', { name: 'Activity pages' });
+      const firstRow = async () => (await rows.first().innerText()).trim();
+      await p.goto('/settings/team');
+      await p.locator('select[aria-label="Person"]').selectOption(who.email);
+
+      await expect(rows).toHaveCount(20);
+      await expect(pager).toContainText('Page 1');
+      await expect(pager.getByRole('button', { name: /Newer/ })).toBeDisabled();
+      await expect(pager.getByRole('button', { name: /Older/ })).toBeEnabled();
+      const page1 = await firstRow();
+
+      await pager.getByRole('button', { name: /Older/ }).click();
+      await expect(pager).toContainText('Page 2');
+      await expect(rows).toHaveCount(20);
+      await expect(pager.getByRole('button', { name: /Newer/ })).toBeEnabled();
+      await expect.poll(firstRow).not.toBe(page1);
+
+      await pager.getByRole('button', { name: /Older/ }).click();
+      await expect(pager).toContainText('Page 3');
+      await expect(rows).toHaveCount(5);
+      await expect(pager.getByRole('button', { name: /Older/ })).toBeDisabled();
+
+      await pager.getByRole('button', { name: /Newer/ }).click();
+      await expect(pager).toContainText('Page 2');
+      await expect(rows).toHaveCount(20);
+      await pager.getByRole('button', { name: /Newer/ }).click();
+      await expect(pager).toContainText('Page 1');
+      await expect.poll(firstRow).toBe(page1);
+
+      // Two pages in, then change the filter: back to the first page of the new results.
+      await pager.getByRole('button', { name: /Older/ }).click();
+      await expect(pager).toContainText('Page 2');
+      await p.locator('select[aria-label="Type"]').selectOption('link');
+      await expect(pager).toContainText('Page 1');
+      await expect(rows).toHaveCount(20);
+
+      // Someone with only a few changes needs no pager at all.
+      await p.locator('select[aria-label="Person"]').selectOption(quiet.email);
+      await expect(rows).toHaveCount(0);
+      await expect(pager).toHaveCount(0);
+      await expect(p.getByText('Nothing yet.')).toBeVisible();
+
+      // The per-person Activity button jumps to that person's first page.
+      await p.locator('select[aria-label="Type"]').selectOption('');
+      await p.locator('select[aria-label="Person"]').selectOption('');
+      await p.locator('.team-row', { hasText: who.email }).getByRole('button', { name: 'Activity' }).click();
+      await expect(p.locator('select[aria-label="Person"]')).toHaveValue(who.email);
+      await expect(pager).toContainText('Page 1');
+      await expect(rows).toHaveCount(20);
+      expect(admin.errors).toEqual([]);
+    } finally {
+      await admin.context.close();
+    }
+  });
+});

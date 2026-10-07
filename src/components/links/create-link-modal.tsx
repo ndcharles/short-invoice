@@ -265,7 +265,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
               </label>
               <input
                 className="input"
-                placeholder="https://dub.co/help/article/dub-links"
+                placeholder="https://4th-entity.com/about-us"
                 value={dest}
                 onChange={(e) => setDest(e.target.value)}
                 autoFocus

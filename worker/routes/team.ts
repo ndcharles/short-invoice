@@ -153,15 +153,26 @@ team.patch('/users/:email', requireOwner, async (c) => {
   return c.json({ email, role });
 });
 
-const ACTIVITY_PAGE = 50;
+const ACTIVITY_PAGE = 20;
+/** `<at>:<rowid>` of the last row on a page; the next page starts after it. */
+const CURSOR = /^(\d{1,16}):(\d{1,16})$/;
 
-/** Who did what, newest first. Filter by `actor` and/or `type`; page with `before`. */
+/**
+ * Who did what, newest first, 20 at a time. Filter by `actor` and/or `type`.
+ * Pages follow a cursor (not OFFSET), so page 500 costs the same as page 1: the
+ * database seeks straight to it in the index and reads only the rows it returns.
+ * There is deliberately no total count, which would read every row.
+ */
 team.get('/activity', requireAdmin, async (c) => {
   const actor = c.req.query('actor')?.trim().toLowerCase() || '';
   const type = c.req.query('type')?.trim() || '';
-  const before = Number(c.req.query('before')) || Date.now() + 1;
-  const params: unknown[] = [before];
-  let sql = 'SELECT * FROM activity WHERE at < ?1';
+  const cursor = c.req.query('cursor');
+  const after = cursor ? CURSOR.exec(cursor) : null;
+  if (cursor && !after) return c.json({ error: 'Invalid cursor' }, 400);
+
+  // (at, rowid) is the index order, so ties on the same millisecond never skip or repeat a row.
+  const params: unknown[] = [after ? Number(after[1]) : Number.MAX_SAFE_INTEGER, after ? Number(after[2]) : Number.MAX_SAFE_INTEGER];
+  let sql = 'SELECT rowid AS seq, * FROM activity WHERE (at, rowid) < (?1, ?2)';
   if (actor) {
     params.push(actor);
     sql += ` AND actor = ?${params.length}`;
@@ -170,9 +181,21 @@ team.get('/activity', requireAdmin, async (c) => {
     params.push(type);
     sql += ` AND entity_type = ?${params.length}`;
   }
-  sql += ` ORDER BY at DESC LIMIT ${ACTIVITY_PAGE}`;
-  const { results } = await c.env.DB.prepare(sql).bind(...params).all();
-  return c.json({ activity: results, more: results.length === ACTIVITY_PAGE });
+  // One extra row tells us whether another page exists.
+  sql += ` ORDER BY at DESC, rowid DESC LIMIT ${ACTIVITY_PAGE + 1}`;
+  const { results } = await c.env.DB.prepare(sql).bind(...params).all<{ seq: number; at: number }>();
+  const page = results.slice(0, ACTIVITY_PAGE);
+  const last = page[page.length - 1];
+  const more = results.length > ACTIVITY_PAGE;
+  return c.json({
+    activity: page.map((row) => {
+      const { seq, ...rest } = row;
+      void seq; // the cursor carries it; the browser does not need it
+      return rest;
+    }),
+    more,
+    next: more && last ? `${last.at}:${last.seq}` : null,
+  });
 });
 
 export default team;

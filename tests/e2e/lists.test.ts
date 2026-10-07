@@ -192,7 +192,7 @@ run('Links page', () => {
     await expect(dialog(page).getByText('Please provide a destination URL')).toBeVisible();
 
     const alias = unique('new');
-    await dialog(page).getByPlaceholder('https://dub.co/help/article/dub-links').fill('https://example.com/from-e2e');
+    await dialog(page).getByPlaceholder('https://4th-entity.com/about-us').fill('https://example.com/from-e2e');
     await dialog(page).getByTitle('Edit short link').click();
     await dialog(page).getByPlaceholder('Nk6EwSL').fill(alias);
     await dialog(page).getByRole('button', { name: /Create link/ }).click();

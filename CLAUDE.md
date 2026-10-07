@@ -221,6 +221,15 @@ Settings UI. **The repo is public; never commit them.**
   (`worker/lib/collections.ts`) rejects an unknown folder/tag from a member on
   link/UTM/invoice create and update (a value the record already carries is
   accepted). Link editors hide "Create tag" for members.
+- The Team → Activity feed shows 20 rows a page (`GET /api/team/activity`),
+  paged by a `(at, rowid)` cursor with Newer/Older buttons. Keep it that way:
+  no OFFSET and no total count (both read every row, so cost would grow with the
+  table); one extra row is fetched to know whether another page exists. The
+  person filter and the unfiltered feed seek straight into an index; the type
+  filter walks `idx_activity_at` and only gets slow for a rare type once the
+  table is very large (add `(entity_type, at)` then; every index costs a write).
+  Rows are about 100 bytes, so even 200 changes a day is ~7 MB a year against
+  D1's 5 GB; there is no pruning. If you ever add one, make it a decision.
 - Every write records `created_by`/`updated_by` (emails) and an `activity` row
   in the same batch (`worker/lib/activity.ts`). Invoice payments carry `by`,
   set on the server; emails carry `sent_by`.
