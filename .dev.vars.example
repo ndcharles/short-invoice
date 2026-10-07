@@ -2,6 +2,9 @@
 # Any long random string, e.g. `openssl rand -base64 32`.
 LINK_COOKIE_SECRET=dev-only-change-me
 
-# Optional: who you are locally (default: a stand-in admin "dev@localhost").
-# Set it to a non-admin email to see the app as a member.
-# DEV_USER_EMAIL=you@yourcompany.com
+
+# Secret mixed into account password hashes. Production: `npx wrangler secret put AUTH_PEPPER`.
+AUTH_PEPPER=dev-only-change-me
+# Admins (comma-separated). Production: `npx wrangler secret put ADMIN_EMAILS`.
+ADMIN_EMAILS=you@example.com
+# First local sign-in: `npm run setup-code -- you@example.com --local` prints a setup code.

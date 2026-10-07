@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api, raw, uniqueAlias } from './helpers';
+import { api, raw, uniqueAlias, TEST_ADMIN } from './helpers';
 
 const create = (body: Record<string, unknown>) => api('POST', '/api/links', body);
 
@@ -188,7 +188,7 @@ describe('settings validation', () => {
 
 describe('export', () => {
   it('exports everything without password hashes or the verify token', async () => {
-    const res = await raw('/api/export');
+    const res = await raw('/api/export', { headers: { 'x-dev-user': TEST_ADMIN } });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(Array.isArray(data.links)).toBe(true);

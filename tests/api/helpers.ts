@@ -2,6 +2,9 @@ import { inject } from 'vitest';
 
 export const baseUrl = () => inject('baseUrl');
 
+/** In ADMIN_EMAILS for the test Worker (tests/setup/worker.ts). */
+export const TEST_ADMIN = 'boss@test.example';
+
 export interface ApiResponse<T = Record<string, unknown>> {
   status: number;
   headers: Headers;
@@ -18,10 +21,13 @@ export async function api<T = Record<string, any>>(
 ): Promise<ApiResponse<T>> {
   // Write endpoints require a JSON body (CSRF guard), so actions send {}.
   if (body === undefined && (method === 'POST' || method === 'PATCH')) body = {};
+  // Acts as the test admin unless a test names someone else (or sends '' to be signed out).
+  const who = { 'x-dev-user': TEST_ADMIN, ...headers };
+  if (!who['x-dev-user']) delete (who as Record<string, string>)['x-dev-user'];
   const res = await fetch(`${baseUrl()}${path}`, {
     method,
     redirect: 'manual',
-    headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
+    headers: body === undefined ? who : { 'content-type': 'application/json', ...who },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();

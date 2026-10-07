@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSettings } from '@/lib/collections';
-import { useMe } from '@/lib/team';
+import { signOut, useMe } from '@/lib/team';
 import { XIcon } from '@/components/icons';
 
 function initialsOf(name: string, fallback: string): string {
@@ -296,10 +296,15 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
           {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
         </div>
         <div className="modal-footer">
-          {mode === 'access' ? (
-            <a className="btn btn-ghost" href="/cdn-cgi/access/logout">
-              Sign out
-            </a>
+          {mode === 'session' ? (
+            <span style={{ display: 'flex', gap: '6px' }}>
+              <button className="btn btn-outline" onClick={() => void signOut()}>
+                Sign out
+              </button>
+              <button className="btn btn-ghost" title="Signs you out on every phone and computer" onClick={() => void signOut(true)}>
+                Sign out everywhere
+              </button>
+            </span>
           ) : (
             <span />
           )}

@@ -11,8 +11,8 @@ export interface Me {
 
 export interface MeState {
   me: Me | null;
-  /** 'access' in production, 'local' in dev, 'unprotected' when deployed without Access. */
-  mode: 'access' | 'local' | 'unprotected' | null;
+  /** 'session' when signed in; 'dev' when local development skips sign-in. */
+  mode: 'session' | 'dev' | null;
   /** Set when the API refused this person (signed out, not invited, removed). */
   denied: { code: string; error: string } | null;
 }
@@ -23,8 +23,10 @@ export interface TeamUser {
   display_name: string;
   role: 'admin' | 'member';
   status?: 'invited' | 'active' | 'removed';
-  source?: 'admin' | 'domain' | 'invite';
+  source?: 'admin' | 'invite';
   invited_by?: string | null;
+  devices?: number;
+  code_state?: 'valid' | 'expired' | 'used_up' | null;
   created_at?: number;
   last_seen_at?: number | null;
 }
@@ -38,6 +40,11 @@ function loadMe(): Promise<MeState> {
   meRequest ??= fetch('/api/team/me')
     .then(async (res) => {
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        // Not signed in (or signed out elsewhere): go to the sign-in page and come back after.
+        const next = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.replace(`/login?next=${next}`);
+      }
       if (!res.ok) return { me: null, mode: null, denied: { code: data.code ?? 'error', error: data.error ?? 'Could not sign you in' } };
       return { me: data.user as Me, mode: data.auth?.mode ?? null, denied: null };
     })
@@ -143,4 +150,14 @@ export function relativeTime(ms: number | null | undefined, now = Date.now()): s
   if (diff < day) return `${Math.floor(diff / hour)} h ago`;
   if (diff < 30 * day) return `${Math.floor(diff / day)} d ago`;
   return new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Ends the session on this device (or all devices) and goes to the sign-in page. */
+export async function signOut(everywhere = false) {
+  await fetch(everywhere ? '/api/auth/logout-all' : '/api/auth/logout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }).catch(() => undefined);
+  window.location.replace('/login');
 }

@@ -3,10 +3,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
-import { SaveBar, SettingsCard, SettingsLayout, SettingsRow } from '@/components/settings/settings-ui';
+import { SettingsCard, SettingsLayout } from '@/components/settings/settings-ui';
+import { XIcon } from '@/components/icons';
 import { Plus } from '@/components/icons';
-import { useSettingsForm } from '@/lib/settings-form';
-import { parseList, serializeList } from '@/lib/settings-json';
 import { refreshTeam, relativeTime, useMe, type TeamUser } from '@/lib/team';
 import { useConfirm } from '@/components/invoices/choice-modal';
 
@@ -68,20 +67,18 @@ const initialsFrom = (name: string) => {
 
 export default function TeamSettingsPage() {
   const { me, mode } = useMe();
-  const { draft, set, dirty, saving, error, savedAt, save, discard } = useSettingsForm();
   const [ask, confirmModal] = useConfirm();
   const [users, setUsers] = useState<TeamUser[]>([]);
   const [admins, setAdmins] = useState<string[]>([]);
   const [invite, setInvite] = useState('');
   const [inviteError, setInviteError] = useState<string | null>(null);
-  const [newDomain, setNewDomain] = useState('');
+  const [issued, setIssued] = useState<{ email: string; code: string; expires_at: number } | null>(null);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [more, setMore] = useState(false);
   const [actor, setActor] = useState('');
   const [type, setType] = useState('');
   const [reload, setReload] = useState(0);
 
-  const domains = parseList<string>(draft?.team_domains, []);
   const nameOf = useCallback(
     (email: string) => users.find((u) => u.email === email)?.display_name ?? email.split('@')[0],
     [users]
@@ -143,7 +140,19 @@ export default function TeamSettingsPage() {
       return;
     }
     setInvite('');
+    setIssued(data);
     refreshTeam();
+    setReload((n) => n + 1);
+  };
+
+  const newCode = async (user: TeamUser) => {
+    const res = await fetch(`/api/team/users/${encodeURIComponent(user.email)}/code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const data = await res.json();
+    if (res.ok) setIssued(data);
     setReload((n) => n + 1);
   };
 
@@ -160,89 +169,48 @@ export default function TeamSettingsPage() {
     setReload((n) => n + 1);
   };
 
-  const restore = async (user: TeamUser) => {
-    await fetch('/api/team/invites', {
+  const reinvite = async (user: TeamUser) => {
+    const res = await fetch('/api/team/invites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: user.email }),
     });
+    const data = await res.json();
+    if (res.ok) setIssued(data);
     refreshTeam();
     setReload((n) => n + 1);
   };
 
-  const addDomain = () => {
-    const domain = newDomain.trim().toLowerCase().replace(/^@/, '');
-    if (!domain) return;
-    if (!domains.includes(domain)) set('team_domains', serializeList([...domains, domain]));
-    setNewDomain('');
-  };
-
   const howTheyGotIn = (user: TeamUser) => {
     if (admins.includes(user.email) || user.source === 'admin') return 'Admin';
-    if (user.source === 'domain') return `@${user.email.split('@')[1]} domain`;
     return user.invited_by ? `Invited by ${nameOf(user.invited_by)}` : 'Invited';
   };
 
   const statusText = (user: TeamUser) => {
     if (user.status === 'removed') return 'Removed';
-    if (user.status === 'invited') return 'Invited · not signed in yet';
-    return user.last_seen_at ? `Active · seen ${relativeTime(user.last_seen_at)}` : 'Active';
+    if (user.status === 'invited') {
+      if (user.code_state === 'used_up') return 'Invited · code used up, issue a new one';
+      return user.code_state === 'expired' ? 'Invited · code expired, issue a new one' : 'Invited · not signed in yet';
+    }
+    const devices = user.devices ? ` · ${user.devices} device${user.devices === 1 ? '' : 's'}` : '';
+    return `${user.last_seen_at ? `Active · seen ${relativeTime(user.last_seen_at)}` : 'Active'}${devices}`;
   };
 
   return (
     <Shell>
       <SettingsLayout title="Team" subtitle="Who can use this workspace, and who did what.">
-        {draft && (
+        {me?.role === 'admin' && (
           <>
-            {mode !== 'access' && mode !== null && (
+            {mode === 'dev' && (
               <div className="send-setup-note" style={{ marginBottom: '16px' }}>
-                {mode === 'local'
-                  ? 'Local development: you are signed in as a stand-in admin. In production, people sign in through Cloudflare Access.'
-                  : 'Cloudflare Access is not switched on yet, so anyone with the link can open this app. Turn it on before inviting people.'}
-              </div>
-            )}
-
-            {error && (
-              <div className="settings-card">
-                <div className="settings-card-body" style={{ color: 'var(--destructive)' }}>{error}</div>
+                Local development: sign-in is skipped and you act as a stand-in admin.
               </div>
             )}
 
             <SettingsCard
-              title="Who can sign in"
-              subtitle="People sign in with their email (a one-time code from Cloudflare Access). Anyone on an allowed domain gets in as a member; everyone else needs an invite."
+              title="People"
+              subtitle="Only people added here can sign in. Adding someone gives you a one-time setup code to send them; they use it once to choose their password. Members create and edit links, UTMs and invoices; only admins change settings or delete."
             >
-              <SettingsRow label="Allowed domains" help="E.g. 4th-entity.com. Public email services like gmail.com cannot be added; invite those people one by one.">
-                <div className="setting-toggle-list">
-                  {domains.map((domain) => (
-                    <button
-                      key={domain}
-                      className="setting-chip on"
-                      title="Remove this domain"
-                      onClick={() => set('team_domains', serializeList(domains.filter((d) => d !== domain)))}
-                    >
-                      <span>@{domain}</span>
-                      <span className="x">×</span>
-                    </button>
-                  ))}
-                  <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                    <input
-                      className="input"
-                      style={{ width: '180px' }}
-                      placeholder="4th-entity.com"
-                      value={newDomain}
-                      onChange={(e) => setNewDomain(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addDomain()}
-                    />
-                    <button className="btn btn-outline btn-sm" onClick={addDomain} disabled={!newDomain.trim()}>
-                      Add
-                    </button>
-                  </span>
-                </div>
-              </SettingsRow>
-            </SettingsCard>
-
-            <SettingsCard title="People" subtitle="Admins manage settings and the team. Members create and edit links, UTMs and invoices, but cannot change settings or delete records.">
               <div className="team-invite">
                 <input
                   className="input"
@@ -255,7 +223,7 @@ export default function TeamSettingsPage() {
                 />
                 <button className="btn btn-primary btn-sm" onClick={() => void sendInvite()}>
                   <Plus />
-                  <span>Invite member</span>
+                  <span>Add member</span>
                 </button>
                 {inviteError && <span style={{ color: 'var(--destructive)', fontSize: '12px' }}>{inviteError}</span>}
               </div>
@@ -284,10 +252,15 @@ export default function TeamSettingsPage() {
                           Activity
                         </button>
                       )}
+                      {user.status === 'invited' && user.role !== 'admin' && (
+                        <button className="btn btn-outline btn-sm" onClick={() => void newCode(user)}>
+                          New code
+                        </button>
+                      )}
                       {user.role !== 'admin' &&
                         (user.status === 'removed' ? (
-                          <button className="btn btn-outline btn-sm" onClick={() => void restore(user)}>
-                            Let back in
+                          <button className="btn btn-outline btn-sm" onClick={() => void reinvite(user)}>
+                            Re-invite
                           </button>
                         ) : (
                           <button className="btn btn-ghost btn-sm" style={{ color: 'var(--destructive)' }} onClick={() => void remove(user)}>
@@ -356,13 +329,46 @@ export default function TeamSettingsPage() {
         )}
       </SettingsLayout>
       {confirmModal}
-      <SaveBar
-        visible={dirty}
-        saving={saving}
-        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
-        onDiscard={discard}
-        onSave={save}
-      />
+      {issued && <CodeModal issued={issued} onClose={() => setIssued(null)} />}
     </Shell>
+  );
+}
+
+/** Shows a setup code once, to copy and send to the person yourself. */
+function CodeModal({ issued, onClose }: { issued: { email: string; code: string; expires_at: number }; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const message = `You have been added to our workspace.\n\n1. Open ${window.location.origin}/login\n2. Enter ${issued.email}\n3. Enter this setup code: ${issued.code}\n4. Choose your name and a password.\n\nThe code works once and expires on ${new Date(issued.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}.`;
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal choice-modal" role="dialog" aria-label="Setup code">
+        <div className="modal-header">
+          <div className="modal-title">Setup code for {issued.email}</div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <XIcon />
+          </button>
+        </div>
+        <div className="choice-modal-body">
+          <div className="setup-code">{issued.code}</div>
+          <p className="choice-modal-hint">
+            Send this to them yourself (WhatsApp, Slack, in person). It is shown only now, works once, and expires in 7 days. If it gets
+            lost, use <strong>New code</strong>.
+          </p>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" onClick={onClose}>
+            Done
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              void navigator.clipboard.writeText(message);
+              setCopied(true);
+            }}
+          >
+            {copied ? 'Copied' : 'Copy message with code'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

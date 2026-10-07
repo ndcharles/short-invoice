@@ -13,6 +13,7 @@
     "db:migrate": "wrangler d1 migrations apply short-invoice --remote",
     "db:seed:local": "wrangler d1 execute short-invoice --local --file=seed/demo.sql && wrangler d1 execute short-invoice --local --file=seed/demo-invoices.sql",
     "tail": "wrangler tail",
+    "setup-code": "node scripts/setup-code.mjs",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:api": "vitest run --project api"
