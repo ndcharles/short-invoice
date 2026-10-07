@@ -9,6 +9,7 @@ import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
 import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
 import { cloakPage } from '../lib/cloak';
+import { clientIp, withinLimit } from '../lib/auth';
 
 /**
  * Which domain an alias is looked up on:
@@ -100,12 +101,24 @@ function logClick(c: RedirectContext, linkId: string) {
   );
 }
 
-function passwordPage(action: string, wrong: boolean) {
+/**
+ * The password page is the one generated page with a form, and a correct password answers with a
+ * redirect to the destination, which can be any website. Chrome applies `form-action` to that
+ * redirect too, so `'self'` here made every right password end in a blocked request (blank page).
+ * Everything else about the page stays locked down.
+ */
+const PASSWORD_PAGE_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self' http: https:; base-uri 'none'; frame-ancestors 'none'";
+
+type PasswordState = 'ask' | 'wrong' | 'limited';
+
+function passwordPage(action: string, state: PasswordState) {
   return htmlPage('Password required', `
     <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
     <h1>This link is password protected</h1>
     <p>Enter the password to continue.</p>
-    ${wrong ? '<p class="error">Incorrect password. Try again.</p>' : ''}
+    ${state === 'wrong' ? '<p class="error">Incorrect password. Try again.</p>' : ''}
+    ${state === 'limited' ? '<p class="error">Too many attempts. Wait a few minutes, then try again.</p>' : ''}
     <form method="POST" action="${escapeHtml(action)}">
       <div class="field">
         <label for="pw">Password</label>
@@ -114,6 +127,11 @@ function passwordPage(action: string, wrong: boolean) {
       <button type="submit">Unlock link</button>
     </form>`);
 }
+
+/** Wrong guesses allowed per visitor (IP) per window, and per link per hour across everyone. */
+const PASSWORDS_PER_VISITOR = 10;
+const PASSWORD_WINDOW_MS = 10 * 60_000;
+const PASSWORDS_PER_LINK_HOUR = 300;
 
 const LINK_COLUMNS = `id, domain, dest, cloak, password_hash, expires_at, expires_url,
   utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral`;
@@ -180,9 +198,21 @@ export async function serveLink(
     const unlocked =
       !!secret && (await verifyUnlock(secret, record.id, record.password_hash, getCookie(c, cookieName)));
     if (!unlocked) {
-      if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
-        return c.html(passwordPage(c.req.path, supplied !== null), 401, { 'Cache-Control': 'no-store' });
-      }
+      const page = (state: PasswordState, status: 401 | 429) =>
+        c.html(passwordPage(c.req.path, state), status, {
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': PASSWORD_PAGE_CSP,
+          ...(status === 429 ? { 'Retry-After': String(PASSWORD_WINDOW_MS / 1000) } : {}),
+        });
+      if (supplied === null) return page('ask', 401);
+      // Every submitted password is counted, so guessing is slow per visitor and per link.
+      // Visitors who already hold the unlock cookie never reach this point.
+      const ip = clientIp(c);
+      const allowed =
+        (await withinLimit(c.env.DB, `link-pw:${record.id}:${ip}`, PASSWORDS_PER_VISITOR, PASSWORD_WINDOW_MS)) &&
+        (await withinLimit(c.env.DB, `link-pw:${record.id}`, PASSWORDS_PER_LINK_HOUR, 60 * 60_000));
+      if (!allowed) return page('limited', 429);
+      if (!supplied || !(await verifyPassword(supplied, record.password_hash))) return page('wrong', 401);
       if (secret) {
         setCookie(c, cookieName, await signUnlock(secret, record.id, record.password_hash), {
           path: c.req.path,

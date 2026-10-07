@@ -29,6 +29,8 @@ import { parseList } from '@/lib/settings-json';
 import type { UtmPreset } from '@/lib/utm-builder';
 import { OG_DESC_MAX, OG_TITLE_MAX, OgContent } from '@/lib/og';
 import { Portal } from '@/components/portal';
+import { formatDateTime, parseNaturalDate, timeZoneName } from '@/lib/links/expiry';
+import { parseHttpUrl } from '@/lib/validate';
 
 /* -------------------------------------------------------------------------- */
 /* Popup shell                                                                */
@@ -362,61 +364,6 @@ export function PasswordPopup({
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function formatDateTime(ms: number): string {
-  const d = new Date(ms);
-  const hours = d.getHours();
-  const h12 = hours % 12 === 0 ? 12 : hours % 12;
-  const minutes = d.getMinutes().toString().padStart(2, '0');
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${h12}:${minutes} ${hours < 12 ? 'AM' : 'PM'}`;
-}
-
-/** Understands "in 2 hours", "tomorrow at 5pm", "friday 9am", ISO and datetime-local. */
-export function parseNaturalDate(input: string): number | null {
-  const text = input.trim().toLowerCase();
-  if (!text) return null;
-
-  const relative = text.match(/^in\s+(\d+)\s*(minute|min|hour|hr|day|week)s?$/);
-  if (relative) {
-    const amount = Number(relative[1]);
-    const unit = relative[2];
-    const mult =
-      unit.startsWith('min') ? 60_000 : unit.startsWith('hour') || unit === 'hr' ? 3_600_000 : unit === 'day' ? 86_400_000 : 604_800_000;
-    return Date.now() + amount * mult;
-  }
-
-  const base = new Date();
-  let dayOffset: number | null = null;
-  const now = new Date();
-
-  if (/^tomorrow\b/.test(text)) dayOffset = 1;
-  else if (/^today\b/.test(text)) dayOffset = 0;
-  else if (/^next week\b/.test(text)) {
-    const d = new Date(now);
-    d.setDate(d.getDate() + 7);
-    return d.getTime();
-  }
-
-  if (dayOffset !== null) {
-    const timeMatch = text.match(/at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
-    const d = new Date(base);
-    d.setDate(d.getDate() + dayOffset);
-    if (timeMatch) {
-      let hours = Number(timeMatch[1]);
-      const minutes = timeMatch[2] ? Number(timeMatch[2]) : 0;
-      const meridiem = timeMatch[3];
-      if (meridiem === 'pm' && hours < 12) hours += 12;
-      if (meridiem === 'am' && hours === 12) hours = 0;
-      d.setHours(hours, minutes, 0, 0);
-    } else {
-      d.setHours(23, 59, 0, 0);
-    }
-    return d.getTime();
-  }
-
-  const parsed = Date.parse(input);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MINUTES = Array.from({ length: 60 }, (_, i) => i);
 
@@ -638,25 +585,55 @@ export function ExpirationPopup({
   const [expiresUrl, setExpiresUrl] = useState(initialExpiresUrl ?? '');
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [urlError, setUrlError] = useState<string | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const zone = timeZoneName().replace(/_/g, ' ');
 
   const dirty = expiresAt !== initialExpiresAt || (expiresUrl || null) !== (initialExpiresUrl || null);
+  // A date that has already gone by would switch the link off the moment it is saved.
+  // (Keeping the date a link already has, to edit only its fallback address, is fine.)
+  const [openedAt] = useState(() => Date.now());
+  const inPast = expiresAt !== null && expiresAt !== initialExpiresAt && expiresAt <= openedAt;
 
-  const commitDateText = useCallback((text: string) => {
-    if (!text.trim()) {
-      setExpiresAt(null);
-      setError(null);
+  // Typing: keep the value up to date quietly. Only when they leave the field is unreadable text worth a complaint.
+  const commitDateText = useCallback(
+    (text: string, complain: boolean) => {
+      if (!text.trim()) {
+        setExpiresAt(null);
+        setError(null);
+        return;
+      }
+      // The field shows the date without seconds. Clicking in and out of it must not re-read that text
+      // and nudge the exact time that is already set.
+      if (expiresAt !== null && text.trim() === formatDateTime(expiresAt)) {
+        setError(null);
+        return;
+      }
+      const parsed = parseNaturalDate(text);
+      setExpiresAt(parsed);
+      setError(parsed === null && complain ? 'Could not read that date. Try "tomorrow at 5pm", "friday 9am", "in 2 hours" or "Oct 10, 2026, 5:00 PM".' : null);
+    },
+    [expiresAt]
+  );
+
+  const save = () => {
+    // The clock may have moved on since the popup opened.
+    if (expiresAt !== null && expiresAt !== initialExpiresAt && expiresAt <= Date.now()) {
+      setError('That time has already passed. Pick a time in the future.');
       return;
     }
-    const parsed = parseNaturalDate(text);
-    if (parsed === null) {
-      setError('Could not read that date. Try "tomorrow at 5pm" or "in 2 hours".');
-      setExpiresAt(null);
-      return;
+    const typed = expiresUrl.trim();
+    let fallback: string | null = null;
+    if (typed) {
+      const parsed = parseHttpUrl(typed, 'Expiration URL');
+      if (!parsed.ok) {
+        setUrlError(parsed.error);
+        return;
+      }
+      fallback = parsed.value;
     }
-    setError(null);
-    setExpiresAt(parsed);
-  }, []);
+    onSave(expiresAt, fallback);
+  };
 
   const toggleCalendar = () => {
     if (!calendarOpen) {
@@ -690,8 +667,8 @@ export function ExpirationPopup({
           </button>
           <button
             className="btn btn-primary"
-            disabled={!dirty || !!error || expiresAt === null}
-            onClick={() => onSave(expiresAt, expiresUrl.trim() || null)}
+            disabled={!dirty || !!error || inPast || expiresAt === null}
+            onClick={save}
           >
             {initialExpiresAt ? 'Save' : 'Add expiration'}
           </button>
@@ -706,9 +683,9 @@ export function ExpirationPopup({
           placeholder='E.g. "tomorrow at 5pm" or "in 2 hours"'
           onChange={(e) => {
             setDateText(e.target.value);
-            commitDateText(e.target.value);
+            commitDateText(e.target.value, false);
           }}
-          onBlur={(e) => commitDateText(e.target.value)}
+          onBlur={(e) => commitDateText(e.target.value, true)}
           autoFocus
         />
         <button
@@ -740,7 +717,13 @@ export function ExpirationPopup({
         />
       )}
 
-      {expiresAt !== null && !error && <div className="popup-hint">Expires on {formatDateTime(expiresAt)}.</div>}
+      {expiresAt !== null && !error && !inPast && (
+        <div className="popup-hint">
+          Expires on {formatDateTime(expiresAt)}
+          {zone ? ` (${zone} time)` : ''}.
+        </div>
+      )}
+      {inPast && <div className="popup-hint" style={{ color: 'var(--destructive)' }}>That time has already passed. Pick a time in the future.</div>}
       {error && <div className="popup-hint" style={{ color: 'var(--destructive)' }}>{error}</div>}
 
       <div className="popup-label">
@@ -753,9 +736,22 @@ export function ExpirationPopup({
         className="popup-input"
         value={expiresUrl}
         placeholder="https://example.com"
-        onChange={(e) => setExpiresUrl(e.target.value)}
+        aria-invalid={urlError ? true : undefined}
+        onChange={(e) => {
+          setExpiresUrl(e.target.value);
+          setUrlError(null);
+        }}
+        onBlur={(e) => {
+          const typed = e.target.value.trim();
+          const parsed = typed ? parseHttpUrl(typed, 'Expiration URL') : null;
+          setUrlError(parsed && !parsed.ok ? parsed.error : null);
+        }}
       />
-      <div className="popup-hint">Set a default expiration URL for your domain.</div>
+      {urlError ? (
+        <div className="popup-hint" style={{ color: 'var(--destructive)' }}>{urlError}</div>
+      ) : (
+        <div className="popup-hint">Optional. Visitors go here once the link has expired. Without it, they see an &quot;expired&quot; page.</div>
+      )}
     </Popup>
   );
 }

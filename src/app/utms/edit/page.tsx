@@ -11,6 +11,9 @@ import { UtmForm } from '@/components/utms/utm-form';
 import type { UtmCampaign } from '@/lib/types';
 import { Archive, ChevronDown, ChevronRight, Copy, Cursor, Duplicate, Info, More, Trash } from '@/components/icons';
 import { useCollections, useSettings } from '@/lib/collections';
+import { useShortUrls } from '@/lib/use-short-url';
+import { copyText } from '@/lib/clipboard';
+import { showToast } from '@/components/toast';
 import {
   buildCampaignUrl,
   formatOptionsFromSettings,
@@ -37,6 +40,7 @@ function EditUtmPageInner() {
   const id = searchParams.get('id') ?? '';
 
   const settings = useSettings();
+  const { urlFor } = useShortUrls(settings);
   const format = useMemo(() => formatOptionsFromSettings(settings), [settings]);
   const { items: folders } = useCollections('folders');
 
@@ -103,15 +107,21 @@ function EditUtmPageInner() {
       return;
     }
     setShortening(true);
-    try {
-      const res = await fetch('/api/links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dest: url, comments: `UTM campaign: ${fields?.campaign || fields?.campaign_id || url}` }),
-      });
+    const created = fetch('/api/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dest: url, comments: `UTM campaign: ${fields?.campaign || fields?.campaign_id || url}` }),
+    }).then(async (res) => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not create the short link');
-      router.push(`/links/edit?id=${encodeURIComponent(data.link.id)}`);
+      return data.link as { id: string; domain: string; alias: string };
+    });
+    // Copy the new short link as soon as it exists (started inside the click, so Safari allows it).
+    const copied = copyText(created.then((link) => urlFor(link).url));
+    try {
+      const link = await created;
+      showToast((await copied) ? `Short link copied: ${urlFor(link).label}` : `Short link created: ${urlFor(link).label}`, (await copied) ? 'success' : 'info');
+      router.push(`/links/edit?id=${encodeURIComponent(link.id)}`);
     } catch (err) {
       await notify('Could not create the short link', err instanceof Error ? err.message : 'Please try again.');
       setShortening(false);
