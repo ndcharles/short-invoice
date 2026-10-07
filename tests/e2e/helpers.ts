@@ -26,12 +26,13 @@ export interface Session {
 /** A signed-in browser tab. The test Worker accepts `x-dev-user` on localhost to act as someone. */
 export async function openSession(
   browser: Browser,
-  opts: { user?: string | null; width?: number; height?: number; ip?: string } = {}
+  opts: { user?: string | null; width?: number; height?: number; ip?: string; timezoneId?: string } = {}
 ): Promise<Session> {
   const user = opts.user === undefined ? TEST_ADMIN : opts.user;
   const context = await browser.newContext({
     baseURL: baseUrl(),
     viewport: { width: opts.width ?? 1280, height: opts.height ?? 900 },
+    ...(opts.timezoneId ? { timezoneId: opts.timezoneId } : {}),
     // Real sign-in is rate limited per client IP; production always has one, so give each browser its own.
     extraHTTPHeaders: user ? { 'x-dev-user': user } : { 'cf-connecting-ip': opts.ip ?? `198.51.100.${Math.floor(Math.random() * 250) + 1}` },
     acceptDownloads: true,

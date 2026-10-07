@@ -98,6 +98,19 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   `0x7f.1`). Redirects are followed by hand (max 4) and **each hop is
   re-checked**; bodies are read with `readLimited`, never `res.text()`.
   The link-preview endpoint is also limited to 60 requests / 10 min per user.
+- **Public link pages (`worker/routes/redirect.ts`, `worker/lib/cloak.ts`).**
+  - The password page needs `form-action 'self' http: https:` (its own CSP).
+    Chrome applies `form-action` to the redirect that follows a form post, so
+    `'self'` blocks the redirect to the destination and the right password
+    leads nowhere. Pages with no form use `form-action 'none'`. Tested in real
+    Chrome (`tests/e2e/public-links.test.ts`); API tests alone cannot catch this.
+  - Password guesses are counted (`auth_limits` via `withinLimit`): 10 per
+    visitor (IP) per 10 minutes and 300 per link per hour, answered with 429.
+    Visitors holding a valid unlock cookie skip the check. Expiry beats the
+    password prompt, so an expired link never asks for one.
+  - Cloaked links: an https page cannot frame an http page (mixed content, a
+    blank page). On https `cloakPage()` rewrites the frame to https and adds
+    `upgrade-insecure-requests`.
 - **Headers.** `worker/index.ts` adds nosniff, Referrer-Policy, COOP,
   `X-Frame-Options: DENY` and HSTS to every response; `public/_headers` does the
   same for static files. Worker-generated pages (password, cloak, expired) carry
@@ -239,6 +252,16 @@ Settings UI. **The repo is public; never commit them.**
 
 ## UI gotchas
 
+- **Copy on create.** Creating a link or UTM copies its address and shows a toast
+  (`copyText()` in `src/lib/clipboard.ts`, `showToast()` in
+  `src/components/toast.tsx`, `<ToastHost />` is in the Shell). Pass `copyText` a
+  *promise* for the text, started inside the click: Safari refuses clipboard
+  writes made after the click handler has waited on the network.
+- **Expiration dates** are typed or picked in the browser's own timezone and sent
+  as epoch milliseconds; the server never guesses a zone. `src/lib/links/expiry.ts`
+  is strict: unreadable text, numeric dates like 10/11/2026 (day-first or
+  month-first?) and past times are refused instead of guessed.
+
 - basecoat-css pins every `[data-popover]` to the left edge. A dropdown that
   should open to the left of its button needs `data-align="end"` as well as
   `right: 0`, or it runs off the screen.
@@ -303,4 +326,6 @@ RTT, several of them). There is no app-side fix; do not cache redirects.
 
 ## Known gaps (next steps)
 
-- Password-protected links have no attempt limit.
+- Duplicating a link or UTM does not copy anything to the clipboard (only creating does).
+- A cloaked link to a destination that only works over plain `http` cannot be shown
+  from an https short link (browsers block it); nothing can fix that server-side.

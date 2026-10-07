@@ -38,6 +38,8 @@ import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { expirationFromSetting } from '@/lib/links/defaults';
 import { usePopoverDismiss } from '@/lib/popover';
 import { Portal } from '@/components/portal';
+import { copyText } from '@/lib/clipboard';
+import { showToast } from '@/components/toast';
 
 interface CreateLinkModalProps {
   isOpen: boolean;
@@ -181,32 +183,41 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
     setLoading(true);
     setError(null);
 
-    try {
-      const res = await fetch('/api/links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dest,
-          alias: alias.trim(),
-          domain,
-          tag,
-          folder,
-          comments,
-          cloak,
-          password,
-          expires_at: expiresAt,
-          expires_url: expiresUrl,
-          ...utm,
-          custom_preview: customPreview,
-          og_title: ogTitle,
-          og_description: ogDescription,
-          og_image: ogImage,
-        }),
-      });
+    const created = fetch('/api/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dest,
+        alias: alias.trim(),
+        domain,
+        tag,
+        folder,
+        comments,
+        cloak,
+        password,
+        expires_at: expiresAt,
+        expires_url: expiresUrl,
+        ...utm,
+        custom_preview: customPreview,
+        og_title: ogTitle,
+        og_description: ogDescription,
+        og_image: ogImage,
+      }),
+    }).then(async (res) => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create link');
+      return data.link as { domain: string; alias: string };
+    });
+    // Copy the new short link the moment it exists. The copy is started here, inside the click,
+    // with a promise for the address, because Safari refuses clipboard writes made after a wait.
+    const copied = copyText(created.then((link) => urlFor(link).url));
+
+    try {
+      const link = await created;
       onSuccess();
       onClose();
+      const label = urlFor(link).label;
+      showToast((await copied) ? `Short link copied: ${label}` : `Link created: ${label}`, (await copied) ? 'success' : 'info');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {

@@ -32,7 +32,7 @@ const app = new Hono<AppEnv>();
  * own policy from public/_headers, and the cloaked-link page sets its own.
  */
 const GENERATED_PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 app.use('*', async (c, next) => {
   await next();

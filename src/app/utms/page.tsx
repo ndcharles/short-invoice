@@ -19,6 +19,8 @@ import {
   validateUtmFields,
 } from '@/lib/utm-builder';
 import { Portal } from '@/components/portal';
+import { copyText } from '@/lib/clipboard';
+import { showToast } from '@/components/toast';
 
 const PAGE_SIZE = 25;
 const SORTS = [
@@ -128,17 +130,24 @@ export default function UtmsPage() {
     }
     setSaving(true);
     setError(null);
-    try {
-      const res = await fetch('/api/utms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fields),
-      });
+    const created = fetch('/api/utms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    }).then(async (res) => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create campaign');
+      return data;
+    });
+    // Copy the finished campaign address once it is saved (started inside the click, so Safari allows it).
+    const campaignUrl = previewUrl;
+    const copied = copyText(created.then(() => campaignUrl));
+    try {
+      await created;
       setCreateOpen(false);
       setFields(newUtmFields(settings));
       refresh();
+      showToast((await copied) ? 'Campaign URL copied to clipboard' : 'Campaign created', (await copied) ? 'success' : 'info');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create campaign');
     } finally {

@@ -4,6 +4,7 @@ import React from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { useMe } from '@/lib/team';
+import { ToastHost } from '@/components/toast';
 
 interface ShellProps {
   children: React.ReactNode;
@@ -24,6 +25,7 @@ export function Shell({ children }: ShellProps) {
       <main className="main">
         <div className="main-inner">{children}</div>
       </main>
+      <ToastHost />
     </div>
   );
 }
