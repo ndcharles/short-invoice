@@ -170,17 +170,14 @@ export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, 
           <div className="dropdown-item" onClick={() => { closeMenu(); router.push(`/links/edit?id=${encodeURIComponent(link.id)}`); }}>
             <Edit />
             <span>Edit</span>
-            <span className="kbd-hint">E</span>
           </div>
           <div className="dropdown-item" onClick={() => { closeMenu(); onDuplicate(link); }}>
             <Duplicate />
             <span>Duplicate</span>
-            <span className="kbd-hint">D</span>
           </div>
           <div className="dropdown-item" onClick={() => { closeMenu(); onArchiveToggle(link.id, link.archived === 1); }}>
             <Archive />
             <span>{link.archived === 1 ? 'Unarchive' : 'Archive'}</span>
-            <span className="kbd-hint">A</span>
           </div>
           {admin && (
             <>
@@ -188,7 +185,6 @@ export function LinkCard({ link, shortUrl, tagColor, onArchiveToggle, onDelete, 
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(link.id); }}>
             <Trash />
             <span>Delete</span>
-            <span className="kbd-hint">⌫</span>
           </div>
             </>
           )}

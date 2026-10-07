@@ -18,6 +18,7 @@ import { parseHostname } from '@/lib/validate';
 import { formatDate } from '@/lib/dates';
 import { Plus, Refresh, Trash } from '@/components/icons';
 import type { ShortDomain } from '@/lib/short-url';
+import { useConfirm } from '@/components/invoices/choice-modal';
 
 interface DomainRow extends ShortDomain {
   links: number;
@@ -48,6 +49,7 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
   const [message, setMessage] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
   const [appHost, setAppHost] = useState('');
   const settings = useSettings();
+  const [ask, confirmModal] = useConfirm();
 
   useEffect(() => {
     queueMicrotask(() => setAppHost(window.location.host));
@@ -96,6 +98,7 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
   };
 
   return (
+    <>
     <SettingsCard
       title="Domains"
       subtitle="Short-link domains. Until a domain is verified, its links work at this app's /s/ address."
@@ -165,8 +168,14 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
                   title={domain.links ? 'Move or delete its links first' : 'Remove domain'}
                   disabled={busy !== null || domain.links > 0}
                   style={{ color: 'var(--destructive)' }}
-                  onClick={() => {
-                    if (!confirm(`Remove ${domain.name}?`)) return;
+                  onClick={async () => {
+                    const ok = await ask({
+                      title: `Remove ${domain.name}?`,
+                      message: 'Links already on it stay safe (it cannot be removed while any use it). You can add it again later.',
+                      confirmLabel: 'Remove',
+                      destructive: true,
+                    });
+                    if (!ok) return;
                     void run(`remove-${domain.name}`, () => domainsApi(`/${encodeURIComponent(domain.name)}`, 'DELETE'));
                   }}
                 >
@@ -197,6 +206,8 @@ function DomainsCard({ onDefaultChange }: { onDefaultChange: (domain: string) =>
         </div>
       )}
     </SettingsCard>
+    {confirmModal}
+    </>
   );
 }
 
@@ -316,7 +327,7 @@ export default function ShortenerSettingsPage() {
       <SaveBar
         visible={dirty}
         saving={saving}
-        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
+        message={error ?? (savedAt && !dirty ? 'Saved!' : 'You have unsaved changes')}
         onDiscard={discard}
         onSave={save}
       />

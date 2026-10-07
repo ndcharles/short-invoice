@@ -31,11 +31,13 @@ import { hasUtm } from '@/lib/links/utm';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
 import { useCollections, useSettings } from '@/lib/collections';
+import { useMe } from '@/lib/team';
 import { useShortUrls } from '@/lib/use-short-url';
 import { DomainPicker } from '@/components/links/domain-picker';
 import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { expirationFromSetting } from '@/lib/links/defaults';
 import { usePopoverDismiss } from '@/lib/popover';
+import { Portal } from '@/components/portal';
 
 interface CreateLinkModalProps {
   isOpen: boolean;
@@ -71,6 +73,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
 
   const { items: folders } = useCollections('folders');
   const { items: tags, create: createTag } = useCollections('tags');
+  const admin = useMe().me?.role === 'admin';
   const settings = useSettings();
   const { urlFor, domains } = useShortUrls(settings);
   const defaultsApplied = useRef(false);
@@ -212,7 +215,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   };
 
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         // mousedown (not click) so dismissing a stacked popup cannot
@@ -358,7 +361,9 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                     </div>
                   ))}
                   <div className="dropdown-sep" />
-                  {creatingTag ? (
+                  {!admin ? (
+                    <div className="dropdown-note">Only admins can add tags</div>
+                  ) : creatingTag ? (
                     <div className="dropdown-item" style={{ padding: 0 }}>
                       <input
                         className="input"
@@ -392,9 +397,11 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                       <span>＋ Create tag</span>
                     </div>
                   )}
-                  <Link href="/settings" className="dropdown-item">
-                    <span>Manage tags…</span>
-                  </Link>
+                  {admin && (
+                    <Link href="/settings" className="dropdown-item">
+                      <span>Manage tags…</span>
+                    </Link>
+                  )}
                 </div>
               )}
             </div>
@@ -613,6 +620,6 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
           }}
         />
       )}
-    </div>
+    </div></Portal>
   );
 }

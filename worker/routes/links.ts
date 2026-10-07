@@ -10,6 +10,7 @@ import { knownDomains } from '../lib/domains';
 import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin } from '../lib/auth';
+import { unknownPick } from '../lib/collections';
 
 const links = new Hono<AppEnv>();
 
@@ -66,6 +67,11 @@ links.post('/', async (c) => {
   const input = parsed.value;
 
   const db = c.env.DB;
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder },
+    { kind: 'tags', value: input.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   const settings = await getSettings(db);
   const domain = input.domain ?? settings.default_domain;
   if (!knownDomains(settings).includes(domain)) {
@@ -130,6 +136,11 @@ links.patch('/:id', async (c) => {
 
   const existing = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
   if (!existing) return c.json({ error: 'Link not found' }, 404);
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder, current: existing.folder },
+    { kind: 'tags', value: input.tag, current: existing.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
 
   const domain = input.domain ?? existing.domain;
   const alias = input.alias ?? existing.alias;

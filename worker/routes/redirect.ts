@@ -33,8 +33,6 @@ function htmlPage(title: string, body: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root { --border:#e5e5e5; --muted:#f5f5f5; --muted-2:#fafafa; --muted-foreground:#737373; --foreground:#0a0a0a; --destructive:#dc2626; }
   * { box-sizing: border-box; }
@@ -182,7 +180,7 @@ export async function serveLink(
       !!secret && (await verifyUnlock(secret, record.id, record.password_hash, getCookie(c, cookieName)));
     if (!unlocked) {
       if (!supplied || !(await verifyPassword(supplied, record.password_hash))) {
-        return c.html(passwordPage(c.req.path, supplied !== null), 401);
+        return c.html(passwordPage(c.req.path, supplied !== null), 401, { 'Cache-Control': 'no-store' });
       }
       if (secret) {
         setCookie(c, cookieName, await signUnlock(secret, record.id, record.password_hash), {
@@ -225,9 +223,12 @@ export async function serveLink(
   </style>
 </head>
 <body>
-  <iframe src="${escapeHtml(target)}"></iframe>
+  <iframe src="${escapeHtml(target)}" referrerpolicy="no-referrer"></iframe>
 </body>
-</html>`);
+</html>`, 200, {
+      // This page only shows the destination in a frame; it loads nothing else and cannot be framed itself.
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-src http: https:; frame-ancestors 'none'",
+    });
   }
 
   // 303 after a POST so the browser follows with a GET.

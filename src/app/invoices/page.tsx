@@ -10,11 +10,12 @@ import { useCollections } from '@/lib/collections';
 import { InvoiceCanvas, InvoiceDraft } from '@/components/invoices/invoice-canvas';
 import { InvoiceGuideModal } from '@/components/invoices/invoice-guide-modal';
 import { LogPaymentModal, PaymentDraft } from '@/components/invoices/invoice-modals';
-import { useConfirm } from '@/components/invoices/choice-modal';
+import { useConfirm, useNotice } from '@/components/invoices/choice-modal';
 import { XIcon } from '@/components/icons';
 import { usePopoverDismiss } from '@/lib/popover';
 import { draftFromInvoice, draftProblem, invoicePayload, newInvoiceDraft, useInvoiceSettings } from '@/lib/invoice-settings';
 import { InvoiceStatus, INVOICE_STATUSES, invoiceTotals, parsePayments } from '@/lib/invoices';
+import { Portal } from '@/components/portal';
 
 const PAGE_SIZE = 25;
 const SORTS = [
@@ -44,6 +45,7 @@ export default function InvoicesPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const cfg = useInvoiceSettings();
   const [ask, confirmModal] = useConfirm();
+  const [notify, noticeModal] = useNotice();
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -75,6 +77,11 @@ export default function InvoicesPage() {
   }, [status, search, folderFilter, tagFilter, reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  /** The Refresh menu item: reload and show the loading state so the click is visible. */
+  const manualRefresh = useCallback(() => {
+    setLoading(true);
+    setReloadKey((k) => k + 1);
+  }, []);
   const openCreate = useCallback(() => {
     const next = newInvoiceDraft(cfg);
     // New invoices land in the folder being viewed, else the default from Settings.
@@ -132,11 +139,10 @@ export default function InvoicesPage() {
         e.preventDefault();
         openCreate();
       }
-      if (e.key === 'r' || e.key === 'R') refresh();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [busy, openCreate, submitCreate, createOpen, paying, refresh]);
+  }, [busy, openCreate, submitCreate, createOpen, paying]);
 
   const closeToolbarMenu = useCallback(() => setOpenMenu(null), []);
   usePopoverDismiss(openMenu !== null, closeToolbarMenu);
@@ -159,7 +165,9 @@ export default function InvoicesPage() {
   const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const rangeStart = visible.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
   const rangeEnd = (currentPage - 1) * PAGE_SIZE + paged.length;
-  const isEmpty = !loading && (counts.all ?? 0) === 0 && folderFilter === 'All' && !tagFilter && !search;
+  // Dates and amounts use your date-format setting, so wait for it to avoid a format flash.
+  const pageLoading = loading || !cfg.loaded;
+  const isEmpty = !pageLoading && (counts.all ?? 0) === 0 && folderFilter === 'All' && !tagFilter && !search;
 
   const handleStatusChange = async (id: string, next: InvoiceStatus) => {
     await fetch(`/api/invoices/${id}`, {
@@ -193,7 +201,7 @@ export default function InvoicesPage() {
       body: JSON.stringify({ ...rest, status: 'draft' }),
     });
     const data = await res.json();
-    if (!res.ok) alert(data.error || 'Could not duplicate the invoice');
+    if (!res.ok) await notify('Could not duplicate the invoice', data.error || 'Please try again.');
     refresh();
   };
 
@@ -358,10 +366,9 @@ export default function InvoicesPage() {
             </button>
             {openMenu === 'more' && (
               <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
-                <div className="dropdown-item" onClick={() => { setOpenMenu(null); refresh(); }}>
+                <div className="dropdown-item" onClick={() => { setOpenMenu(null); manualRefresh(); }}>
                   <Refresh />
                   <span>Refresh</span>
-                  <span className="kbd-hint">R</span>
                 </div>
               </div>
             )}
@@ -369,7 +376,7 @@ export default function InvoicesPage() {
         )}
       </div>
 
-      {loading ? (
+      {pageLoading ? (
         <div className="link-list">
           {[0, 1, 2].map((i) => (
             <div key={i} className="link-card" style={{ opacity: 0.4 }}>
@@ -426,7 +433,7 @@ export default function InvoicesPage() {
         </div>
       )}
 
-      {!loading && visible.length > 0 && (
+      {!pageLoading && visible.length > 0 && (
         <div className="pagination">
           <div>
             Viewing {rangeStart}–{rangeEnd} of {visible.length} invoices
@@ -443,7 +450,7 @@ export default function InvoicesPage() {
       )}
       {/* Create invoice modal (design: create-invoice.html) */}
       {createOpen && draft && (
-        <div
+        <Portal><div
           className="modal-backdrop"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setCreateOpen(false);
@@ -510,7 +517,7 @@ export default function InvoicesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div></Portal>
       )}
 
       {paying && (
@@ -525,6 +532,7 @@ export default function InvoicesPage() {
       )}
 
       {confirmModal}
+      {noticeModal}
       {guideOpen && <InvoiceGuideModal onClose={() => setGuideOpen(false)} />}
     </Shell>
   );

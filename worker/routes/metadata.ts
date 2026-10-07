@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
+import { checkFetchUrl, readLimited } from '../lib/ssrf';
+import { withinLimit } from '../lib/auth';
 
 /**
  * Fetches Open Graph metadata for a destination URL so the link preview can
@@ -21,18 +23,6 @@ const MAX_BYTES = 600_000;
 const TIMEOUT_MS = 6000;
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36';
-
-/** Keep the fetcher from being pointed at the local network. */
-function isBlockedHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
-    return true;
-  }
-  if (host === '::1' || host === '0.0.0.0') return true;
-  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  return false;
-}
 
 function decodeEntities(value: string): string {
   const named: Record<string, string> = {
@@ -75,12 +65,46 @@ function metaValue(html: string, keys: string[]): string | null {
 
 function resolveImage(image: string | null, base: string): string | null {
   if (!image) return null;
-  if (image.startsWith('data:')) return null;
   try {
-    return new URL(image, base).toString();
+    const url = new URL(image, base);
+    // Only web images: never javascript:, data: or file: addresses from someone else's page.
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
   } catch {
     return null;
   }
+}
+
+const MAX_REDIRECTS = 4;
+const PREVIEWS_PER_10_MIN = 60;
+
+/** Follows redirects by hand so every hop is checked, not just the first address. */
+async function fetchPage(start: URL): Promise<{ res: Response; finalUrl: string } | { error: string; status: 400 | 502 }> {
+  let url = start;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const problem = checkFetchUrl(url);
+    if (problem) return { error: problem, status: 400 };
+    const res = await fetch(url.toString(), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: {
+        'user-agent': BROWSER_UA,
+        accept: 'text/html,application/xhtml+xml',
+        'accept-language': 'en-US,en;q=0.9',
+      },
+    });
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location) {
+      await res.body?.cancel().catch(() => undefined);
+      try {
+        url = new URL(location, url);
+      } catch {
+        return { error: 'Bad redirect', status: 502 };
+      }
+      continue;
+    }
+    return { res, finalUrl: url.toString() };
+  }
+  return { error: 'Too many redirects', status: 502 };
 }
 
 const metadata = new Hono<AppEnv>();
@@ -95,10 +119,12 @@ metadata.get('/', async (c) => {
   } catch {
     return c.json({ error: 'Invalid url' }, 400);
   }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return c.json({ error: 'Unsupported protocol' }, 400);
+  const problem = checkFetchUrl(target);
+  if (problem) return c.json({ error: problem }, 400);
+  // This route fetches other sites for you, so it is limited per person.
+  if (!(await withinLimit(c.env.DB, `preview:${c.var.user.email}`, PREVIEWS_PER_10_MIN, 10 * 60_000))) {
+    return c.json({ error: 'Too many previews. Try again in a few minutes.' }, 429);
   }
-  if (isBlockedHost(target.hostname)) return c.json({ error: 'Host not allowed' }, 400);
 
   const key = target.toString();
   const cacheKey = new Request(`https://metadata.cache/${encodeURIComponent(key)}`);
@@ -107,15 +133,9 @@ metadata.get('/', async (c) => {
   if (hit) return c.json({ metadata: (await hit.json()) as LinkMetadata, cached: true });
 
   try {
-    const res = await fetch(key, {
-      redirect: 'follow',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: {
-        'user-agent': BROWSER_UA,
-        accept: 'text/html,application/xhtml+xml',
-        'accept-language': 'en-US,en;q=0.9',
-      },
-    });
+    const page = await fetchPage(target);
+    if ('error' in page) return c.json({ error: page.error }, page.status);
+    const { res } = page;
 
     if (!res.ok) return c.json({ error: `Upstream responded ${res.status}` }, 502);
     if (!(res.headers.get('content-type') || '').includes('html')) {
@@ -124,8 +144,9 @@ metadata.get('/', async (c) => {
     const length = Number(res.headers.get('content-length') || 0);
     if (length && length > MAX_BYTES) return c.json({ error: 'Destination page is too large' }, 413);
 
-    const html = (await res.text()).slice(0, MAX_BYTES);
-    const finalUrl = res.url || key;
+    // Stop downloading at the cap, even if the server never says how big the page is.
+    const html = await readLimited(res, MAX_BYTES);
+    const finalUrl = page.finalUrl || key;
     const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
 
     const data: LinkMetadata = {

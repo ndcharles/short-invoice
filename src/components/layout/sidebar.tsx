@@ -4,8 +4,9 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSettings } from '@/lib/collections';
-import { signOut, useMe } from '@/lib/team';
+import { ROLE_LABEL, roleName, signOut, useMe } from '@/lib/team';
 import { XIcon } from '@/components/icons';
+import { Portal } from '@/components/portal';
 
 function initialsOf(name: string, fallback: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -30,17 +31,25 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <aside className="sidebar" data-collapsed={collapsed ? 'true' : undefined}>
       {/* Workspace (name and logo from Settings → General) */}
-      <Link href={admin ? '/settings' : '/links'} className="workspace" title={admin ? 'Workspace settings' : workspaceName}>
-        <div className="workspace-avatar" style={workspaceLogo ? { overflow: 'hidden', padding: 0 } : undefined}>
-          {workspaceLogo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={workspaceLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            initialsOf(workspaceName, 'W').slice(0, 1)
-          )}
+      {settings ? (
+        <Link href={admin ? '/settings' : '/links'} className="workspace" title={admin ? 'Workspace settings' : workspaceName}>
+          <div className="workspace-avatar" style={workspaceLogo ? { overflow: 'hidden', padding: 0 } : undefined}>
+            {workspaceLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={workspaceLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              initialsOf(workspaceName, 'W').slice(0, 1)
+            )}
+          </div>
+          <div className="workspace-name">{workspaceName}</div>
+        </Link>
+      ) : (
+        // Neutral blocks until the real name and logo arrive, so no placeholder ever flashes.
+        <div className="workspace" aria-busy="true">
+          <div className="workspace-avatar skeleton" />
+          <div className="workspace-name skeleton skeleton-text" />
         </div>
-        <div className="workspace-name">{workspaceName}</div>
-      </Link>
+      )}
 
       <div className="nav-section-label">Workspace</div>
 
@@ -233,11 +242,11 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
       {/* Footer: the signed-in person */}
       <div className="sidebar-footer">
         <button type="button" className="user-row" title="Your profile" onClick={() => setProfileOpen(true)}>
-          <div className="avatar">{me?.initials ?? '··'}</div>
+          <div className={`avatar${me ? '' : ' skeleton'}`}>{me?.initials ?? ''}</div>
           <div className="user-meta">
             <div className="user-name">
-              {me?.name ?? 'Loading…'}
-              {me && <span className={`role-badge${admin ? ' is-admin' : ''}`}>{admin ? 'Admin' : 'Member'}</span>}
+              {me?.name ?? <span className="skeleton skeleton-text" style={{ width: 90 }} />}
+              {me && <span className={`role-badge${admin ? ' is-admin' : ''}`}>{ROLE_LABEL[roleName(me)]}</span>}
             </div>
             <div className="user-email">{me?.email ?? ''}</div>
           </div>
@@ -269,7 +278,7 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Portal><div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal choice-modal" role="dialog" aria-label="Your profile">
         <div className="modal-header">
           <div className="modal-title">Your profile</div>
@@ -290,7 +299,7 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="choice-modal-hint">
-            Signed in as <strong>{me?.email}</strong> ({me?.role === 'admin' ? 'admin' : 'member'}). Your name appears next to
+            Signed in as <strong>{me?.email}</strong> ({me ? ROLE_LABEL[roleName(me)].toLowerCase() : 'member'}). Your name appears next to
             the links, UTMs and invoices you create or change.
           </div>
           {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}
@@ -313,6 +322,6 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }

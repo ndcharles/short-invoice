@@ -26,17 +26,46 @@ import { parseAlias, parseHttpUrl } from '../src/lib/validate';
  */
 const app = new Hono<AppEnv>();
 
+/**
+ * Pages the Worker writes itself (password prompt, link not found, expired)
+ * load nothing from anywhere and cannot be framed. Static pages carry their
+ * own policy from public/_headers, and the cloaked-link page sets its own.
+ */
+const GENERATED_PAGE_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
 app.use('*', async (c, next) => {
   await next();
   // Responses passed through from static assets have immutable headers.
+  if (!c.res.headers) return;
   try {
     c.res.headers.set('X-Content-Type-Options', 'nosniff');
   } catch {
     c.res = new Response(c.res.body, c.res);
     c.res.headers.set('X-Content-Type-Options', 'nosniff');
   }
-  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  if (c.req.path.startsWith('/api/')) c.res.headers.set('Cache-Control', 'no-store');
+  const headers = c.res.headers;
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+  headers.set('X-Frame-Options', 'DENY');
+  if (new URL(c.req.url).protocol === 'https:') headers.set('Strict-Transport-Security', 'max-age=31536000');
+  if (c.req.path.startsWith('/api/')) headers.set('Cache-Control', 'no-store');
+  if ((headers.get('content-type') ?? '').startsWith('text/html') && !headers.has('Content-Security-Policy')) {
+    headers.set('Content-Security-Policy', GENERATED_PAGE_CSP);
+  }
+});
+
+/**
+ * Request bodies are small JSON (the biggest is a logo under 300 KB, or two
+ * PDFs when sending an invoice). Refuse anything larger before it is read.
+ */
+const MAX_BODY_BYTES = 1_000_000;
+const MAX_SEND_BYTES = 12_000_000;
+app.use('/api/*', async (c, next) => {
+  const length = Number(c.req.header('content-length') ?? 0);
+  const limit = /^\/api\/invoices\/[^/]+\/send$/.test(c.req.path) ? MAX_SEND_BYTES : MAX_BODY_BYTES;
+  if (length > limit) return c.json({ error: 'That request is too large' }, 413);
+  return next();
 });
 
 /**
@@ -76,6 +105,7 @@ app.use('/api/settings/*', adminWrites);
 app.use('/api/settings', adminWrites);
 app.use('/api/domains/*', adminWrites);
 app.use('/api/domains', adminWrites);
+// Everyone may pick from the folders and tags; only admins create or change them.
 app.use('/api/collections/*', adminWrites);
 app.use('/api/collections', adminWrites);
 app.use('/api/email/*', requireAdmin);

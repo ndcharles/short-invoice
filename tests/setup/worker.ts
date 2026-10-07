@@ -15,20 +15,28 @@ const ROOT = path.resolve(__dirname, '../..');
 const WRANGLER = path.join(ROOT, 'node_modules/.bin/wrangler');
 const PORT = Number(process.env.TEST_WORKER_PORT ?? 8791);
 
-let child: ChildProcess | null = null;
-let persistDir = '';
-let createdOut = false;
-
 /**
  * Boots the real Worker with `wrangler dev` on a fresh, migrated local D1, so
- * API tests exercise the same code and SQL that runs in production.
+ * tests exercise the same code and SQL that runs in production. Each test
+ * project (API, browser) gets its own Worker, port and database.
+ *
+ * `real` serves the built app from `out/` (browser tests); otherwise a stub is
+ * enough because API tests never load pages.
  */
-export async function setup(project: TestProject) {
+export function createWorker(port: number, opts: { real?: boolean } = {}) {
+  const PORT = port;
+  let child: ChildProcess | null = null;
+  let persistDir = '';
+  let createdOut = false;
+
+  async function setup(project: TestProject) {
   persistDir = mkdtempSync(path.join(tmpdir(), 'short-invoice-test-'));
   const env = { ...process.env, WRANGLER_SEND_METRICS: 'false', NO_COLOR: '1' };
 
   // Static assets are optional for API tests, but wrangler needs the directory.
   const outDir = path.join(ROOT, 'out');
+  // Browser tests need the app as it is now, so always rebuild it first.
+  if (opts.real) execFileSync('npx', ['next', 'build'], { cwd: ROOT, env, stdio: 'pipe' });
   if (!existsSync(outDir)) {
     mkdirSync(outDir);
     writeFileSync(path.join(outDir, '404.html'), '<h1>404</h1>');
@@ -80,16 +88,23 @@ export async function setup(project: TestProject) {
 
   project.provide('baseUrl', baseUrl);
   project.provide('persistDir', persistDir);
+  }
+
+  async function teardown() {
+    if (child?.pid) {
+      try {
+        process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    }
+    if (persistDir) rmSync(persistDir, { recursive: true, force: true });
+    if (createdOut) rmSync(path.join(ROOT, 'out'), { recursive: true, force: true });
+  }
+
+  return { setup, teardown };
 }
 
-export async function teardown() {
-  if (child?.pid) {
-    try {
-      process.kill(-child.pid, 'SIGTERM');
-    } catch {
-      /* already gone */
-    }
-  }
-  if (persistDir) rmSync(persistDir, { recursive: true, force: true });
-  if (createdOut) rmSync(path.join(ROOT, 'out'), { recursive: true, force: true });
-}
+const api = createWorker(PORT);
+export const setup = api.setup;
+export const teardown = api.teardown;

@@ -3,6 +3,7 @@ import type { AppEnv } from '../env';
 import { getSettings, publicSettings, saveSettings } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
 import { activity } from '../lib/activity';
+import { encryptSecret } from '../lib/secrets';
 
 /** "invoice tax rate, SMTP password" from setting keys, for the activity feed. */
 function describeKeys(keys: string[]): string {
@@ -18,16 +19,21 @@ function describeKeys(keys: string[]): string {
 
 const settings = new Hono<AppEnv>();
 
-settings.get('/', async (c) => c.json({ settings: publicSettings(await getSettings(c.env.DB)) }));
+settings.get('/', async (c) => c.json({ settings: publicSettings(await getSettings(c.env.DB), c.var.user.role === 'admin') }));
 
 settings.patch('/', async (c) => {
   const body = await readJsonObject(c);
   if (!body) return c.json({ error: 'Invalid payload' }, 400);
+  // The SMTP password is stored encrypted (never in the clear in the database).
+  if (typeof body.smtp_password === 'string' && body.smtp_password) {
+    if (body.smtp_password.length > 300 || /[\r\n]/.test(body.smtp_password)) return c.json({ error: 'SMTP password is not valid' }, 400);
+    body.smtp_password = await encryptSecret(c.env, body.smtp_password);
+  }
   const saved = await saveSettings(c.env.DB, body, (changed) =>
     changed.length ? [activity(c.env.DB, c.var.user, { action: 'updated', type: 'settings', label: 'Settings', detail: describeKeys(changed) })] : []
   );
   if (!saved.ok) return c.json({ error: saved.error }, 400);
-  return c.json({ settings: publicSettings(saved.value.settings) });
+  return c.json({ settings: publicSettings(saved.value.settings, c.var.user.role === 'admin') });
 });
 
 export default settings;

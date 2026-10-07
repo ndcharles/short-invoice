@@ -59,7 +59,7 @@ export function useInvoiceSettings() {
         taxId: s.inv_tax_id ?? '',
       },
       /** SMTP is set up when a host and a sender address are saved. */
-      emailReady: !!(s.smtp_host && s.smtp_from_email),
+      emailReady: s.smtp_ready === 'true',
       copyEmail: s.smtp_reply_to || s.inv_contact_email || '',
       emails: {
         invoiceSubject: s.inv_email_invoice_subject ?? '',

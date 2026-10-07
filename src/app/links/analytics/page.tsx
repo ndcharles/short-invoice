@@ -170,7 +170,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loading || !settings ? (
         <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading analytics…</div>
       ) : (
         <>

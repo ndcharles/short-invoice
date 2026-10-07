@@ -306,7 +306,7 @@ export default function UtmSettingsPage() {
       <SaveBar
         visible={dirty}
         saving={saving}
-        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
+        message={error ?? (savedAt && !dirty ? 'Saved!' : 'You have unsaved changes')}
         onDiscard={discard}
         onSave={save}
       />

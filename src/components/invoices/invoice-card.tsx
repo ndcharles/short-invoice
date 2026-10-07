@@ -183,17 +183,14 @@ export function InvoiceCard({
           <div className="dropdown-item" onClick={() => { closeMenu(); router.push(`/invoices/edit?id=${encodeURIComponent(invoice.id)}`); }}>
             <Edit />
             <span>Edit</span>
-            <span className="kbd-hint">E</span>
           </div>
           <div className="dropdown-item" onClick={() => { closeMenu(); onDuplicate(invoice); }}>
             <Duplicate />
             <span>Duplicate</span>
-            <span className="kbd-hint">D</span>
           </div>
           <div className="dropdown-item" onClick={() => { copyNumber(); closeMenu(); }}>
             <Copy />
             <span>Copy number</span>
-            <span className="kbd-hint">⌘C</span>
           </div>
           {canLogPayment && (
             <div className="dropdown-item" onClick={() => { closeMenu(); onLogPayment(invoice); }}>
@@ -241,7 +238,6 @@ export function InvoiceCard({
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(invoice.id); }}>
             <Trash />
             <span>Delete</span>
-            <span className="kbd-hint">⌫</span>
           </div>
             </>
           )}

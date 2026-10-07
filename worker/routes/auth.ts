@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { readJsonObject } from '../lib/request';
+import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { activity } from '../lib/activity';
 import { parseText } from '../../src/lib/validate';
 import {
   checkAccountPassword,
+  cleanupStatements,
   clearSessionCookie,
   clientIp,
   hashAccountPassword,
+  listOf,
   LOCK_MINUTES,
   MAX_CODE_ATTEMPTS,
   MAX_FAILED_LOGINS,
@@ -50,7 +53,7 @@ auth.get('/brand', async (c) => {
     "SELECT key, value FROM settings WHERE key IN ('workspace_name', 'workspace_logo')"
   ).all<{ key: string; value: string }>();
   const map = Object.fromEntries(results.map((r) => [r.key, r.value]));
-  return c.json({ name: map.workspace_name || 'Workspace', logo: map.workspace_logo || '' });
+  return c.json({ name: map.workspace_name || DEFAULT_SETTINGS.workspace_name, logo: map.workspace_logo || '' });
 });
 
 /** Step 1: which form comes next for this email, if any. */
@@ -103,7 +106,8 @@ auth.post('/setup', async (c) => {
            setup_attempts = 0, failed_logins = 0, locked_until = NULL, last_seen_at = ?3 WHERE email = ?4`
       )
       .bind(await hashAccountPassword(c.env, String(body?.password)), name.value, now, email),
-    activity(db, { email, name: name.value, role: row.role, initials: '' }, { action: 'joined', type: 'team', id: email, label: name.value }, now),
+    activity(db, { email, name: name.value, role: row.role, owner: listOf(c.env.ADMIN_EMAILS).includes(email), initials: '' }, { action: 'joined', type: 'team', id: email, label: name.value }, now),
+    ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);
   return c.json({ ok: true });
@@ -143,7 +147,8 @@ auth.post('/login', async (c) => {
 
   await db.batch([
     db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL, last_seen_at = ?1 WHERE email = ?2').bind(now, email),
-    activity(db, { email, name: row.name, role: row.role, initials: '' }, { action: 'signed in', type: 'team', id: email, label: row.name || email }, now),
+    activity(db, { email, name: row.name, role: row.role, owner: listOf(c.env.ADMIN_EMAILS).includes(email), initials: '' }, { action: 'signed in', type: 'team', id: email, label: row.name || email }, now),
+    ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);
   return c.json({ ok: true });

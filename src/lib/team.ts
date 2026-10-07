@@ -5,9 +5,19 @@ import { useCallback, useEffect, useState } from 'react';
 export interface Me {
   email: string;
   name: string;
+  /** 'admin' means admin powers: the owner and anyone the owner has delegated to. */
   role: 'admin' | 'member';
+  /** The owner (ADMIN_EMAILS): everything, including managing the team. */
+  owner: boolean;
   initials: string;
 }
+
+export type RoleName = 'owner' | 'admin' | 'member';
+export const ROLE_LABEL: Record<RoleName, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
+
+/** Owner, admin or member, for badges and wording. */
+export const roleName = (user: { role: 'admin' | 'member'; owner?: boolean } | null | undefined): RoleName =>
+  user?.owner ? 'owner' : user?.role === 'admin' ? 'admin' : 'member';
 
 export interface MeState {
   me: Me | null;
@@ -22,6 +32,7 @@ export interface TeamUser {
   name: string;
   display_name: string;
   role: 'admin' | 'member';
+  owner: boolean;
   status?: 'invited' | 'active' | 'removed';
   source?: 'admin' | 'invite';
   invited_by?: string | null;

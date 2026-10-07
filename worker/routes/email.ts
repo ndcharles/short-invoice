@@ -4,6 +4,7 @@ import { getSettings } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
 import { isMailAddress, mailSetup } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
+import { decryptSecret } from '../lib/secrets';
 
 const email = new Hono<AppEnv>();
 
@@ -13,7 +14,9 @@ const email = new Hono<AppEnv>();
  */
 email.post('/test', async (c) => {
   const body = (await readJsonObject(c)) ?? {};
-  const setup = mailSetup(await getSettings(c.env.DB), body);
+  const stored = await getSettings(c.env.DB);
+  stored.smtp_password = await decryptSecret(c.env, stored.smtp_password);
+  const setup = mailSetup(stored, body);
   if (!setup.ok) return c.json({ error: setup.error }, 400);
   const to = typeof body.to === 'string' && body.to.trim() ? body.to.trim() : setup.value.from.email;
   if (!isMailAddress(to)) return c.json({ error: 'Enter a valid address for the test email' }, 400);

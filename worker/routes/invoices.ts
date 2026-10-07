@@ -19,9 +19,11 @@ import { getSettings, type SettingsMap } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin, type CurrentUser } from '../lib/auth';
+import { unknownPick } from '../lib/collections';
 import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
+import { decryptSecret } from '../lib/secrets';
 
 const invoices = new Hono<AppEnv>();
 
@@ -146,6 +148,11 @@ invoices.post('/', async (c) => {
 
   const db = c.env.DB;
   const now = Date.now();
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder },
+    { kind: 'tags', value: input.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   const settings = await getSettings(db);
   const defaults = invoiceDefaults(settings, now);
 
@@ -268,7 +275,7 @@ invoices.get('/:id', async (c) => {
  */
 invoices.post('/:id/send', async (c) => {
   const id = c.req.param('id');
-  const body = await readJsonObject(c);
+  const body = await readJsonObject(c, 12_000_000);
   if (!body) return c.json({ error: 'Invalid payload' }, 400);
   const parsed = parseSendRequest(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -287,6 +294,7 @@ invoices.post('/:id/send', async (c) => {
   }
 
   const settings = await getSettings(db);
+  settings.smtp_password = await decryptSecret(c.env, settings.smtp_password);
   const setup = mailSetup(settings);
   if (!setup.ok) return c.json({ error: setup.error }, 400);
   const bcc = req.copyMe && setup.value.replyTo && !req.to.includes(setup.value.replyTo) ? [setup.value.replyTo] : [];
@@ -367,6 +375,11 @@ invoices.patch('/:id', async (c) => {
 
   const existing = await db.prepare('SELECT * FROM invoices WHERE id = ?1').bind(id).first<InvoiceRow>();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder, current: existing.folder },
+    { kind: 'tags', value: input.tag, current: existing.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   if (input.client_name !== undefined && !input.client_name) return c.json({ error: 'A client name is required' }, 400);
   if (input.number !== undefined) {
     if (!input.number) return c.json({ error: 'An invoice number is required' }, 400);
