@@ -113,6 +113,20 @@ run('Expiration, as a visitor in Chrome', () => {
     }
   });
 
+  it('an expired link with no fallback of its own goes to the Redirect URL from Settings', async () => {
+    const link = await seedLink({ dest: `${dest}/gone`, expires_at: Date.now() - 60_000 });
+    expect((await api('PATCH', '/api/settings', { root_redirect: `${dest}/company-home` })).status).toBe(200);
+    const v = await visitor();
+    try {
+      await v.page.goto(`/s/${link.alias}`);
+      await v.page.waitForURL((url) => url.origin === dest);
+      await expect(v.page.locator('#dest')).toContainText('/company-home');
+    } finally {
+      await api('PATCH', '/api/settings', { root_redirect: '' });
+      await v.context.close();
+    }
+  });
+
   it('works right up to the moment it expires, then stops', async () => {
     const link = await seedLink({ dest: `${dest}/limited`, expires_at: Date.now() + 4_000 });
     const v = await visitor();

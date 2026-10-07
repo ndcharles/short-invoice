@@ -30,6 +30,9 @@ path with no static file (`not_found_handling: "none"`). It handles:
 - `/<alias>` on a verified custom domain: same link lookup, keyed by the host.
 - `/` on a short domain: the root redirect setting. On the app host: the app.
 - `/.well-known/short-invoice`: token used by Settings → Verify for domains.
+- A missing link, or an expired link: where the visitor goes is, in order, the
+  link's own expiration URL (expired links only), the Redirect URL from Settings
+  (`root_redirect`), then the plain "not found" / "expired" (410) page.
 - Anything else: the static app's 404 page.
 
 The app is served only from its custom domain (`workers_dev` and
