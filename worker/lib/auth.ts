@@ -18,7 +18,10 @@ export type AuthMode = 'session' | 'dev';
 export interface CurrentUser {
   email: string;
   name: string;
+  /** 'admin' covers the owner and anyone the owner has given admin access. */
   role: Role;
+  /** The owner(s) named in ADMIN_EMAILS: full access, including managing the team. */
+  owner: boolean;
   initials: string;
 }
 
@@ -199,9 +202,9 @@ function devUser(c: Context<AppEnv>): string | null {
   return c.req.header('x-dev-user')?.trim().toLowerCase() || null;
 }
 
-function asUser(email: string, name: string, role: Role): CurrentUser {
+function asUser(email: string, name: string, role: Role, owner: boolean): CurrentUser {
   const display = displayName(email, name);
-  return { email, name: display, role, initials: initials(display) };
+  return { email, name: display, role: owner ? 'admin' : role, owner, initials: initials(display) };
 }
 
 /** Sets `c.var.user` for every API call, or answers 401. */
@@ -221,7 +224,7 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
         .bind(dev, now)
         .run();
     }
-    c.set('user', asUser(dev, row?.name ?? '', isAdmin ? 'admin' : row?.role ?? 'member'));
+    c.set('user', asUser(dev, row?.name ?? '', row?.role ?? 'member', isAdmin));
     c.set('authMode', 'dev');
     return next();
   }
@@ -247,15 +250,20 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
       db.prepare('UPDATE users SET last_seen_at = ?1 WHERE email = ?2').bind(now, found.email),
     ]);
   }
-  const role: Role = admins.includes(found.email) ? 'admin' : found.role;
-  c.set('user', asUser(found.email, found.name, role));
+  c.set('user', asUser(found.email, found.name, found.role, admins.includes(found.email)));
   c.set('authMode', 'session');
   return next();
 };
 
-/** Admin-only routes: settings, team, domains, exports and deletions. */
+/** Admin routes (owner or delegated admin): settings, domains, folders and tags, exports and deletions. */
 export const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.var.user?.role !== 'admin') return c.json({ error: 'Only admins can do this.', code: 'admin_only' }, 403);
+  await next();
+};
+
+/** Owner-only routes: adding and removing people and choosing who is an admin. */
+export const requireOwner: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (!c.var.user?.owner) return c.json({ error: 'Only the owner can do this.', code: 'owner_only' }, 403);
   await next();
 };
 

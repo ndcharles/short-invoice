@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
-import { addMember, api, chromeAvailable, launch, openSession, setUpAccount, unique } from './helpers';
+import { addMember, api, chromeAvailable, launch, openSession, seedLink, setUpAccount, unique } from './helpers';
 
 const run = chromeAvailable ? describe : describe.skip;
 
@@ -254,10 +254,137 @@ run('Members vs admins in the UI', () => {
       await expect(a.page.getByText('Only admins can view and change settings')).toBeVisible();
       await expect(a.page.getByText('Add member')).toHaveCount(0);
 
-      // A member can still add a tag while tagging a link, but not manage tags.
+      // Nothing slips through the back door either.
       expect((await a.page.evaluate(async () => (await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{"workspace_name":"x"}' })).status))).toBe(403);
     } finally {
       await a.context.close();
+    }
+  });
+});
+
+run('Roles in the UI', () => {
+  const field = (p: Page, label: string) => p.locator('.field', { hasText: label }).first();
+  const badge = (p: Page) => profileRow(p).locator('.role-badge');
+
+  it('a member picks from the tags but cannot create or manage them', async () => {
+    const tag = unique('Pick');
+    expect((await api('POST', '/api/collections', { kind: 'tags', name: tag, color: 'green' })).status).toBe(201);
+    const link = await seedLink();
+    const who = await addMember();
+    const m = await openSession(browser, { user: null });
+    try {
+      await setUpAccount(m.page, who);
+      await m.page.goto(`/links/edit?id=${link.id}`);
+      await field(m.page, 'Destination URL').locator('input').waitFor();
+      await field(m.page, 'Tags').locator('.input').click();
+      await expect(m.page.locator('.dropdown-item', { hasText: tag })).toBeVisible();
+      await expect(m.page.getByText('Only admins can add tags')).toBeVisible();
+      await expect(m.page.getByText('＋ Create tag')).toHaveCount(0);
+      await expect(m.page.getByText('Manage tags…')).toHaveCount(0);
+      await m.page.locator('.dropdown-item', { hasText: tag }).click();
+      await m.page.locator('.save-bar').getByRole('button', { name: /Save/ }).click();
+      await expect.poll(async () => (await api('GET', `/api/links/${link.id}`)).body.link.tag).toBe(tag);
+      expect(m.errors).toEqual([]);
+    } finally {
+      await m.context.close();
+    }
+  });
+
+  it('the owner hands someone admin access from the Team page, and takes it back', async () => {
+    const who = await addMember('delegate');
+    const owner = await openSession(browser);
+    const delegate = await openSession(browser, { user: null });
+    try {
+      await setUpAccount(delegate.page, who, 'a long enough secret', 'Dele Gate');
+      await expect(badge(delegate.page)).toContainText(/member/i);
+      await delegate.page.goto('/settings');
+      await expect(delegate.page.getByText('Only admins can view and change settings')).toBeVisible();
+
+      const p = owner.page;
+      await p.goto('/settings/team');
+      const row = p.locator('.team-row', { hasText: who.email });
+      await expect(row.locator('.role-badge')).toContainText(/member/i);
+      await expect(row).toContainText('Links, UTMs and invoices. No settings');
+      const toggle = row.getByRole('switch', { name: 'Admin access for Dele Gate' });
+      await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false');
+
+      // Granting asks first; saying no changes nothing.
+      await toggle.click();
+      await expect(dialog(p).getByText('Give Dele Gate admin access?')).toBeVisible();
+      await dialog(p).getByRole('button', { name: 'Close' }).click();
+      await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false');
+
+      await toggle.click();
+      await dialog(p).getByRole('button', { name: 'Give admin access' }).click();
+      await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('true');
+      await expect(row).toContainText('Everything except managing the team');
+      await expect(row.locator('.role-badge')).toContainText(/admin/i);
+      await expect.poll(async () => (await api('GET', '/api/team/users')).body.users.find((u: { email: string }) => u.email === who.email)?.role).toBe('admin');
+
+      // The new admin can open Settings, and sees the Team page without any way to change it.
+      const d = delegate.page;
+      await d.goto('/settings');
+      await expect(d.getByText('Only admins can view and change settings')).toHaveCount(0);
+      await expect(badge(d)).toContainText(/admin/i);
+      await d.goto('/settings/team');
+      await expect(d.getByText('Only the owner can add or remove people')).toBeVisible();
+      await expect(d.getByRole('switch')).toHaveCount(0);
+      await expect(d.getByLabel('Email to invite')).toHaveCount(0);
+      await expect(d.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+      await expect(d.locator('.team-row', { hasText: 'boss@test.example' }).locator('.role-badge')).toContainText(/owner/i);
+      await expect(d.getByRole('table')).toBeVisible();
+
+      // Admins can create tags in the link editor.
+      const link = await seedLink();
+      await d.goto(`/links/edit?id=${link.id}`);
+      await field(d, 'Destination URL').locator('input').waitFor();
+      await field(d, 'Tags').locator('.input').click();
+      await expect(d.getByText('＋ Create tag')).toBeVisible();
+
+      // Taking it back needs no confirmation and applies on their next click.
+      await toggle.click();
+      await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false');
+      await expect(row).toContainText('Links, UTMs and invoices. No settings');
+      await d.goto('/settings');
+      await expect(d.getByText('Only admins can view and change settings')).toBeVisible();
+      expect(owner.errors).toEqual([]);
+      expect(owner.nativeDialogs).toEqual([]);
+    } finally {
+      await owner.context.close();
+      await delegate.context.close();
+    }
+  });
+
+  it('the Team page spells out who can do what, with the owner marked as owner', async () => {
+    const owner = await openSession(browser);
+    try {
+      const p = owner.page;
+      await p.goto('/settings/team');
+      await expect(badge(p)).toContainText(/owner/i);
+      const ownerRow = p.locator('.team-row', { hasText: 'boss@test.example' });
+      await expect(ownerRow.locator('.role-badge')).toContainText(/owner/i);
+      await expect(ownerRow).toContainText('Everything, including the team');
+      await expect(ownerRow.getByRole('switch')).toHaveCount(0);
+      await expect(ownerRow.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+
+      await expect(p.getByText('What each role can do')).toBeVisible();
+      const table = await p.getByRole('table').evaluate((el) =>
+        Object.fromEntries(
+          [...el.querySelectorAll('tbody tr')].map((tr) => [
+            tr.querySelector('.access-what')?.textContent ?? '',
+            [...tr.querySelectorAll('td')].map((td) => td.querySelector('[role="img"]')?.getAttribute('aria-label')),
+          ])
+        )
+      );
+      expect([...(await p.getByRole('table').locator('thead th').allInnerTexts())].slice(1)).toEqual(['MEMBER', 'ADMIN', 'OWNER']);
+      expect(table['Links']).toEqual(['Yes', 'Yes', 'Yes']);
+      expect(table['Use existing folders and tags']).toEqual(['Yes', 'Yes', 'Yes']);
+      expect(table['Delete links, UTMs and invoices']).toEqual(['No', 'Yes', 'Yes']);
+      expect(table['Create, rename and delete folders and tags']).toEqual(['No', 'Yes', 'Yes']);
+      expect(table['Settings']).toEqual(['No', 'Yes', 'Yes']);
+      expect(table['Team']).toEqual(['No', 'No', 'Yes']);
+    } finally {
+      await owner.context.close();
     }
   });
 });

@@ -109,8 +109,8 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   `x-forwarded-for`.
 - **Members never see mail-server details.** `publicSettings(settings, isAdmin)`
   hides every `smtp_*` key from members and gives them `smtp_ready` instead;
-  the UI's `emailReady` reads that. Members may add folders/tags
-  (`collectionEdits`) but not rename or delete them.
+  the UI's `emailReady` reads that. Folders and tags are admin-managed
+  (members pick only; see People, roles and activity).
 - **`smtp_password` is encrypted at rest** (`worker/lib/secrets.ts`, AES-GCM,
   key derived from `AUTH_PEPPER`, stored as `enc1:iv:cipher`). Rotating
   `AUTH_PEPPER` locks everyone out *and* makes the saved SMTP password
@@ -197,12 +197,30 @@ Settings UI. **The repo is public; never commit them.**
   Secure, SameSite=Strict, 365 days); only its SHA-256 is in `sessions`.
   Removing a person deletes all their sessions. `requireUser` guards every
   `/api/*` route except health and `/api/auth/*`.
-- Admins: the `ADMIN_EMAILS` secret (comma-separated); everyone else is a
-  member. The first admin sign-in: `npm run setup-code -- you@x.com` (prints a
-  setup code; `--local` for the local database).
-- Members create and edit links, UTMs and invoices. Settings, domains,
-  folders/tags, export, test email, team management and all deletes are
-  admin-only (`requireAdmin`, see `worker/index.ts`).
+- Three roles. **Owner**: the `ADMIN_EMAILS` secret (comma-separated); full
+  access, and the only one who manages the team. **Admin**: a member the owner
+  has switched on in Settings → Team (`PATCH /api/team/users/:email`, stored in
+  `users.role`, applies on their next request, reset when they are removed).
+  **Member**: everyone else. `CurrentUser.role` is `'admin'` for owners and
+  admins alike (so `requireAdmin` and every `role === 'admin'` check cover both)
+  and `CurrentUser.owner` marks the owner (`requireOwner`). The UI names them
+  with `roleName()` / `ROLE_LABEL` in `src/lib/team.ts`.
+  The first owner sign-in: `npm run setup-code -- you@x.com` (prints a setup
+  code; `--local` for the local database). Dropping someone from
+  `ADMIN_EMAILS` leaves them an admin until you switch it off in Team.
+- Members create and edit links, UTMs and invoices, archive them, and pick from
+  existing folders and tags. Admins also get settings, domains, creating and
+  changing folders/tags, export, test email, the activity log and all deletes
+  (`requireAdmin`, see `worker/index.ts`). Only the owner adds or removes
+  people, issues codes and chooses admins (`requireOwner`), so an admin can
+  never promote themselves. The Team page's "What each role can do" table
+  (`ACCESS` in `src/app/settings/team/page.tsx`) is hand-written: change it
+  with the rules above.
+- **Members cannot invent folders or tags**, not even by typing a name into a
+  record: `POST /api/collections` is admin-only and `unknownPick()`
+  (`worker/lib/collections.ts`) rejects an unknown folder/tag from a member on
+  link/UTM/invoice create and update (a value the record already carries is
+  accepted). Link editors hide "Create tag" for members.
 - Every write records `created_by`/`updated_by` (emails) and an `activity` row
   in the same batch (`worker/lib/activity.ts`). Invoice payments carry `by`,
   set on the server; emails carry `sent_by`.

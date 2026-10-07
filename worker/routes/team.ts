@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
-import { DAY, displayName, listOf, newSetupCode, normaliseCode, requireAdmin, SETUP_CODE_DAYS, sha256, type UserRow } from '../lib/auth';
+import { DAY, displayName, listOf, newSetupCode, normaliseCode, requireAdmin, requireOwner, SETUP_CODE_DAYS, sha256, type UserRow } from '../lib/auth';
 import { activity } from '../lib/activity';
 import { initials } from '../lib/initials';
 import { readJsonObject } from '../lib/request';
@@ -22,8 +22,8 @@ team.patch('/me', async (c) => {
 });
 
 /** Fields safe to send to the browser: never hashes, codes or lock state. */
-function publicUser(u: UserRow & { devices?: number }, admin: boolean) {
-  const base = { email: u.email, name: u.name, role: u.role, display_name: displayName(u.email, u.name) };
+function publicUser(u: UserRow & { devices?: number }, admin: boolean, owner: boolean) {
+  const base = { email: u.email, name: u.name, role: owner ? 'admin' : u.role, owner, display_name: displayName(u.email, u.name) };
   if (!admin) return base;
   return {
     ...base,
@@ -47,7 +47,8 @@ team.get('/users', async (c) => {
     .bind(Date.now())
     .all<UserRow & { devices: number }>();
   const admin = c.var.user.role === 'admin';
-  return c.json({ users: results.map((u) => publicUser(u, admin)), ...(admin ? { admins: listOf(c.env.ADMIN_EMAILS) } : {}) });
+  const owners = listOf(c.env.ADMIN_EMAILS);
+  return c.json({ users: results.map((u) => publicUser(u, admin, owners.includes(u.email))) });
 });
 
 /**
@@ -75,8 +76,8 @@ async function issueCode(db: D1Database, email: string, invitedBy: string, now: 
   };
 }
 
-/** Add someone (any email). Returns their setup code for the admin to hand over. */
-team.post('/invites', requireAdmin, async (c) => {
+/** Add someone (any email). Returns their setup code for the owner to hand over. */
+team.post('/invites', requireOwner, async (c) => {
   const body = await readJsonObject(c);
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!isMailAddress(email)) return c.json({ error: 'Enter a valid email address' }, 400);
@@ -93,7 +94,7 @@ team.post('/invites', requireAdmin, async (c) => {
 });
 
 /** A new code for someone who has not finished setting up (the old one stops working). */
-team.post('/users/:email/code', requireAdmin, async (c) => {
+team.post('/users/:email/code', requireOwner, async (c) => {
   const email = decodeURIComponent(c.req.param('email')).toLowerCase();
   const db = c.env.DB;
   const now = Date.now();
@@ -106,10 +107,10 @@ team.post('/users/:email/code', requireAdmin, async (c) => {
 });
 
 /** Removes someone: every session ends now and their password is wiped. */
-team.delete('/users/:email', requireAdmin, async (c) => {
+team.delete('/users/:email', requireOwner, async (c) => {
   const email = decodeURIComponent(c.req.param('email')).toLowerCase();
   if (email === c.var.user.email) return c.json({ error: 'You cannot remove yourself' }, 400);
-  if (listOf(c.env.ADMIN_EMAILS).includes(email)) return c.json({ error: 'Admins are set with the ADMIN_EMAILS secret and cannot be removed here' }, 400);
+  if (listOf(c.env.ADMIN_EMAILS).includes(email)) return c.json({ error: 'Owners are set with the ADMIN_EMAILS secret and cannot be removed here' }, 400);
   const db = c.env.DB;
   const now = Date.now();
   const existing = await db.prepare('SELECT email FROM users WHERE email = ?1').bind(email).first();
@@ -125,6 +126,31 @@ team.delete('/users/:email', requireAdmin, async (c) => {
     activity(db, c.var.user, { action: 'removed', type: 'team', id: email, label: email }, now),
   ]);
   return c.json({ success: true });
+});
+
+/**
+ * Owner only: gives someone admin access (settings, domains, folders and tags,
+ * export, deletes) or takes it back. It applies on their next request, since the
+ * role is read from the database each time. Only the owner can do this, so an
+ * admin can never promote themselves or anyone else.
+ */
+team.patch('/users/:email', requireOwner, async (c) => {
+  const email = decodeURIComponent(c.req.param('email')).toLowerCase();
+  const body = await readJsonObject(c);
+  const role = body?.role;
+  if (role !== 'admin' && role !== 'member') return c.json({ error: 'role must be admin or member' }, 400);
+  if (listOf(c.env.ADMIN_EMAILS).includes(email)) return c.json({ error: 'The owner always has full access' }, 400);
+  const db = c.env.DB;
+  const row = await db.prepare('SELECT status, role FROM users WHERE email = ?1').bind(email).first<{ status: string; role: string }>();
+  if (!row) return c.json({ error: 'Not found' }, 404);
+  if (row.status === 'removed') return c.json({ error: `${email} was removed. Add them again before changing their access.` }, 409);
+  if (row.role !== role) {
+    await db.batch([
+      db.prepare('UPDATE users SET role = ?1 WHERE email = ?2').bind(role, email),
+      activity(db, c.var.user, { action: role === 'admin' ? 'gave admin access to' : 'took admin access from', type: 'team', id: email, label: email }),
+    ]);
+  }
+  return c.json({ email, role });
 });
 
 const ACTIVITY_PAGE = 50;

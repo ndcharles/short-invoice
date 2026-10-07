@@ -7,6 +7,7 @@ import { readJsonObject } from '../lib/request';
 import { getSettings } from '../lib/settings';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin } from '../lib/auth';
+import { unknownPick } from '../lib/collections';
 
 const utms = new Hono<AppEnv>();
 
@@ -89,6 +90,8 @@ utms.post('/', async (c) => {
   const parsed = parseUtmInput(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const input = parsed.value;
+  const notAllowed = await unknownPick(c.env.DB, c.var.user, [{ kind: 'folders', value: input.folder }]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   const settings = await getSettings(c.env.DB);
 
   const id = `utm_${nanoid(10)}`;
@@ -138,6 +141,8 @@ utms.patch('/:id', async (c) => {
 
   const existing = await db.prepare('SELECT * FROM utms WHERE id = ?1').bind(id).first<UtmCampaign>();
   if (!existing) return c.json({ error: 'Campaign not found' }, 404);
+  const notAllowed = await unknownPick(db, c.var.user, [{ kind: 'folders', value: input.folder, current: existing.folder }]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
 
   const pick = <K extends keyof UtmInput & keyof UtmCampaign>(key: K) =>
     input[key] === undefined ? existing[key] : input[key];

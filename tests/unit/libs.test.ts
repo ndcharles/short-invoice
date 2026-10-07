@@ -9,6 +9,7 @@ import {
   formatOptionsFromSettings, newUtmFields, utmPairs, validateUtmFields, websitePretty, type UtmFields,
 } from '@/lib/utm-builder';
 import { defaultOg, prettyDest, resolveOg } from '@/lib/og';
+import { ROLE_LABEL, roleName } from '@/lib/team';
 
 describe('short domains', () => {
   it('reads the stored list, tolerating junk and the older shape', () => {
@@ -232,5 +233,17 @@ describe('link previews (Open Graph)', () => {
     });
     expect(resolveOg({ ...source, custom_preview: 0, og_title: 'Ignored' }).title).toBe('Pricing | Acme');
     expect(resolveOg({ dest: 'https://example.com/pricing', alias: 'p' }).title).toBe('Pricing');
+  });
+});
+
+describe('roles as people see them', () => {
+  it('tells owner, admin and member apart', () => {
+    expect(roleName({ role: 'admin', owner: true })).toBe('owner');
+    expect(roleName({ role: 'admin', owner: false })).toBe('admin');
+    expect(roleName({ role: 'admin' })).toBe('admin');
+    expect(roleName({ role: 'member', owner: false })).toBe('member');
+    expect(roleName(null)).toBe('member');
+    expect(roleName(undefined)).toBe('member');
+    expect(ROLE_LABEL).toEqual({ owner: 'Owner', admin: 'Admin', member: 'Member' });
   });
 });

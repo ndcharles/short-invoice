@@ -10,6 +10,7 @@ import {
   clearSessionCookie,
   clientIp,
   hashAccountPassword,
+  listOf,
   LOCK_MINUTES,
   MAX_CODE_ATTEMPTS,
   MAX_FAILED_LOGINS,
@@ -105,7 +106,7 @@ auth.post('/setup', async (c) => {
            setup_attempts = 0, failed_logins = 0, locked_until = NULL, last_seen_at = ?3 WHERE email = ?4`
       )
       .bind(await hashAccountPassword(c.env, String(body?.password)), name.value, now, email),
-    activity(db, { email, name: name.value, role: row.role, initials: '' }, { action: 'joined', type: 'team', id: email, label: name.value }, now),
+    activity(db, { email, name: name.value, role: row.role, owner: listOf(c.env.ADMIN_EMAILS).includes(email), initials: '' }, { action: 'joined', type: 'team', id: email, label: name.value }, now),
     ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);
@@ -146,7 +147,7 @@ auth.post('/login', async (c) => {
 
   await db.batch([
     db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL, last_seen_at = ?1 WHERE email = ?2').bind(now, email),
-    activity(db, { email, name: row.name, role: row.role, initials: '' }, { action: 'signed in', type: 'team', id: email, label: row.name || email }, now),
+    activity(db, { email, name: row.name, role: row.role, owner: listOf(c.env.ADMIN_EMAILS).includes(email), initials: '' }, { action: 'signed in', type: 'team', id: email, label: row.name || email }, now),
     ...cleanupStatements(db, now),
   ]);
   await startSession(c, email, now);

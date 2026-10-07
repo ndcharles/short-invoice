@@ -6,7 +6,7 @@ import { Shell } from '@/components/layout/shell';
 import { SettingsCard, SettingsLayout } from '@/components/settings/settings-ui';
 import { XIcon } from '@/components/icons';
 import { Plus } from '@/components/icons';
-import { refreshTeam, relativeTime, useMe, type TeamUser } from '@/lib/team';
+import { refreshTeam, relativeTime, ROLE_LABEL, roleName, useMe, type TeamUser } from '@/lib/team';
 import { useConfirm } from '@/components/invoices/choice-modal';
 import { Portal } from '@/components/portal';
 
@@ -61,6 +61,41 @@ function hrefFor(row: ActivityRow): string | null {
   return null;
 }
 
+/** What each role can do. Owners can do everything, so they have no column of their own to fill in. */
+const ACCESS: { what: string; hint?: string; member: boolean; admin: boolean }[] = [
+  { what: 'Links', hint: 'Create, edit, archive and see analytics', member: true, admin: true },
+  { what: 'UTM campaigns', hint: 'Build, edit and archive', member: true, admin: true },
+  { what: 'Invoices', hint: 'Create, edit, log payments and email to clients', member: true, admin: true },
+  { what: 'Use existing folders and tags', member: true, admin: true },
+  { what: 'Delete links, UTMs and invoices', member: false, admin: true },
+  { what: 'Create, rename and delete folders and tags', member: false, admin: true },
+  { what: 'Settings', hint: 'Workspace, short domains, UTM and invoice setup, email server', member: false, admin: true },
+  { what: 'Export all data', member: false, admin: true },
+  { what: 'Activity log', hint: 'Who did what', member: false, admin: true },
+  { what: 'Team', hint: 'Add or remove people, new setup codes, choose who is an admin', member: false, admin: false },
+];
+
+const ACCESS_SUMMARY = {
+  owner: 'Everything, including the team',
+  admin: 'Everything except managing the team',
+  member: 'Links, UTMs and invoices. No settings',
+} as const;
+
+function Yes() {
+  return (
+    <span className="access-yes" role="img" aria-label="Yes">
+      ✓
+    </span>
+  );
+}
+function No() {
+  return (
+    <span className="access-no" role="img" aria-label="No">
+      –
+    </span>
+  );
+}
+
 const initialsFrom = (name: string) => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return (parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] ?? '').slice(0, 2)).toUpperCase() || '?';
@@ -70,7 +105,6 @@ export default function TeamSettingsPage() {
   const { me, mode } = useMe();
   const [ask, confirmModal] = useConfirm();
   const [users, setUsers] = useState<TeamUser[]>([]);
-  const [admins, setAdmins] = useState<string[]>([]);
   const [invite, setInvite] = useState('');
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ email: string; code: string; expires_at: number } | null>(null);
@@ -79,6 +113,9 @@ export default function TeamSettingsPage() {
   const [actor, setActor] = useState('');
   const [type, setType] = useState('');
   const [reload, setReload] = useState(0);
+
+  // Only the owner adds or removes people and chooses who is an admin.
+  const canManage = !!me?.owner;
 
   const nameOf = useCallback(
     (email: string) => users.find((u) => u.email === email)?.display_name ?? email.split('@')[0],
@@ -93,7 +130,6 @@ export default function TeamSettingsPage() {
       .then((data) => {
         if (cancelled) return;
         setUsers(data.users ?? []);
-        setAdmins(data.admins ?? []);
       })
       .catch(() => undefined);
     return () => {
@@ -182,8 +218,35 @@ export default function TeamSettingsPage() {
     setReload((n) => n + 1);
   };
 
+  const setAdmin = async (user: TeamUser, on: boolean) => {
+    if (on) {
+      const ok = await ask({
+        title: `Give ${user.display_name} admin access?`,
+        message:
+          'They will be able to change settings and short domains, manage folders and tags, export data and delete links, UTMs and invoices. They still cannot add or remove people or change who is an admin. You can turn this off at any time; it applies on their next click.',
+        confirmLabel: 'Give admin access',
+      });
+      if (!ok) return;
+    }
+    const role = on ? 'admin' : 'member';
+    const before = users;
+    setUsers((list) => list.map((u) => (u.email === user.email ? { ...u, role } : u)));
+    const res = await fetch(`/api/team/users/${encodeURIComponent(user.email)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    });
+    if (!res.ok) {
+      setUsers(before);
+      const data = await res.json().catch(() => ({}));
+      await ask({ title: 'Could not change access', message: data.error || 'Try again in a moment.', confirmLabel: 'OK', infoOnly: true });
+    }
+    refreshTeam();
+    setReload((n) => n + 1);
+  };
+
   const howTheyGotIn = (user: TeamUser) => {
-    if (admins.includes(user.email) || user.source === 'admin') return 'Admin';
+    if (user.owner) return 'Owner';
     return user.invited_by ? `Invited by ${nameOf(user.invited_by)}` : 'Invited';
   };
 
@@ -210,24 +273,30 @@ export default function TeamSettingsPage() {
 
             <SettingsCard
               title="People"
-              subtitle="Only people added here can sign in. Adding someone gives you a one-time setup code to send them; they use it once to choose their password. Members create and edit links, UTMs and invoices; only admins change settings or delete."
+              subtitle={
+                canManage
+                  ? 'Only people added here can sign in. Adding someone gives you a one-time setup code to send them; they use it once to choose their password. Everyone starts as a member. Turn on Admin when you want to hand someone settings and bigger changes.'
+                  : 'Only people added here can sign in. Only the owner can add or remove people, or change who is an admin.'
+              }
             >
-              <div className="team-invite">
-                <input
-                  className="input"
-                  type="email"
-                  placeholder="name@anydomain.com"
-                  value={invite}
-                  onChange={(e) => setInvite(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void sendInvite()}
-                  aria-label="Email to invite"
-                />
-                <button className="btn btn-primary btn-sm" onClick={() => void sendInvite()}>
-                  <Plus />
-                  <span>Add member</span>
-                </button>
-                {inviteError && <span style={{ color: 'var(--destructive)', fontSize: '12px' }}>{inviteError}</span>}
-              </div>
+              {canManage && (
+                <div className="team-invite">
+                  <input
+                    className="input"
+                    type="email"
+                    placeholder="name@anydomain.com"
+                    value={invite}
+                    onChange={(e) => setInvite(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && void sendInvite()}
+                    aria-label="Email to invite"
+                  />
+                  <button className="btn btn-primary btn-sm" onClick={() => void sendInvite()}>
+                    <Plus />
+                    <span>Add member</span>
+                  </button>
+                  {inviteError && <span style={{ color: 'var(--destructive)', fontSize: '12px' }}>{inviteError}</span>}
+                </div>
+              )}
               <div className="setting-list">
                 {users.map((user) => (
                   <div className={`setting-list-row team-row${user.status === 'removed' ? ' is-removed' : ''}`} key={user.email}>
@@ -236,15 +305,29 @@ export default function TeamSettingsPage() {
                       <div className="primary">
                         {user.display_name}
                         {user.email === me?.email && <span className="secondary"> (you)</span>}{' '}
-                        <span className={`role-badge${user.role === 'admin' ? ' is-admin' : ''}`}>{user.role === 'admin' ? 'Admin' : 'Member'}</span>
+                        <span className={`role-badge is-${roleName(user)}`}>{ROLE_LABEL[roleName(user)]}</span>
                       </div>
                       <div className="secondary">
                         {user.email} · {howTheyGotIn(user)}
                       </div>
+                      <div className="secondary">{ACCESS_SUMMARY[roleName(user)]}</div>
                     </div>
                     <span className="secondary">{statusText(user)}</span>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
-                      {user.role !== 'admin' && user.email !== me?.email && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {canManage && !user.owner && user.status !== 'removed' && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={user.role === 'admin'}
+                          aria-label={`Admin access for ${user.display_name}`}
+                          className={`toggle toggle-btn${user.role === 'admin' ? ' on' : ''}`}
+                          onClick={() => void setAdmin(user, user.role !== 'admin')}
+                        >
+                          <span className="toggle-switch" />
+                          <span className="toggle-label">Admin</span>
+                        </button>
+                      )}
+                      {user.email !== me?.email && (
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => void setActor(user.email)}
@@ -253,12 +336,13 @@ export default function TeamSettingsPage() {
                           Activity
                         </button>
                       )}
-                      {user.status === 'invited' && user.role !== 'admin' && (
+                      {canManage && !user.owner && user.status === 'invited' && (
                         <button className="btn btn-outline btn-sm" onClick={() => void newCode(user)}>
                           New code
                         </button>
                       )}
-                      {user.role !== 'admin' &&
+                      {canManage &&
+                        !user.owner &&
                         (user.status === 'removed' ? (
                           <button className="btn btn-outline btn-sm" onClick={() => void reinvite(user)}>
                             Re-invite
@@ -272,6 +356,39 @@ export default function TeamSettingsPage() {
                   </div>
                 ))}
               </div>
+            </SettingsCard>
+
+            <SettingsCard
+              title="What each role can do"
+              subtitle="Members cannot open Settings. When you need bigger changes done, turn on Admin for that person above. Turn it off again when you are done."
+            >
+              <table className="access-table">
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <span className="sr-only">Area</span>
+                    </th>
+                    <th scope="col">Member</th>
+                    <th scope="col">Admin</th>
+                    <th scope="col">Owner</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ACCESS.map((row) => (
+                    <tr key={row.what}>
+                      <th scope="row">
+                        <span className="access-what">{row.what}</span>
+                        {row.hint && <span className="access-hint">{row.hint}</span>}
+                      </th>
+                      <td data-label="Member">{row.member ? <Yes /> : <No />}</td>
+                      <td data-label="Admin">{row.admin ? <Yes /> : <No />}</td>
+                      <td data-label="Owner">
+                        <Yes />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </SettingsCard>
 
             <SettingsCard title="Activity" subtitle="Every change to links, UTMs, invoices, settings and the team, newest first.">

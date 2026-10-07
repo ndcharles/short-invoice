@@ -56,6 +56,29 @@ export function findByName(db: D1Database, kind: CollectionKind, name: string) {
   return db.prepare(`SELECT * FROM ${TABLE[kind]} WHERE name = ?1 COLLATE NOCASE`).bind(name).first<CollectionItem>();
 }
 
+/**
+ * Members pick folders and tags from the lists admins maintain; typing a new
+ * name into a link, UTM or invoice must not create one by the back door.
+ * Returns the message to send back, or null when every pick is allowed. Admins
+ * are not checked, and a value the record already carries is always accepted
+ * (so editing something older never fails).
+ */
+export async function unknownPick(
+  db: D1Database,
+  user: { role: string },
+  picks: { kind: CollectionKind; value: string | null | undefined; current?: string | null }[]
+): Promise<string | null> {
+  if (user.role === 'admin') return null;
+  for (const { kind, value, current } of picks) {
+    const name = value?.trim();
+    if (!name || (current && current.toLowerCase() === name.toLowerCase())) continue;
+    if (!(await findByName(db, kind, name))) {
+      return `${kind === 'folders' ? 'Folder' : 'Tag'} "${name}" does not exist. Ask an admin to add it first.`;
+    }
+  }
+  return null;
+}
+
 export async function createCollection(
   db: D1Database,
   kind: CollectionKind,

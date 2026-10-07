@@ -19,6 +19,7 @@ import { getSettings, type SettingsMap } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin, type CurrentUser } from '../lib/auth';
+import { unknownPick } from '../lib/collections';
 import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
@@ -147,6 +148,11 @@ invoices.post('/', async (c) => {
 
   const db = c.env.DB;
   const now = Date.now();
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder },
+    { kind: 'tags', value: input.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   const settings = await getSettings(db);
   const defaults = invoiceDefaults(settings, now);
 
@@ -369,6 +375,11 @@ invoices.patch('/:id', async (c) => {
 
   const existing = await db.prepare('SELECT * FROM invoices WHERE id = ?1').bind(id).first<InvoiceRow>();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
+  const notAllowed = await unknownPick(db, c.var.user, [
+    { kind: 'folders', value: input.folder, current: existing.folder },
+    { kind: 'tags', value: input.tag, current: existing.tag },
+  ]);
+  if (notAllowed) return c.json({ error: notAllowed }, 400);
   if (input.client_name !== undefined && !input.client_name) return c.json({ error: 'A client name is required' }, 400);
   if (input.number !== undefined) {
     if (!input.number) return c.json({ error: 'An invoice number is required' }, 400);

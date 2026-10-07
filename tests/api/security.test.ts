@@ -81,6 +81,8 @@ describe('what members cannot do', () => {
       ['DELETE', '/api/links/x'],
       ['DELETE', '/api/utms/x'],
       ['DELETE', '/api/invoices/x'],
+      ['POST', '/api/collections', { kind: 'tags', name: 'x' }],
+      ['PATCH', '/api/team/users/a@example.org', { role: 'admin' }],
       ['PATCH', '/api/collections/x', { kind: 'tags', name: 'x' }],
       ['DELETE', '/api/collections/x?kind=tags'],
     ];

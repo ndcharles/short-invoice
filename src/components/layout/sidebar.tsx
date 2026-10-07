@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSettings } from '@/lib/collections';
-import { signOut, useMe } from '@/lib/team';
+import { ROLE_LABEL, roleName, signOut, useMe } from '@/lib/team';
 import { XIcon } from '@/components/icons';
 import { Portal } from '@/components/portal';
 
@@ -246,7 +246,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
           <div className="user-meta">
             <div className="user-name">
               {me?.name ?? <span className="skeleton skeleton-text" style={{ width: 90 }} />}
-              {me && <span className={`role-badge${admin ? ' is-admin' : ''}`}>{admin ? 'Admin' : 'Member'}</span>}
+              {me && <span className={`role-badge${admin ? ' is-admin' : ''}`}>{ROLE_LABEL[roleName(me)]}</span>}
             </div>
             <div className="user-email">{me?.email ?? ''}</div>
           </div>
@@ -299,7 +299,7 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="choice-modal-hint">
-            Signed in as <strong>{me?.email}</strong> ({me?.role === 'admin' ? 'admin' : 'member'}). Your name appears next to
+            Signed in as <strong>{me?.email}</strong> ({me ? ROLE_LABEL[roleName(me)].toLowerCase() : 'member'}). Your name appears next to
             the links, UTMs and invoices you create or change.
           </div>
           {error && <div style={{ color: 'var(--destructive)', fontSize: '12px' }}>{error}</div>}

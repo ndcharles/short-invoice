@@ -493,7 +493,9 @@ function EditLinkPageInner() {
                   </div>
                 ))}
                 <div className="dropdown-sep" />
-                {creatingTag ? (
+                {!admin ? (
+                  <div className="dropdown-note">Only admins can add tags</div>
+                ) : creatingTag ? (
                   <div className="dropdown-item" style={{ padding: 0 }}>
                     <input
                       className="input"
@@ -527,9 +529,11 @@ function EditLinkPageInner() {
                     <span>＋ Create tag</span>
                   </div>
                 )}
-                <Link href="/settings" className="dropdown-item">
-                  <span>Manage tags…</span>
-                </Link>
+                {admin && (
+                  <Link href="/settings" className="dropdown-item">
+                    <span>Manage tags…</span>
+                  </Link>
+                )}
               </div>
             )}
           </div>

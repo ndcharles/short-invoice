@@ -2864,6 +2864,9 @@ button.user-row { width: 100%; border: none; background: transparent; font: inhe
 .attribution { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.5; }
 .attribution strong { color: var(--foreground); font-weight: 500; }
 
+/* A non-interactive line inside a dropdown */
+.dropdown-note { padding: 6px 10px; font-size: 12px; color: var(--muted-foreground); }
+
 /* Settings → Team */
 .team-invite { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .team-invite .input { max-width: 280px; }
@@ -2952,4 +2955,32 @@ button.user-row { width: 100%; border: none; background: transparent; font: inhe
 /* The date line of a list card may wrap onto several lines on phones instead of pushing the page wider. */
 @media (max-width: 760px) {
   .link-dest-meta { flex-shrink: 1; max-width: 100%; min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+}
+
+/* Team: who can do what */
+.role-badge.is-owner { background: var(--foreground); color: white; border-color: transparent; }
+.toggle-btn { border: none; background: transparent; padding: 2px 4px; font: inherit; color: var(--muted-foreground); font-size: 12px; border-radius: var(--radius); }
+.toggle-btn:hover { background: var(--muted); }
+.toggle-btn:focus-visible { outline: 2px solid var(--ring, var(--foreground)); outline-offset: 1px; }
+.toggle-btn.on { color: var(--foreground); }
+.access-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.access-table th, .access-table td { padding: 9px 6px; border-top: 1px solid var(--border); text-align: center; vertical-align: top; font-weight: 400; }
+.access-table thead th { border-top: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); width: 64px; }
+.access-table thead th:first-child { width: auto; }
+.access-table tbody th { text-align: left; }
+.access-what { display: block; font-weight: 500; color: var(--foreground); }
+.access-hint { display: block; font-size: 12px; color: var(--muted-foreground); margin-top: 1px; line-height: 1.4; }
+.access-yes { color: var(--foreground); font-weight: 600; }
+.access-no { color: var(--subtle-foreground, #a3a3a3); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* On a phone the table restacks: the name on top, then "Member ✓  Admin ✓  Owner ✓" underneath. */
+@media (max-width: 560px) {
+  .access-table, .access-table tbody { display: block; }
+  .access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .access-table tbody tr { display: grid; grid-template-columns: repeat(3, 84px); justify-content: start; gap: 4px 18px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .access-table tbody tr:first-child { border-top: none; }
+  .access-table tbody th { grid-column: 1 / -1; border-top: none; padding: 0 0 2px; }
+  .access-table td { border-top: none; padding: 0; text-align: left; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); }
+  .access-table td::before { content: attr(data-label); }
 }

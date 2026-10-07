@@ -105,12 +105,9 @@ app.use('/api/settings/*', adminWrites);
 app.use('/api/settings', adminWrites);
 app.use('/api/domains/*', adminWrites);
 app.use('/api/domains', adminWrites);
-// Anyone may add a folder or tag while organising their own work (the link and
-// invoice dialogs do); renaming, recolouring and deleting them is settings.
-const collectionEdits = async (c: Context<AppEnv>, next: () => Promise<void>) =>
-  ['GET', 'HEAD', 'POST'].includes(c.req.method) ? next() : requireAdmin(c, next);
-app.use('/api/collections/*', collectionEdits);
-app.use('/api/collections', collectionEdits);
+// Everyone may pick from the folders and tags; only admins create or change them.
+app.use('/api/collections/*', adminWrites);
+app.use('/api/collections', adminWrites);
 app.use('/api/email/*', requireAdmin);
 app.use('/api/export', requireAdmin);
 app.use('/api/export/*', requireAdmin);
