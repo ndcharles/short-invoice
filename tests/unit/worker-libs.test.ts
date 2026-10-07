@@ -3,6 +3,7 @@ import { checkFetchUrl, isBlockedHost, readLimited } from '../../worker/lib/ssrf
 import { decryptSecret, encryptSecret, isEncrypted } from '../../worker/lib/secrets';
 import { newSetupCode, normaliseCode, passwordProblem, setupCodeMatches, sha256, listOf, displayName } from '../../worker/lib/auth';
 import { buildMessage } from '../../worker/lib/mime';
+import { cloakPage } from '../../worker/lib/cloak';
 import { mailSetup, parseSendRequest, isMailAddress, MAX_RECIPIENTS } from '../../worker/lib/invoice-mail';
 import { changedFields } from '../../worker/lib/activity';
 import { initials } from '../../worker/lib/initials';
@@ -280,5 +281,35 @@ describe('mailSetup', () => {
     expect(res.ok && res.value.smtp).toMatchObject({ host: 'other.example.com', password: 'pw' });
     expect(mailSetup(settings, { smtp_host: 'not a host' })).toMatchObject({ ok: false });
     expect(mailSetup(settings, { smtp_security: 'ssl3' })).toMatchObject({ ok: false });
+  });
+});
+
+describe('cloaked link page', () => {
+  it('asks for the https version of an http destination on an https page (mixed content shows a blank page)', () => {
+    const page = cloakPage('charles', 'http://ndcharles.github.io/blog-roll', true);
+    expect(page.html).toContain('<iframe src="https://ndcharles.github.io/blog-roll"');
+    expect(page.html).not.toContain('src="http://');
+    expect(page.csp).toContain('upgrade-insecure-requests');
+    expect(page.csp).toContain('frame-src https:;');
+    expect(page.csp).toContain("frame-ancestors 'none'");
+  });
+
+  it('keeps the path, query and fragment, and leaves https destinations alone', () => {
+    expect(cloakPage('a', 'http://example.com/p?x=1&y=2#top', true).html).toContain('src="https://example.com/p?x=1&amp;y=2#top"');
+    expect(cloakPage('a', 'https://example.com/p', true).html).toContain('src="https://example.com/p"');
+  });
+
+  it('changes nothing over plain http (local development)', () => {
+    const page = cloakPage('a', 'http://localhost:9000/x', false);
+    expect(page.html).toContain('src="http://localhost:9000/x"');
+    expect(page.csp).toContain('frame-src http: https:');
+    expect(page.csp).not.toContain('upgrade-insecure-requests');
+  });
+
+  it('escapes the alias and the address', () => {
+    const page = cloakPage('<script>alert(1)</script>', 'https://example.com/"onload="x', true);
+    expect(page.html).not.toContain('<script>');
+    expect(page.html).not.toContain('"onload="');
+    expect(page.html).toContain('&lt;script&gt;');
   });
 });

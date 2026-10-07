@@ -8,6 +8,7 @@ import { withUtm, pickUtm } from '../../src/lib/links/utm';
 import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
 import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
+import { cloakPage } from '../lib/cloak';
 
 /**
  * Which domain an alias is looked up on:
@@ -210,25 +211,8 @@ export async function serveLink(
   logClick(c, record.id);
 
   if (record.cloak) {
-    return c.html(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <title>${escapeHtml(alias)}</title>
-  <style>
-    body, html { margin:0; padding:0; height:100%; overflow:hidden; }
-    iframe { border:none; width:100%; height:100%; }
-  </style>
-</head>
-<body>
-  <iframe src="${escapeHtml(target)}" referrerpolicy="no-referrer"></iframe>
-</body>
-</html>`, 200, {
-      // This page only shows the destination in a frame; it loads nothing else and cannot be framed itself.
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-src http: https:; frame-ancestors 'none'",
-    });
+    const page = cloakPage(alias, target, new URL(c.req.url).protocol === 'https:');
+    return c.html(page.html, 200, { 'Content-Security-Policy': page.csp });
   }
 
   // 303 after a POST so the browser follows with a GET.
