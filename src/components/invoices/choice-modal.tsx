@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { XIcon } from '@/components/icons';
+import { Portal } from '@/components/portal';
 
 export interface Choice {
   label: string;
@@ -16,11 +17,14 @@ export function ChoiceModal({
   children,
   choices,
   onClose,
+  infoOnly = false,
 }: {
   title: string;
   children: React.ReactNode;
   choices: Choice[];
   onClose: () => void;
+  /** Just a message with one button: no Cancel. */
+  infoOnly?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -31,7 +35,7 @@ export function ChoiceModal({
   }, [onClose]);
 
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -46,9 +50,11 @@ export function ChoiceModal({
         </div>
         <div className="choice-modal-body">{children}</div>
         <div className="modal-footer">
-          <button className="btn btn-outline" onClick={onClose}>
-            Cancel
-          </button>
+          {infoOnly ? <span /> : (
+            <button className="btn btn-outline" onClick={onClose}>
+              Cancel
+            </button>
+          )}
           <div style={{ display: 'flex', gap: '8px' }}>
             {choices.map((choice) => (
               <button
@@ -63,7 +69,7 @@ export function ChoiceModal({
           </div>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }
 
@@ -72,6 +78,8 @@ interface ConfirmRequest {
   message: React.ReactNode;
   confirmLabel: string;
   destructive?: boolean;
+  /** A message with a single OK button instead of a question. */
+  infoOnly?: boolean;
 }
 
 /**
@@ -96,6 +104,7 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
   const modal = pending ? (
     <ChoiceModal
       title={pending.title}
+      infoOnly={pending.infoOnly}
       onClose={() => settle(false)}
       choices={[{ label: pending.confirmLabel, variant: pending.destructive ? 'danger' : 'primary', onSelect: () => settle(true) }]}
     >
@@ -104,4 +113,16 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
   ) : null;
 
   return [ask, modal];
+}
+
+/** In-app replacement for window.alert: `await notify('Title', 'Message')`. */
+export function useNotice(): [(title: string, message: React.ReactNode) => Promise<void>, React.ReactNode] {
+  const [ask, modal] = useConfirm();
+  const notify = React.useCallback(
+    async (title: string, message: React.ReactNode) => {
+      await ask({ title, message, confirmLabel: 'OK', infoOnly: true });
+    },
+    [ask]
+  );
+  return [notify, modal];
 }

@@ -7,6 +7,7 @@ import { CreateLinkModal } from '@/components/links/create-link-modal';
 import Link from 'next/link';
 import type { LinkItem } from '@/lib/types';
 import { useCollections, useSettings } from '@/lib/collections';
+import { useConfirm } from '@/components/invoices/choice-modal';
 import { useShortUrls } from '@/lib/use-short-url';
 import { usePopoverDismiss } from '@/lib/popover';
 import {
@@ -47,7 +48,10 @@ export default function LinksPage() {
   const { items: tags } = useCollections('tags');
   const activeFolder = folders.find((f) => f.name === folderFilter);
   const settings = useSettings();
+  const [ask, confirmModal] = useConfirm();
   const { urlFor } = useShortUrls(settings);
+  // Short URLs depend on which domains are verified, so hold the list until settings are known.
+  const pageLoading = loading || !settings;
   const tagColors = useMemo(() => new Map(tags.map((t) => [t.name, t.color])), [tags]);
 
   useEffect(() => {
@@ -77,12 +81,20 @@ export default function LinksPage() {
   }, [activeTab, search, folderFilter, reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  /** The Refresh menu item: reload and show the loading state so the click is visible. */
+  const manualRefresh = useCallback(() => {
+    setLoading(true);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   // Global 'C' shortcut to create link
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         (e.key === 'c' || e.key === 'C') &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
         !isModalOpen &&
         !openMenu &&
         !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)
@@ -112,8 +124,8 @@ export default function LinksPage() {
   const rangeStart = visible.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
   const rangeEnd = (currentPage - 1) * PAGE_SIZE + paged.length;
 
-  const isEmpty = !loading && counts.active + counts.archived === 0;
-  const hasNoResults = !loading && visible.length === 0 && !isEmpty;
+  const isEmpty = !pageLoading && counts.active + counts.archived === 0;
+  const hasNoResults = !pageLoading && visible.length === 0 && !isEmpty;
 
   const handleArchiveToggle = async (id: string, currentlyArchived: boolean) => {
     try {
@@ -129,7 +141,13 @@ export default function LinksPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this link? It stops redirecting immediately and its click history is removed.')) return;
+    const ok = await ask({
+      title: 'Delete this link?',
+      message: 'It stops redirecting immediately and its click history is removed. Archiving keeps it instead.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await fetch(`/api/links/${id}`, { method: 'DELETE' });
       refresh();
@@ -362,10 +380,9 @@ export default function LinksPage() {
           </button>
           {openMenu === 'more' && (
             <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
-              <div className="dropdown-item" onClick={() => { setOpenMenu(null); refresh(); }}>
+              <div className="dropdown-item" onClick={() => { setOpenMenu(null); manualRefresh(); }}>
                 <Refresh />
                 <span>Refresh</span>
-                <span className="kbd-hint">R</span>
               </div>
             </div>
           )}
@@ -373,7 +390,7 @@ export default function LinksPage() {
       </div>
 
       {/* Link list / empty states */}
-      {loading ? (
+      {pageLoading ? (
         <div className="link-list">
           {[0, 1, 2].map((i) => (
             <div key={i} className="link-card" style={{ opacity: 0.4 }}>
@@ -433,7 +450,7 @@ export default function LinksPage() {
       )}
 
       {/* Pagination — the design omits it entirely when there is nothing to page */}
-      {!loading && visible.length > 0 && (
+      {!pageLoading && visible.length > 0 && (
         <div className="pagination">
           <div>
             Viewing {rangeStart}–{rangeEnd} of {visible.length} links
@@ -462,6 +479,7 @@ export default function LinksPage() {
         onClose={() => setIsModalOpen(false)}
         onSuccess={() => refresh()}
       />
+      {confirmModal}
     </Shell>
   );
 }

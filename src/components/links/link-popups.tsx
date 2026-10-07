@@ -28,6 +28,7 @@ import { useSettings } from '@/lib/collections';
 import { parseList } from '@/lib/settings-json';
 import type { UtmPreset } from '@/lib/utm-builder';
 import { OG_DESC_MAX, OG_TITLE_MAX, OgContent } from '@/lib/og';
+import { Portal } from '@/components/portal';
 
 /* -------------------------------------------------------------------------- */
 /* Popup shell                                                                */
@@ -57,7 +58,7 @@ export function Popup({ title, kbd, hint, wide, onClose, children, footerLeft, f
   }, [onClose]);
 
   return (
-    <div
+    <Portal><div
       className="popup-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -84,7 +85,7 @@ export function Popup({ title, kbd, hint, wide, onClose, children, footerLeft, f
           <div className="popup-footer-right">{footerRight}</div>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }
 

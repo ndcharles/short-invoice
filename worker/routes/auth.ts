@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { readJsonObject } from '../lib/request';
+import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { activity } from '../lib/activity';
 import { parseText } from '../../src/lib/validate';
 import {
@@ -50,7 +51,7 @@ auth.get('/brand', async (c) => {
     "SELECT key, value FROM settings WHERE key IN ('workspace_name', 'workspace_logo')"
   ).all<{ key: string; value: string }>();
   const map = Object.fromEntries(results.map((r) => [r.key, r.value]));
-  return c.json({ name: map.workspace_name || 'Workspace', logo: map.workspace_logo || '' });
+  return c.json({ name: map.workspace_name || DEFAULT_SETTINGS.workspace_name, logo: map.workspace_logo || '' });
 });
 
 /** Step 1: which form comes next for this email, if any. */

@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { ChevronRight, XIcon } from '@/components/icons';
 import { InvoiceStatus, invoiceStatusPill } from '@/lib/invoices';
+import { Portal } from '@/components/portal';
 
 const STEPS: { id: InvoiceStatus; when: string; why: string }[] = [
   {
@@ -40,7 +41,7 @@ const STEPS: { id: InvoiceStatus; when: string; why: string }[] = [
 
 export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -128,6 +129,6 @@ export function InvoiceGuideModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }

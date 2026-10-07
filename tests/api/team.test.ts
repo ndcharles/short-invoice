@@ -89,13 +89,19 @@ describe('what members can do', () => {
     const checks = [
       api('PATCH', '/api/settings', { workspace_name: 'Hijacked' }, as(ADA)),
       api('POST', '/api/domains', { name: 'evil.example' }, as(ADA)),
-      api('POST', '/api/collections', { kind: 'tags', name: 'Nope' }, as(ADA)),
+      api('PATCH', '/api/collections/does-not-matter', { kind: 'tags', name: 'Nope' }, as(ADA)),
+      api('DELETE', '/api/collections/does-not-matter?kind=tags', undefined, as(ADA)),
       api('GET', '/api/export', undefined, as(ADA)),
       api('POST', '/api/email/test', {}, as(ADA)),
       api('POST', '/api/team/invites', { email: 'x@y.example' }, as(ADA)),
       api('GET', '/api/team/activity', undefined, as(ADA)),
     ];
     for (const res of await Promise.all(checks)) expect(res.status).toBe(403);
+    // Adding a tag or folder while organising work is allowed; changing or removing one is not.
+    const tag = await api('POST', '/api/collections', { kind: 'tags', name: `member-tag-${Date.now()}` }, as(ADA));
+    expect(tag.status).toBe(201);
+    expect((await api('PATCH', `/api/collections/${tag.body.item.id}`, { kind: 'tags', name: 'Renamed' }, as(ADA))).status).toBe(403);
+    expect((await api('DELETE', `/api/collections/${tag.body.item.id}?kind=tags`, undefined, as(ADA))).status).toBe(403);
     // Reading settings is fine: the invoice canvas needs them.
     expect((await api('GET', '/api/settings', undefined, as(ADA))).status).toBe(200);
   });

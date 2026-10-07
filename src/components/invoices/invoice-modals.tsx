@@ -5,6 +5,7 @@ import { XIcon } from '@/components/icons';
 import { currencySymbol, fmtMoney, round2 } from '@/lib/invoices';
 import { MoneyInput } from './money-input';
 import { useConfirm } from './choice-modal';
+import { Portal } from '@/components/portal';
 
 const NOTE_LIMIT = 2000;
 
@@ -88,7 +89,7 @@ export function LogPaymentModal({
   };
 
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -183,7 +184,7 @@ export function LogPaymentModal({
         </div>
       </div>
       {confirmModal}
-    </div>
+    </div></Portal>
   );
 }
 
@@ -294,7 +295,7 @@ export function SendModal({
   };
 
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !sending) onClose();
@@ -416,6 +417,6 @@ export function SendModal({
           </div>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }

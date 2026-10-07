@@ -240,7 +240,7 @@ function EditLinkPageInner() {
     setSaveError(null);
   };
 
-  if (loading) {
+  if (loading || !settings) {
     return (
       <Shell>
         <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading link…</div>

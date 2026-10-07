@@ -275,7 +275,7 @@ function EditInvoicePageInner() {
     else setError(data.error || 'Could not duplicate this invoice');
   };
 
-  if (loading && id) {
+  if ((loading || !cfg.loaded) && id) {
     return (
       <Shell>
         <div style={{ padding: '60px', textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading invoice…</div>

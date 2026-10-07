@@ -7,6 +7,7 @@ import { UtmForm } from '@/components/utms/utm-form';
 import type { UtmCampaign } from '@/lib/types';
 import { ChevronDown, Filter, FolderIcon, More, Plus, Refresh, Search, Sort, XIcon } from '@/components/icons';
 import { useCollections, useSettings } from '@/lib/collections';
+import { useConfirm } from '@/components/invoices/choice-modal';
 import { parseList } from '@/lib/settings-json';
 import { usePopoverDismiss } from '@/lib/popover';
 import {
@@ -17,6 +18,7 @@ import {
   UtmFields,
   validateUtmFields,
 } from '@/lib/utm-builder';
+import { Portal } from '@/components/portal';
 
 const PAGE_SIZE = 25;
 const SORTS = [
@@ -45,6 +47,7 @@ export default function UtmsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const settings = useSettings();
+  const [ask, confirmModal] = useConfirm();
   const format = useMemo(() => formatOptionsFromSettings(settings), [settings]);
   const presets = useMemo(() => parseList<UtmPreset>(settings?.utm_presets, []), [settings]);
   const { items: folders } = useCollections('folders');
@@ -73,12 +76,20 @@ export default function UtmsPage() {
   }, [activeTab, search, folderFilter, reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  /** The Refresh menu item: reload and show the loading state so the click is visible. */
+  const manualRefresh = useCallback(() => {
+    setLoading(true);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   // "C" opens the create modal
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         (e.key === 'c' || e.key === 'C') &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
         !createOpen &&
         !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)
       ) {
@@ -145,7 +156,13 @@ export default function UtmsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this campaign?')) return;
+    const ok = await ask({
+      title: 'Delete this UTM?',
+      message: 'The tracked URL record is removed. Archiving keeps it instead.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/utms/${id}`, { method: 'DELETE' });
     refresh();
   };
@@ -291,10 +308,9 @@ export default function UtmsPage() {
             </button>
             {openMenu === 'more' && (
               <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0 }}>
-                <div className="dropdown-item" onClick={() => { setOpenMenu(null); refresh(); }}>
+                <div className="dropdown-item" onClick={() => { setOpenMenu(null); manualRefresh(); }}>
                   <Refresh />
                   <span>Refresh</span>
-                  <span className="kbd-hint">R</span>
                 </div>
               </div>
             )}
@@ -375,7 +391,7 @@ export default function UtmsPage() {
 
       {/* Create campaign modal */}
       {createOpen && (
-        <div
+        <Portal><div
           className="modal-backdrop"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setCreateOpen(false);
@@ -428,8 +444,9 @@ export default function UtmsPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div></Portal>
       )}
+      {confirmModal}
     </Shell>
   );
 }

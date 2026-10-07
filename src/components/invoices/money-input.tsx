@@ -49,9 +49,18 @@ export function MoneyInput({
       autoComplete="off"
       value={shown}
       onFocus={(e) => {
-        setText(number === 0 ? '' : String(number));
         const input = e.currentTarget;
-        requestAnimationFrame(() => input.select());
+        const raw = number === 0 ? '' : String(number);
+        setText(raw);
+        // Swap to the raw number and select it right away, so whatever is typed or
+        // pasted next replaces it. A mouse click then moves the caret, so select
+        // again on the next frame.
+        input.value = raw;
+        input.select();
+        requestAnimationFrame(() => {
+          // Only if nothing has been typed meanwhile and the click collapsed the selection.
+          if (input.value === raw && input.selectionStart === input.selectionEnd) input.select();
+        });
         rest.onFocus?.(e);
       }}
       onBlur={(e) => {

@@ -38,12 +38,16 @@ npm test                         # unit + API tests
 npx wrangler d1 create short-invoice   # put the database_id in wrangler.jsonc
 npm run db:migrate
 npx wrangler secret put LINK_COOKIE_SECRET   # signs password-link unlock cookies
+npx wrangler secret put AUTH_PEPPER          # mixed into account password hashes
+npx wrangler secret put ADMIN_EMAILS         # who is an admin, e.g. you@example.com
 npm run deploy
+npm run setup-code -- you@example.com        # your first sign-in code
 ```
 
-Put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
-in front of the app host (bypass `/s/*`, which serves short links) before
-sharing it. The app has no login of its own yet.
+Sign-in is built in: open `/login`, enter the email, then the setup code, your
+name and a password. Admins add people in Settings → Team, which hands out a
+one-time setup code to pass on; there is no email involved and no third-party
+login service. See CLAUDE.md for how it works and what it protects against.
 
 To serve short links on your own domain, attach it to the Worker in the
 Cloudflare dashboard (Workers & Pages → short-invoice → Settings → Domains &

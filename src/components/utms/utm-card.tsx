@@ -138,22 +138,18 @@ export function UtmCard({
           <div className="dropdown-item" onClick={() => { closeMenu(); router.push(`/utms/edit?id=${encodeURIComponent(campaign.id)}`); }}>
             <Edit />
             <span>Edit</span>
-            <span className="kbd-hint">E</span>
           </div>
           <div className="dropdown-item" onClick={() => { closeMenu(); onDuplicate(campaign); }}>
             <Duplicate />
             <span>Duplicate</span>
-            <span className="kbd-hint">D</span>
           </div>
           <div className="dropdown-item" onClick={() => { copyUrl(); closeMenu(); }}>
             <Copy />
             <span>Copy URL</span>
-            <span className="kbd-hint">⌘C</span>
           </div>
           <div className="dropdown-item" onClick={() => { closeMenu(); onArchiveToggle(campaign.id, campaign.archived === 1); }}>
             <Archive />
             <span>{campaign.archived === 1 ? 'Unarchive' : 'Archive'}</span>
-            <span className="kbd-hint">A</span>
           </div>
           {admin && (
             <>
@@ -161,7 +157,6 @@ export function UtmCard({
           <div className="dropdown-item destructive" onClick={() => { closeMenu(); onDelete(campaign.id); }}>
             <Trash />
             <span>Delete</span>
-            <span className="kbd-hint">⌫</span>
           </div>
             </>
           )}

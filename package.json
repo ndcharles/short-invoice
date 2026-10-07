@@ -14,9 +14,11 @@
     "db:seed:local": "wrangler d1 execute short-invoice --local --file=seed/demo.sql && wrangler d1 execute short-invoice --local --file=seed/demo-invoices.sql",
     "tail": "wrangler tail",
     "setup-code": "node scripts/setup-code.mjs",
-    "test": "vitest run",
+    "test": "vitest run --project unit --project api",
     "test:unit": "vitest run --project unit",
-    "test:api": "vitest run --project api"
+    "test:api": "vitest run --project api",
+    "test:e2e": "vitest run --project e2e",
+    "test:all": "vitest run"
   },
   "dependencies": {
     "basecoat-css": "^1.0.2",
@@ -37,6 +39,7 @@
     "concurrently": "^10.0.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "playwright-core": "1.62.0",
     "typescript": "^5",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0"

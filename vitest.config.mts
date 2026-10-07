@@ -24,6 +24,19 @@ export default defineConfig({
           hookTimeout: 120_000,
         },
       },
+      {
+        // Real Chrome driving the built app: menus, buttons, forms, layout.
+        // Needs Google Chrome installed; run with `npm run test:e2e`.
+        extends: true,
+        test: {
+          name: 'e2e',
+          include: ['tests/e2e/**/*.test.ts'],
+          globalSetup: ['tests/setup/worker-e2e.ts'],
+          fileParallelism: false,
+          testTimeout: 45_000,
+          hookTimeout: 180_000,
+        },
+      },
     ],
   },
 });

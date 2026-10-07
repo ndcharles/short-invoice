@@ -36,6 +36,7 @@ import { DomainPicker } from '@/components/links/domain-picker';
 import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { expirationFromSetting } from '@/lib/links/defaults';
 import { usePopoverDismiss } from '@/lib/popover';
+import { Portal } from '@/components/portal';
 
 interface CreateLinkModalProps {
   isOpen: boolean;
@@ -212,7 +213,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
   };
 
   return (
-    <div
+    <Portal><div
       className="modal-backdrop"
       onMouseDown={(e) => {
         // mousedown (not click) so dismissing a stacked popup cannot
@@ -613,6 +614,6 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
           }}
         />
       )}
-    </div>
+    </div></Portal>
   );
 }

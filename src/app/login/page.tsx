@@ -45,7 +45,7 @@ function LoginInner() {
     fetch('/api/auth/brand')
       .then((res) => res.json())
       .then(setBrand)
-      .catch(() => setBrand({ name: 'Workspace', logo: '' }));
+      .catch(() => setBrand({ name: 'My workspace', logo: '' }));
   }, []);
 
   useEffect(() => {
@@ -117,11 +117,13 @@ function LoginInner() {
     <div className="login-page">
       <form className="login-card" onSubmit={onSubmit} noValidate>
         <div className="login-brand">
-          {brand?.logo ? (
+          {!brand ? (
+            <div className="login-logo login-logo-fallback skeleton" />
+          ) : brand.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={brand.logo} alt={brand.name} className="login-logo" />
           ) : (
-            <div className="login-logo login-logo-fallback">{(brand?.name ?? ' ').slice(0, 1).toUpperCase()}</div>
+            <div className="login-logo login-logo-fallback">{brand.name.slice(0, 1).toUpperCase()}</div>
           )}
           <div className="login-workspace">{brand?.name ?? ''}</div>
         </div>

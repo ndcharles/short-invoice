@@ -125,8 +125,8 @@ export default function GeneralSettingsPage() {
             <TagsCard />
 
             <SettingsCard
-              title="Access & data"
-              subtitle="Sign-in is handled by Cloudflare Access in front of this app, so there are no passwords to manage here."
+              title="Data"
+              subtitle="People and sign-in are managed under Team. Here you can take a copy of everything."
             >
               <SettingsRow
                 label="Export everything"
@@ -145,7 +145,7 @@ export default function GeneralSettingsPage() {
       <SaveBar
         visible={dirty}
         saving={saving}
-        message={savedAt && !dirty ? 'Saved!' : 'You have unsaved changes'}
+        message={error ?? (savedAt && !dirty ? 'Saved!' : 'You have unsaved changes')}
         onDiscard={discard}
         onSave={save}
       />

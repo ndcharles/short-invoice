@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
 import { Attribution } from '@/components/attribution';
-import { useConfirm } from '@/components/invoices/choice-modal';
+import { useConfirm, useNotice } from '@/components/invoices/choice-modal';
 import { useMe } from '@/lib/team';
 import { UtmForm } from '@/components/utms/utm-form';
 import type { UtmCampaign } from '@/lib/types';
@@ -32,6 +32,7 @@ function EditUtmPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [ask, confirmModal] = useConfirm();
+  const [notify, noticeModal] = useNotice();
   const admin = useMe().me?.role === 'admin';
   const id = searchParams.get('id') ?? '';
 
@@ -98,7 +99,7 @@ function EditUtmPageInner() {
   /** Campaign URLs are not tracked by themselves; a short link in front of one is. */
   const shorten = async () => {
     if (!url || dirty) {
-      if (dirty) alert('Save the campaign first.');
+      if (dirty) await notify('Save first', 'Save the campaign before creating a short link for it.');
       return;
     }
     setShortening(true);
@@ -112,7 +113,7 @@ function EditUtmPageInner() {
       if (!res.ok) throw new Error(data.error || 'Could not create the short link');
       router.push(`/links/edit?id=${encodeURIComponent(data.link.id)}`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not create the short link');
+      await notify('Could not create the short link', err instanceof Error ? err.message : 'Please try again.');
       setShortening(false);
     }
   };
@@ -207,6 +208,7 @@ function EditUtmPageInner() {
   return (
     <Shell>
       {confirmModal}
+      {noticeModal}
       <div className="crumb-bar">
         <div className="crumbs">
           <Link href="/utms">UTM Builder</Link>

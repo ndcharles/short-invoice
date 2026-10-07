@@ -2933,3 +2933,23 @@ button.user-row { width: 100%; border: none; background: transparent; font: inhe
   padding: 14px; background: var(--muted-2); border: 1px dashed var(--border-strong); border-radius: var(--radius);
   user-select: all;
 }
+
+/* Neutral placeholders shown until real data arrives (never a made-up logo or name) */
+.skeleton { background: var(--muted); border-radius: var(--radius-sm); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.skeleton.workspace-avatar, .avatar.skeleton { color: transparent; }
+.skeleton-text { display: inline-block; height: 12px; width: 110px; vertical-align: middle; }
+.login-logo-fallback.skeleton { background: var(--muted); }
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+/* Editors stack their two columns on small screens instead of scrolling sideways. */
+.edit-page-body > * { min-width: 0; }
+@media (max-width: 900px) {
+  .edit-page-body { grid-template-columns: minmax(0, 1fr); }
+  .edit-page-body .modal-left { border-right: 1px solid var(--border); }
+}
+
+/* The date line of a list card may wrap onto several lines on phones instead of pushing the page wider. */
+@media (max-width: 760px) {
+  .link-dest-meta { flex-shrink: 1; max-width: 100%; min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+}

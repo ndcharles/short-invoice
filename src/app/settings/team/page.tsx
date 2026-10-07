@@ -8,6 +8,7 @@ import { XIcon } from '@/components/icons';
 import { Plus } from '@/components/icons';
 import { refreshTeam, relativeTime, useMe, type TeamUser } from '@/lib/team';
 import { useConfirm } from '@/components/invoices/choice-modal';
+import { Portal } from '@/components/portal';
 
 interface ActivityRow {
   id: string;
@@ -339,7 +340,7 @@ function CodeModal({ issued, onClose }: { issued: { email: string; code: string;
   const [copied, setCopied] = useState(false);
   const message = `You have been added to our workspace.\n\n1. Open ${window.location.origin}/login\n2. Enter ${issued.email}\n3. Enter this setup code: ${issued.code}\n4. Choose your name and a password.\n\nThe code works once and expires on ${new Date(issued.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}.`;
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Portal><div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal choice-modal" role="dialog" aria-label="Setup code">
         <div className="modal-header">
           <div className="modal-title">Setup code for {issued.email}</div>
@@ -369,6 +370,6 @@ function CodeModal({ issued, onClose }: { issued: { email: string; code: string;
           </button>
         </div>
       </div>
-    </div>
+    </div></Portal>
   );
 }

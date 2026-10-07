@@ -21,7 +21,10 @@ function install() {
     'mousedown',
     (event) => {
       const target = event.target;
-      if (target instanceof Element && target.closest('[data-popover], [data-popover-root]')) return;
+      // Clicks inside any menu panel or on its trigger are the menu's own business.
+      // (Row menus on the list pages use `.dropdown` + `data-row-menu`, not `data-popover`;
+      // closing on their mousedown removed the item before its click could land.)
+      if (target instanceof Element && target.closest('[data-popover], [data-popover-root], [data-row-menu], .dropdown')) return;
       if (target instanceof Element && target.closest('.icon-btn')) {
         // let the trigger's own onClick toggle it
         return;
@@ -41,6 +44,8 @@ export function usePopoverDismiss(active: boolean, onClose: () => void) {
   useEffect(() => {
     install();
     if (!active) return;
+    // Only one menu is open at a time: opening this one closes every other.
+    for (const close of [...closers]) if (close !== onClose) close();
     closers.add(onClose);
     return () => {
       closers.delete(onClose);
