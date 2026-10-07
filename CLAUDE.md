@@ -31,8 +31,8 @@ path with no static file (`not_found_handling: "none"`). It handles:
 - `/.well-known/short-invoice`: token used by Settings → Verify for domains.
 - Anything else: the static app's 404 page.
 
-Cloudflare Access belongs on the **app host only**, with `/s/*` bypassed.
-Short domains (e.g. 4th.link) should not be behind Access at all.
+Sign-in is built in (see People, roles and activity). Short links on a short
+domain are always public; everything under `/api/*` needs a session.
 
 ## Commands
 
@@ -134,29 +134,39 @@ Settings UI. **The repo is public; never commit them.**
   `smtp_password_clear: 'true'` removes it. Any new secret goes in `SECRET_KEYS`.
 - Every attempt is logged in `invoice_emails` (migration 0002) and shown on the
   invoice; the log also caps sends at 100 per 24 h. There is no login yet, so
-  put Cloudflare Access in front of the app before saving real SMTP details.
+  sending also requires a signed-in admin or member.
 - `tests/api/email.test.ts` runs a fake SMTP server in the test process.
 
 ## People, roles and activity
 
-- Cloudflare Access proves who someone is (email one-time PIN or Google); the
-  Worker decides whether they may use the app (`worker/lib/auth.ts`,
-  `requireUser` on every `/api/*` call except health). The Access JWT is
-  verified in the Worker (`worker/lib/access-jwt.ts`) whenever
-  `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set; requests without a valid token
-  get 401, which also closes the API on short domains that are not behind Access.
-- Admins: the `ADMIN_EMAILS` secret (comma-separated). Members: anyone on a
-  domain in Settings → Team (`team_domains`), or invited there. Removed people
-  keep a `users` row with status `removed`, so a domain rule cannot let them back.
+- Sign-in is built into the Worker (`worker/lib/auth.ts`, `worker/routes/auth.ts`);
+  no Cloudflare Access. Only people an admin adds in Settings → Team can sign
+  in. Adding someone creates a one-time setup code (shown once, stored only as
+  a hash, 7 days, burned after 5 wrong tries) that the admin hands over; the
+  person uses it once with a name and password. Later sign-ins: email, then
+  password. Forgotten password: remove and re-invite (no emails are sent).
+- Unknown emails get `{ next: null }` from `/api/auth/check`, identical to a
+  rate-limited answer, and the sign-in page simply stays still.
+- Passwords: HMAC with the `AUTH_PEPPER` secret, then PBKDF2 (60k) with a
+  per-user salt. 5 wrong passwords lock the account (15 min, doubling, max a
+  day); per-IP limits on checks (30/15 min) and attempts (20/15 min) live in
+  `auth_limits` (hashed keys, no raw IPs).
+- Sessions: random 32-byte token in a `__Host-session` cookie (HttpOnly,
+  Secure, SameSite=Strict, 365 days); only its SHA-256 is in `sessions`.
+  Removing a person deletes all their sessions. `requireUser` guards every
+  `/api/*` route except health and `/api/auth/*`.
+- Admins: the `ADMIN_EMAILS` secret (comma-separated); everyone else is a
+  member. The first admin sign-in: `npm run setup-code -- you@x.com` (prints a
+  setup code; `--local` for the local database).
 - Members create and edit links, UTMs and invoices. Settings, domains,
   folders/tags, export, test email, team management and all deletes are
   admin-only (`requireAdmin`, see `worker/index.ts`).
 - Every write records `created_by`/`updated_by` (emails) and an `activity` row
   in the same batch (`worker/lib/activity.ts`). Invoice payments carry `by`,
   set on the server; emails carry `sent_by`.
-- Locally (no Access) you are a stand-in admin; send `x-dev-user: someone@x`
-  to act as someone else (localhost only). Deployed without Access the app is
-  unprotected and everyone acts as the first admin email.
+- Locally you sign in like in production (`npm run setup-code -- you@x.com
+  --local`). API tests run with `DEV_AUTH_BYPASS=1`, where a localhost request
+  with `x-dev-user: someone@x` acts as that person; never set it in production.
 
 ## UI gotchas
 
@@ -192,6 +202,4 @@ changes take up to 60 s to propagate and links must update instantly.
 
 ## Known gaps (next steps)
 
-- **No authentication.** Put Cloudflare Access (free up to 50 users) in front
-  of the app host, bypassing `/s/*`, before sharing the deployed URL.
 - Password-protected links have no attempt limit.

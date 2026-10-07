@@ -32,10 +32,10 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
   return new Uint8Array(bits);
 }
 
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string, iterations = ITERATIONS): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await derive(password, salt, ITERATIONS);
-  return `pbkdf2$${ITERATIONS}$${toB64(salt)}$${toB64(hash)}`;
+  const hash = await derive(password, salt, iterations);
+  return `pbkdf2$${iterations}$${toB64(salt)}$${toB64(hash)}`;
 }
 
 export async function verifyPassword(password: string, stored: string | null | undefined): Promise<boolean> {

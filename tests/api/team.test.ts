@@ -5,6 +5,7 @@ import type { InvoiceRow, LinkItem } from '@/lib/types';
 const as = (email: string) => ({ 'x-dev-user': email });
 const BOSS = 'boss@test.example';
 const ADA = 'ada@team.example';
+const CAROL = 'carol@team.example';
 const FRIEND = 'friend@gmail.com';
 
 interface Activity {
@@ -19,9 +20,11 @@ interface Activity {
 const feed = async (query = '') => (await api('GET', `/api/team/activity${query}`, undefined, as(BOSS))).body.activity as Activity[];
 
 beforeAll(async () => {
-  // The admin (from ADMIN_EMAILS) allows a domain; nobody else is in yet.
-  const saved = await api('PATCH', '/api/settings', { team_domains: JSON.stringify(['team.example']) }, as(BOSS));
-  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  // The admin (from ADMIN_EMAILS) adds Ada and Carol; everyone else is unknown.
+  for (const email of [ADA, CAROL]) {
+    const res = await api('POST', '/api/team/invites', { email }, as(BOSS));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+  }
 });
 
 describe('who gets in', () => {
@@ -30,42 +33,32 @@ describe('who gets in', () => {
     expect(res.body.user).toMatchObject({ email: BOSS, role: 'admin' });
   });
 
-  it('lets anyone on an allowed domain in as a member', async () => {
+  it('treats added people as members', async () => {
     const res = await api('GET', '/api/team/me', undefined, as(ADA));
     expect(res.status).toBe(200);
     expect(res.body.user).toMatchObject({ email: ADA, role: 'member' });
   });
 
-  it('refuses people who are not invited', async () => {
-    const res = await api('GET', '/api/links', undefined, as(FRIEND));
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe('not_invited');
+  it('refuses everyone else, including the company domain', async () => {
+    expect((await api('GET', '/api/links', undefined, as(FRIEND))).status).toBe(401);
+    expect((await api('GET', '/api/links', undefined, as('dave@team.example'))).status).toBe(401);
   });
 
-  it('refuses public email domains as allowed domains', async () => {
-    const res = await api('PATCH', '/api/settings', { team_domains: JSON.stringify(['gmail.com']) }, as(BOSS));
-    expect(res.status).toBe(400);
-  });
-
-  it('lets an admin invite any email, and remove and restore people', async () => {
-    expect((await api('POST', '/api/team/invites', { email: FRIEND }, as(BOSS))).status).toBe(201);
+  it('returns a one-time setup code when adding someone, and refuses duplicates', async () => {
+    const res = await api('POST', '/api/team/invites', { email: FRIEND }, as(BOSS));
+    expect(res.status).toBe(201);
+    expect(res.body.code).toMatch(/^[A-Z2-9]{5}-[A-Z2-9]{5}$/);
     expect((await api('POST', '/api/team/invites', { email: FRIEND }, as(BOSS))).status).toBe(409);
-    expect((await api('GET', '/api/team/me', undefined, as(FRIEND))).body.user.role).toBe('member');
-
-    expect((await api('DELETE', `/api/team/users/${encodeURIComponent(FRIEND)}`, undefined, as(BOSS))).status).toBe(200);
-    const blocked = await api('GET', '/api/links', undefined, as(FRIEND));
-    expect(blocked.status).toBe(403);
-    expect(blocked.body.code).toBe('removed');
-
-    expect((await api('POST', '/api/team/invites', { email: FRIEND }, as(BOSS))).status).toBe(201);
-    expect((await api('GET', '/api/links', undefined, as(FRIEND))).status).toBe(200);
+    // The code itself is never readable afterwards.
+    expect(JSON.stringify((await api('GET', '/api/team/users', undefined, as(BOSS))).body)).not.toContain(res.body.code);
   });
 
-  it('removing a domain member blocks them even though the domain is allowed', async () => {
-    const carol = 'carol@team.example';
-    expect((await api('GET', '/api/team/me', undefined, as(carol))).status).toBe(200);
-    await api('DELETE', `/api/team/users/${encodeURIComponent(carol)}`, undefined, as(BOSS));
-    expect((await api('GET', '/api/team/me', undefined, as(carol))).status).toBe(403);
+  it('removes and re-invites people', async () => {
+    expect((await api('DELETE', `/api/team/users/${encodeURIComponent(CAROL)}`, undefined, as(BOSS))).status).toBe(200);
+    expect((await api('GET', '/api/team/me', undefined, as(CAROL))).status).toBe(401);
+    const again = await api('POST', '/api/team/invites', { email: CAROL }, as(BOSS));
+    expect(again.status).toBe(201);
+    expect(again.body.code).toBeTruthy();
   });
 
   it('protects admins and yourself from removal', async () => {
@@ -77,9 +70,11 @@ describe('who gets in', () => {
     expect(member.body.users.find((u: { email: string }) => u.email === BOSS)).toEqual(
       expect.objectContaining({ email: BOSS, role: 'admin' })
     );
-    expect(member.body.users[0].last_seen_at).toBeUndefined();
+    expect(member.body.users[0].status).toBeUndefined();
     const admin = await api('GET', '/api/team/users', undefined, as(BOSS));
-    expect(admin.body.domains).toEqual(['team.example']);
+    const ada = admin.body.users.find((u: { email: string }) => u.email === ADA);
+    expect(ada).toMatchObject({ status: 'invited', code_state: 'valid' });
+    expect(JSON.stringify(admin.body)).not.toMatch(/password_hash|setup_code_hash|pbkdf2/);
   });
 
   it('lets each person set their own name', async () => {

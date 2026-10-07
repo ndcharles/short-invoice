@@ -11,6 +11,7 @@ import domains, { VERIFY_PATH, verifyToken } from './routes/domains';
 import exporter from './routes/export';
 import email from './routes/email';
 import team from './routes/team';
+import authRoutes from './routes/auth';
 import { requireAdmin, requireUser } from './lib/auth';
 import redirect, { missingLink, notFoundPage, serveLink, suppliedPassword } from './routes/redirect';
 import { isAppHost, readShortDomainConfig } from './lib/domains';
@@ -62,9 +63,11 @@ app.use('/api/*', async (c, next) => {
   return next();
 });
 
-// Every API call needs a signed-in, allowed person (Cloudflare Access in
-// production). Health stays open for uptime checks.
-app.use('/api/*', async (c, next) => (c.req.path === '/api/health' ? next() : requireUser(c, next)));
+// Every API call needs a signed-in person, except health and the sign-in
+// endpoints themselves.
+app.use('/api/*', async (c, next) =>
+  c.req.path === '/api/health' || c.req.path.startsWith('/api/auth/') ? next() : requireUser(c, next)
+);
 
 // Members use links, UTMs and invoices; workspace configuration is admin-only.
 const adminWrites = async (c: Context<AppEnv>, next: () => Promise<void>) =>
@@ -79,6 +82,7 @@ app.use('/api/email/*', requireAdmin);
 app.use('/api/export', requireAdmin);
 app.use('/api/export/*', requireAdmin);
 
+app.route('/api/auth', authRoutes);
 app.route('/api/team', team);
 app.route('/api/links', links);
 app.route('/api/utms', utms);
