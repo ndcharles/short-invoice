@@ -477,6 +477,11 @@ textarea.popup-input { min-height: 84px; resize: none; line-height: 1.5; }
   cursor: pointer;
 }
 .popup-icon-btn:hover { background: var(--muted); color: var(--foreground); }
+/* "Use the site default": the favicon as a tiny button, ringed while that part already is the site default */
+.site-default-btn { width: 24px; height: 24px; border-radius: 6px; }
+.site-default-btn img { display: block; border-radius: 3px; }
+.site-default-btn.is-active { border-color: var(--foreground); background: var(--muted); }
+.popup-footer-left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 
 /* Composed URL readout inside the UTM popup */
 .popup-url-preview {

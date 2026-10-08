@@ -12,6 +12,8 @@
  *   icon-192.png, icon-512.png  web app icons
  *   icon-maskable-512.png       web app icon that Android may crop to a circle or squircle
  *   og.png                      1200×630 social preview (mark + tagline)
+ *   site-default.png            1200×630 "site default" link preview (mark left, title and tagline right);
+ *                               the words come from src/lib/site-default.ts, which the editor also uses
  *
  * The social image is drawn by Chrome so the type is crisp: it needs Google
  * Chrome (set CHROME_PATH if it lives somewhere unusual). Everything else only
@@ -23,6 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { chromium } from 'playwright-core';
+import { SITE_DEFAULT } from '../src/lib/site-default.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MASTER = path.join(ROOT, 'assets/brand/4e-logo.png');
@@ -90,11 +93,27 @@ function ico(entries) {
 }
 await write('favicon.ico', ico(sizes.map((size, i) => ({ size, data: images[i] }))));
 
-// 3. Social preview, 1200×630. Everything sits in the middle so a square centre-crop (WhatsApp, iMessage) still shows it all.
-console.log('Social preview:');
+/** The white mark on a transparent background, so it can sit on a gradient. The master is flat white on flat blue, so the green channel runs from the blue's (39) to white (255). */
+async function transparentMark(padding) {
+  const { data, info } = await sharp(MASTER).extractChannel('green').raw().toBuffer({ resolveWithObject: true });
+  const rgba = Buffer.alloc(info.width * info.height * 4, 255);
+  for (let i = 0; i < data.length; i += 1) rgba[i * 4 + 3] = Math.max(0, Math.min(255, Math.round(((data[i] - 39) / (255 - 39)) * 255)));
+  return png(
+    sharp(rgba, { raw: { width: info.width, height: info.height, channels: 4 } }).extract({
+      left: MARK.left - padding,
+      top: MARK.top - padding,
+      width: MARK.width + 2 * padding,
+      height: MARK.height + 2 * padding,
+    })
+  ).toBuffer();
+}
+const html = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// 3. Social images, 1200×630. Drawn by Chrome at 2× and brought down to size for smooth edges.
+console.log('Social images:');
 const chrome = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if (!existsSync(chrome)) {
-  console.error(`  Skipped og.png: Google Chrome not found at ${chrome}. Set CHROME_PATH and run again.`);
+  console.error(`  Skipped og.png and site-default.png: Google Chrome not found at ${chrome}. Set CHROME_PATH and run again.`);
   process.exitCode = 1;
 } else {
   const padding = 40;
@@ -106,21 +125,43 @@ if (!existsSync(chrome)) {
       height: MARK.height + 2 * padding,
     })
   ).toBuffer(); // same blue as the page behind it, so it blends in seamlessly
-  const html = `<!doctype html><meta charset="utf-8"><style>
+  const ogHtml = `<!doctype html><meta charset="utf-8"><style>
     html, body { margin: 0; width: 1200px; height: 630px; background: ${BLUE}; }
     body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; color: #fff;
            font-family: Inter, 'SF Pro Display', -apple-system, 'Helvetica Neue', Arial, sans-serif; }
     img { height: 290px; display: block; }
     p { margin: 0; font-size: 70px; line-height: 1.08; font-weight: 800; letter-spacing: -0.02em; text-align: center; }
   </style><img alt="" src="data:image/png;base64,${mark.toString('base64')}"><p>${TAGLINE.join('<br>')}</p>`;
+
+  // The "site default" preview: the mark on the left, a thin rule, then the title over the tagline.
+  const whiteMark = await transparentMark(0);
+  const split = SITE_DEFAULT.title.lastIndexOf(' ');
+  const siteHtml = `<!doctype html><meta charset="utf-8"><style>
+    html, body { margin: 0; width: 1200px; height: 630px; }
+    body { position: relative; overflow: hidden; color: #fff;
+           background: radial-gradient(ellipse 70% 90% at 88% 8%, rgba(255,255,255,0.13), transparent 60%),
+                       linear-gradient(135deg, #3A32DD 0%, ${BLUE} 55%, #241DAE 100%);
+           font-family: Inter, 'SF Pro Display', -apple-system, 'Helvetica Neue', Arial, sans-serif; }
+    .mark { position: absolute; left: 92px; top: 50%; width: 340px; transform: translateY(-50%); display: block; }
+    .rule { position: absolute; left: 504px; top: 150px; width: 2px; height: 330px; background: rgba(255,255,255,0.30); border-radius: 1px; }
+    .text { position: absolute; left: 566px; right: 72px; top: 50%; transform: translateY(-50%); }
+    h1 { margin: 0 0 24px; font-size: 76px; line-height: 1.04; font-weight: 800; letter-spacing: -0.025em; }
+    p { margin: 0; font-size: 33px; line-height: 1.38; font-weight: 500; color: rgba(255,255,255,0.9); letter-spacing: -0.005em; }
+  </style>
+  <img class="mark" alt="" src="data:image/png;base64,${whiteMark.toString('base64')}">
+  <div class="rule"></div>
+  <div class="text"><h1>${html(SITE_DEFAULT.title.slice(0, split))}<br>${html(SITE_DEFAULT.title.slice(split + 1))}</h1><p>${html(SITE_DEFAULT.description)}</p></div>`;
+
   const browser = await chromium.launch({ executablePath: chrome, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 2 });
-    await page.setContent(html);
-    await page.evaluate(() => document.fonts.ready);
-    const shot = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 1200, height: 630 } });
-    // Drawn at 2× and brought down to 1200×630 for smooth edges.
-    await write('og.png', await png(sharp(shot).resize(1200, 630, { kernel: 'lanczos3' })).toBuffer());
+    for (const [name, markup] of [['og.png', ogHtml], ['site-default.png', siteHtml]]) {
+      const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 2 });
+      await page.setContent(markup);
+      await page.evaluate(() => document.fonts.ready);
+      const shot = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 1200, height: 630 } });
+      await write(name, await png(sharp(shot).resize(1200, 630, { kernel: 'lanczos3' })).toBuffer());
+      await page.close();
+    }
   } finally {
     await browser.close();
   }

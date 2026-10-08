@@ -3,9 +3,10 @@ import type { RemoteOg } from '../../src/lib/og';
 import { fetchPageMeta } from './page-meta';
 
 /**
- * A cloaked link shows its destination's own title, description and image (unless the owner wrote
- * their own). The destination is not fetched on every click: what it said is kept on the link
- * (`links.dest_meta`), fetched in the background after a save or a visit, and refreshed from time to time.
+ * Every link remembers what its destination says about itself: its own title, description and image.
+ * A cloaked link shows them (unless the owner wrote their own) and the editor's preview starts from them.
+ * The destination is not fetched on every click or every time the editor opens: what it said is kept on
+ * the link (`links.dest_meta`), fetched in the background after a save or a visit, and refreshed from time to time.
  */
 
 export interface DestPreview {
@@ -108,16 +109,40 @@ export async function refreshPreview(
 }
 
 /**
- * After a save or a visit: if this is a cloaked link whose destination details are missing or out of date,
- * fetch them in the background (after the response has gone out). Does nothing for other links, and nothing
- * when DEST_PREVIEW_FETCH is "off".
+ * After a save, a visit or the editor opening the link: if its destination details are missing or out of
+ * date, fetch them in the background (after the response has gone out). Does nothing while they are fresh,
+ * and nothing when DEST_PREVIEW_FETCH is "off".
  */
 export function scheduleRefresh(
   env: { DB: D1Database; DEST_PREVIEW_FETCH?: string },
   ctx: { waitUntil(promise: Promise<unknown>): void },
-  link: { id: string; dest: string; cloak: number; dest_meta?: string | null }
+  link: { id: string; dest: string; dest_meta?: string | null }
 ): void {
-  if (!link.cloak || env.DEST_PREVIEW_FETCH === 'off') return;
+  if (env.DEST_PREVIEW_FETCH === 'off') return;
   if (!previewIsStale(readPreview(link.dest_meta))) return;
   ctx.waitUntil(refreshPreview(env.DB, { id: link.id, dest: link.dest, dest_meta: link.dest_meta ?? null }).catch((err) => console.error('preview refresh failed', err)));
+}
+
+/** What the editor is given about the stored copy: only the destination's own details and how current they are. */
+export interface PreviewSummary {
+  title: string | null;
+  description: string | null;
+  image: string | null;
+  siteName: string | null;
+  state: DestPreview['state'];
+  /** When this was last tried (epoch ms). */
+  fetched_at: number;
+}
+
+export function summaryOf(preview: DestPreview | null): PreviewSummary | null {
+  const remote = remoteFrom(preview);
+  if (!preview || !remote) return null;
+  return {
+    title: remote.title ?? null,
+    description: remote.description ?? null,
+    image: remote.image ?? null,
+    siteName: remote.siteName ?? null,
+    state: preview.state,
+    fetched_at: preview.at,
+  };
 }

@@ -241,8 +241,8 @@ describe('links that are not cloaked are untouched', () => {
   });
 });
 
-describe('the stored copy stays on the server', () => {
-  it('is in no API response and not in the export', async () => {
+describe('the raw stored copy stays on the server', () => {
+  it('is in no API response and not in the export (the editor gets a cleaned-up preview on a single link instead)', async () => {
     const { alias, id } = await cloaked();
     const everything = JSON.stringify([
       (await api('GET', `/api/links/${id}`)).body,
@@ -251,6 +251,82 @@ describe('the stored copy stays on the server', () => {
       (await api('GET', '/api/export')).body,
     ]);
     expect(everything).not.toContain('dest_meta');
-    expect(everything).not.toContain('Blog Roll | Charles');
+    expect((await api('GET', '/api/export')).body.links.some((l: Record<string, unknown>) => 'preview' in l)).toBe(false);
+  });
+});
+
+describe('every link keeps what its destination says, cloaked or not, and the editor gets it', () => {
+  /** A link that is NOT cloaked, with its destination's details already stored. */
+  async function plain(details: object | null = DESTINATION) {
+    const alias = uniqueAlias('pv');
+    const created = await api('POST', '/api/links', { dest: 'https://example.com/blog-roll', alias });
+    expect(created.status).toBe(201);
+    const id = created.body.link.id as string;
+    if (details) sqlite(`UPDATE links SET dest_meta = ${quote(JSON.stringify({ state: 'ok', at: 1_800_000_000_000, ...details }))} WHERE id = ${quote(id)}`);
+    return { alias, id, created: created.body.link };
+  }
+
+  it('a single link carries a cleaned-up preview: the destination\'s details and when they were last fetched', async () => {
+    const { id } = await plain();
+    const link = (await api('GET', `/api/links/${id}`)).body.link;
+    expect(link.preview).toEqual({ ...DESTINATION, state: 'ok', fetched_at: 1_800_000_000_000 });
+    expect(link).not.toHaveProperty('dest_meta');
+    // Saving returns it too, so the editor never has to ask again.
+    const saved = (await api('PATCH', `/api/links/${id}`, { comments: 'a note' })).body.link;
+    expect(saved.preview).toMatchObject({ title: 'Blog Roll | Charles' });
+  });
+
+  it('is empty (null) for a link nothing is known about yet, such as one just created', async () => {
+    const { id, created } = await plain(null);
+    expect(created.preview).toBeNull();
+    expect((await api('GET', `/api/links/${id}`)).body.link.preview).toBeNull();
+  });
+
+  it('is left out of lists, which only need the links themselves', async () => {
+    const { alias } = await plain();
+    const list = (await api('GET', `/api/links?search=${alias}`)).body.links;
+    expect(list).toHaveLength(1);
+    expect(list[0]).not.toHaveProperty('preview');
+    expect(list[0]).not.toHaveProperty('dest_meta');
+  });
+
+  it('never offers a non-web image, and is empty when nothing usable was found', async () => {
+    const hostile = await plain({ title: 'Fine', image: 'javascript:alert(1)' });
+    expect((await api('GET', `/api/links/${hostile.id}`)).body.link.preview).toMatchObject({ title: 'Fine', image: null });
+    const nothing = await plain({ title: null, description: null, image: 'data:image/png;base64,AAAA', siteName: null });
+    expect((await api('GET', `/api/links/${nothing.id}`)).body.link.preview).toBeNull();
+  });
+
+  it('is dropped when the destination changes, so the editor never shows the old site under the new address', async () => {
+    const { id } = await plain();
+    const moved = (await api('PATCH', `/api/links/${id}`, { dest: 'https://example.com/other-page' })).body.link;
+    expect(moved.preview).toBeNull();
+    expect((await api('GET', `/api/links/${id}`)).body.link.preview).toBeNull();
+  });
+
+  it('keeps a custom preview on a link that is not cloaked, and the destination\'s own details alongside it', async () => {
+    const { id } = await plain();
+    await api('PATCH', `/api/links/${id}`, { custom_preview: 1, og_title: 'My own title', og_description: 'My own words', og_image: 'https://mine.example.com/p.png' });
+    const link = (await api('GET', `/api/links/${id}`)).body.link;
+    expect(link).toMatchObject({ cloak: 0, custom_preview: 1, og_title: 'My own title', og_description: 'My own words', og_image: 'https://mine.example.com/p.png' });
+    expect(link.preview).toMatchObject({ title: 'Blog Roll | Charles' }); // still there, so the editor can offer "reset to destination"
+  });
+});
+
+describe('the site default preview', () => {
+  const SITE_TITLE = '4th Entity Technologies';
+  const SITE_TEXT = 'AI, Data And Technology Training, Consulting, & Solutions.';
+
+  it('can be saved as a custom preview and is what a cloaked link then shows (title, description and image)', async () => {
+    const { alias, id } = await cloaked();
+    const image = `${baseUrl()}/site-default.png`;
+    const saved = await api('PATCH', `/api/links/${id}`, { custom_preview: 1, og_title: SITE_TITLE, og_description: SITE_TEXT, og_image: image });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const html = await page(alias);
+    expect(titleOf(html)).toBe(SITE_TITLE);
+    expect(meta(html, 'og:title')).toBe(SITE_TITLE);
+    expect(meta(html, 'og:description')).toBe(SITE_TEXT.replace('&', '&amp;'));
+    expect(meta(html, 'og:image')).toBe(image);
+    expect(meta(html, 'twitter:card')).toBe('summary_large_image');
   });
 });

@@ -122,14 +122,19 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   - Cloaked links: an https page cannot frame an http page (mixed content, a
     blank page). On https `cloakPage()` rewrites the frame to https and adds
     `upgrade-insecure-requests`.
-- **Cloaked link previews** (`worker/lib/cloak.ts`, `dest-preview.ts`, `page-meta.ts`). The cloak
-  page is only a frame, so it carries the destination's own title (browser tab), description and
-  image (social tags), unless the owner wrote their own.
-  - What the destination said is kept in `links.dest_meta` (JSON, migration 0005: `state`
-    ok/failed/pending, `at`, title, description, image, siteName). It is **never fetched while a
-    visitor waits**: `scheduleRefresh()` runs it in `waitUntil` after a create or update and after a
-    visit when the copy is missing or stale (a good copy lasts 7 days, a failed one is retried after
-    1 hour, a "pending" marker is forgotten after 60 s). The first caller claims the job with a
+- **Link previews** (`worker/lib/cloak.ts`, `dest-preview.ts`, `page-meta.ts`). Every link keeps
+  what its destination says about itself (title, description, image), cloaked or not. The editor
+  starts from that copy, and a cloaked link's page (only a frame) carries it as its title (browser
+  tab) and social tags, unless the owner wrote their own.
+  - It is kept in `links.dest_meta` (JSON, migration 0005: `state` ok/failed/pending, `at`, title,
+    description, image, siteName). It is **never fetched while a visitor waits or the editor
+    loads**: `scheduleRefresh()` runs it in `waitUntil` after a create or update, after a visit,
+    and when the editor opens the link, whenever the copy is missing or stale (a good copy lasts
+    7 days, a failed one is retried after 1 hour, a "pending" marker is forgotten after 60 s).
+  - A single-link response (GET/POST/PATCH `/api/links/:id`) carries a cleaned-up `preview`
+    (`summaryOf()`); lists do not. Call `publicLink(row)` explicitly in `.map` (a bare `.map(publicLink)`
+    would pass the index as the "with preview" flag). The editor uses `link.preview` while the
+    address is still the saved one, and looks live (debounced) only for an address just typed. The first caller claims the job with a
     compare-and-swap `UPDATE`, so simultaneous visitors fetch once, and the result is saved only if
     `dest` has not changed meanwhile. Updating a link clears `dest_meta` when `dest` changes.
   - The tags come from `resolveOg()` (shared with the editor's preview): the owner's text/image
@@ -141,6 +146,12 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
     escaped and the image must be a web address. `dest_meta` is stripped from API responses and the export.
   - `DEST_PREVIEW_FETCH=off` stops the background fetching (the test Workers set it so tests never
     touch the network; it is also a kill-switch). Tests set up `dest_meta` directly.
+  - **Site default.** The Link Preview popup has a tiny favicon button per part (image, title,
+    description) and "Use site default" for all three. The company's wording lives in one place,
+    `src/lib/site-default.ts`; `public/site-default.png` is drawn from those same words by
+    `npm run brand`. The image address stored is absolute on the address the editor was opened at
+    (crawlers need that), and the popup recognises it again with `isSiteDefaultImage()`. "Reset to
+    destination" clears the owner's wording; do not call anything else "default" in that popup.
 - **Headers.** `worker/index.ts` adds nosniff, Referrer-Policy, COOP,
   `X-Frame-Options: DENY` and HSTS to every response; `public/_headers` does the
   same for static files. Worker-generated pages (password, cloak, expired) carry
@@ -173,6 +184,8 @@ Every icon and the social image are built from one master, `assets/brand/4e-logo
 if Chrome lives elsewhere). To change the logo, replace the master and run it again;
 commit the regenerated files in `public/`.
 
+- `site-default.png` (1200×630): the "site default" link preview, with the mark at the left and
+  the title and tagline at the right (see Link previews).
 - `favicon.ico` (16/32/48) plus 16 and 32 px PNGs, cropped a little tighter than the
   master so the mark stays legible in a tab; `apple-touch-icon.png` (180);
   `icon-192.png`, `icon-512.png` and `icon-maskable-512.png` (listed in
@@ -380,9 +393,10 @@ RTT, several of them). There is no app-side fix; do not cache redirects.
 ## Known gaps (next steps)
 
 - Duplicating a link or UTM does not copy anything to the clipboard (only creating does).
-- "Upload an image" in Link Preview cannot be saved: it produces a `data:` URL and the server only
-  accepts an `https://` address for `og_image`. Fixing it means hosting the uploaded image (it must
-  not live in the `links` rows that lists read in bulk).
+- "Upload an image" in Link Preview still cannot be saved: it produces a `data:` URL and the server
+  only accepts an `https://` address for `og_image`. The site default icon covers the company's own
+  image, and any other image can be pasted as an address. Real uploads would need hosting the image
+  (it must not live in the `links` rows that lists read in bulk).
 - A custom preview (title, description, image) on a link that is not cloaked is stored but never
   served: social crawlers follow the redirect and see the destination's own tags.
 - A cloaked link to a destination that only works over plain `http` cannot be shown

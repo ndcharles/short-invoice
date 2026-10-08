@@ -50,6 +50,7 @@ describe('icons and social tags on the built site', () => {
       ['/icon-512.png', /image\/png/],
       ['/icon-maskable-512.png', /image\/png/],
       ['/og.png', /image\/png/],
+      ['/site-default.png', /image\/png/],
       ['/site.webmanifest', /application\/(manifest\+)?json/],
     ];
     for (const [path, type] of expected) {

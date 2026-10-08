@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parsePageMeta } from '../../worker/lib/page-meta';
 import {
-  PENDING_FOR_MS, REFRESH_AFTER_MS, RETRY_AFTER_MS, previewIsStale, readPreview, refreshPreview, remoteFrom, scheduleRefresh, type DestPreview,
+  PENDING_FOR_MS, REFRESH_AFTER_MS, RETRY_AFTER_MS, previewIsStale, readPreview, refreshPreview, remoteFrom, scheduleRefresh, summaryOf, type DestPreview,
 } from '../../worker/lib/dest-preview';
 
 describe('reading a page for its own title, description and image', () => {
@@ -193,21 +193,14 @@ describe('when a save or a visit starts a background fetch', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const link = (over: Partial<{ cloak: number; dest_meta: string | null }> = {}) => ({ id: 'lnk_1', dest, cloak: 1, dest_meta: null, ...over });
+  const link = (over: Partial<{ dest_meta: string | null }> = {}) => ({ id: 'lnk_1', dest, dest_meta: null, ...over });
 
-  it('fetches for a cloaked link that has nothing yet, after the response has gone out', async () => {
+  it('fetches for a link that has nothing yet, after the response has gone out', async () => {
     const { jobs, ctx } = after();
     scheduleRefresh({ DB: d1(db) }, ctx, link());
     expect(jobs).toHaveLength(1);
     await Promise.all(jobs);
     expect(JSON.parse(meta()!)).toMatchObject({ state: 'ok', title: 'Fetched' });
-  });
-
-  it('does nothing for a link that is not cloaked', async () => {
-    const { jobs, ctx } = after();
-    scheduleRefresh({ DB: d1(db) }, ctx, link({ cloak: 0 }));
-    expect(jobs).toHaveLength(0);
-    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('does nothing while what it knows is fresh, and again once it is a week old', async () => {
@@ -237,5 +230,21 @@ describe('when a save or a visit starts a background fetch', () => {
     scheduleRefresh({ DB: d1(db) }, ctx, link());
     await expect(Promise.all(jobs)).resolves.toBeDefined();
     expect(JSON.parse(meta()!).state).toBe('failed');
+  });
+});
+
+describe('what the editor is given about the stored copy', () => {
+  it('is only the destination\'s own details and how current they are', () => {
+    expect(summaryOf({ state: 'ok', at: 42, title: 'T', description: 'D', image: 'https://e.com/i.png', siteName: 'S' })).toEqual({
+      title: 'T', description: 'D', image: 'https://e.com/i.png', siteName: 'S', state: 'ok', fetched_at: 42,
+    });
+  });
+  it('is nothing when nothing useful was found, so the editor looks for itself', () => {
+    expect(summaryOf(null)).toBeNull();
+    expect(summaryOf({ state: 'failed', at: 1 })).toBeNull();
+    expect(summaryOf({ state: 'ok', at: 1, image: 'javascript:alert(1)' })).toBeNull();
+  });
+  it('keeps what an earlier good fetch found, even while a refresh runs or after a failure', () => {
+    for (const state of ['pending', 'failed'] as const) expect(summaryOf({ state, at: 9, title: 'Kept' })).toMatchObject({ title: 'Kept', state });
   });
 });

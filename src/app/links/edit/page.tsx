@@ -130,7 +130,13 @@ function EditLinkPageInner() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Declared before the loading guards so hook order stays stable.
-  const { remote, loading: ogLoading } = useOgMetadata(draft?.dest ?? '');
+  // What the destination says about itself: the copy the server keeps, while the address is still the saved
+  // one (instant, and it works even for sites that turn our lookups away); otherwise a live look at the address
+  // that was just typed.
+  const stored = link?.preview && draft && draft.dest.trim() === link.dest.trim() ? link.preview : null;
+  const { remote: liveRemote, loading: liveLoading } = useOgMetadata(stored ? '' : draft?.dest ?? '');
+  const remote = stored ?? liveRemote;
+  const ogLoading = !stored && liveLoading;
   const { items: folders } = useCollections('folders');
   const { items: tags, create: createTag } = useCollections('tags');
   const settings = useSettings();

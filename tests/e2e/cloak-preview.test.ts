@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, inject } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
-import { api, chromeAvailable, launch, openSession, seedLink } from './helpers';
+import { api, baseUrl, chromeAvailable, launch, openSession, seedLink } from './helpers';
 
 const run = chromeAvailable ? describe : describe.skip;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -34,6 +34,8 @@ afterAll(async () => {
   destination?.close();
 });
 
+/** Messages the editor logs in this sandbox: the guarded-address refusal (400) for the local test destination, and the made-up image host not resolving. */
+const EXPECTED_NOISE = /status of 400|ERR_NAME_NOT_RESOLVED/;
 const DESTINATION_SAYS = { title: 'Blog Roll | Charles', description: 'Posts I keep coming back to', image: 'https://cdn.example.com/cover.png', siteName: 'Charles' };
 
 /** A cloaked link whose destination's details are already known (the background fetch is switched off in tests). */
@@ -120,17 +122,103 @@ run('Changing a cloaked link\'s preview in the editor', () => {
       expect(await visitor.page.title()).toBe('Blog Roll | Charles');
       expect(await visitor.page.locator('meta[property="og:description"]').getAttribute('content')).toBe('My own description');
 
-      // "Reset to default" clears it all.
+      // "Reset to destination" clears it all.
       await p.locator('.custom-preview-row').click();
-      await dialog(p).getByRole('button', { name: 'Reset to default' }).click();
+      await dialog(p).getByRole('button', { name: 'Reset to destination' }).click();
       await p.locator('.save-bar').getByRole('button', { name: /Save/ }).click();
       await expect.poll(async () => (await stored(link.id)).custom_preview).toBe(0);
       const reset = await stored(link.id);
       expect([blank(reset.og_title), blank(reset.og_description), blank(reset.og_image)]).toEqual([true, true, true]);
       await visitor.page.goto(`/s/${link.alias}`);
       expect(await visitor.page.locator('meta[property="og:description"]').getAttribute('content')).toBe('Posts I keep coming back to');
-      // The editor asks the server to preview the destination; for this local test server the address guard refuses (400), by design.
-      expect(s.errors.filter((e) => !/status of 400/.test(e))).toEqual([]);
+      expect(s.errors.filter((e) => !EXPECTED_NOISE.test(e))).toEqual([]);
+    } finally {
+      await s.context.close();
+      await visitor.context.close();
+    }
+  });
+});
+
+run('The editor shows the stored preview, whether or not the link is cloaked', () => {
+  it('starts from what the server stored about the destination (no live lookup needed)', async () => {
+    // Not cloaked. The destination is a local test server, which the live lookup refuses by design,
+    // so the only way these words can appear is from the stored copy.
+    const link = await seedLink({ dest: `${dest}/landing` });
+    sqlite(`UPDATE links SET dest_meta = ${quote(JSON.stringify({ state: 'ok', at: Date.now(), ...DESTINATION_SAYS }))} WHERE id = ${quote(link.id)}`);
+    const s = await openSession(browser);
+    try {
+      await s.page.goto(`/links/edit?id=${link.id}`);
+      await expect(s.page.locator('.og-preview .og-title').first()).toContainText('Blog Roll | Charles');
+      await expect(s.page.locator('.og-preview .og-desc').first()).toContainText('Posts I keep coming back to');
+      expect(await s.page.locator('.og-preview .og-image img').first().getAttribute('src')).toBe('https://cdn.example.com/cover.png');
+      await expect(s.page.getByText('Fetching preview…')).toHaveCount(0);
+    } finally {
+      await s.context.close();
+    }
+  });
+});
+
+run('The site default preview', () => {
+  const SITE_TITLE = '4th Entity Technologies';
+  const SITE_TEXT = 'AI, Data And Technology Training, Consulting, & Solutions.';
+
+  it('one tiny icon per part, and one button for all three, fill in the company\'s own image, title and description', async () => {
+    const link = await cloaked();
+    const s = await openSession(browser);
+    const p = s.page;
+    const visitor = await openSession(browser, { user: null });
+    try {
+      await p.goto(`/links/edit?id=${link.id}`);
+      await p.locator('.custom-preview-row').click();
+      const title = dialog(p).locator('textarea').first();
+      const description = dialog(p).locator('textarea').nth(1);
+      const image = dialog(p).locator('.popup-image img');
+      const save = dialog(p).getByRole('button', { name: 'Save changes' });
+      await expect(save).toBeDisabled();
+
+      // The image first: the tiny icon at the top of the image section.
+      const imageButton = dialog(p).getByRole('button', { name: 'Use the site default image' });
+      expect(await imageButton.getAttribute('aria-pressed')).toBe('false');
+      await imageButton.click();
+      expect(await image.getAttribute('src')).toBe(`${baseUrl()}/site-default.png`);
+      expect(await imageButton.getAttribute('aria-pressed')).toBe('true');
+      await expect(title).not.toHaveValue(SITE_TITLE); // only the image changed so far
+
+      await dialog(p).getByRole('button', { name: 'Use the site default title' }).click();
+      await expect(title).toHaveValue(SITE_TITLE);
+      await dialog(p).getByRole('button', { name: 'Use the site default description' }).click();
+      await expect(description).toHaveValue(SITE_TEXT);
+      await save.click();
+      await p.locator('.save-bar').getByRole('button', { name: /Save/ }).click();
+      await expect.poll(async () => (await stored(link.id)).og_title).toBe(SITE_TITLE);
+      expect(await stored(link.id)).toMatchObject({ og_description: SITE_TEXT, og_image: `${baseUrl()}/site-default.png`, custom_preview: 1 });
+
+      // A visitor of the cloaked link, and anyone it is shared with, gets exactly that.
+      await visitor.page.goto(`/s/${link.alias}`);
+      expect(await visitor.page.title()).toBe(SITE_TITLE);
+      expect(await visitor.page.locator('meta[property="og:description"]').getAttribute('content')).toBe(SITE_TEXT);
+      const shownImage = await visitor.page.locator('meta[property="og:image"]').getAttribute('content');
+      expect(shownImage).toBe(`${baseUrl()}/site-default.png`);
+      const served = await fetch(shownImage!);
+      expect([served.status, served.headers.get('content-type')]).toEqual([200, 'image/png']);
+
+      // The editor's own preview now shows it too.
+      await expect(p.locator('.og-preview .og-title').first()).toContainText(SITE_TITLE);
+
+      // Back to the destination's own, then all three at once with the one button.
+      await p.locator('.custom-preview-row').click();
+      await dialog(p).getByRole('button', { name: 'Reset to destination' }).click();
+      await p.locator('.save-bar').getByRole('button', { name: /Save/ }).click();
+      await expect.poll(async () => (await stored(link.id)).custom_preview).toBe(0);
+      await p.locator('.custom-preview-row').click();
+      await dialog(p).getByRole('button', { name: 'Use site default' }).click();
+      await expect(title).toHaveValue(SITE_TITLE);
+      await expect(description).toHaveValue(SITE_TEXT);
+      expect(await image.getAttribute('src')).toBe(`${baseUrl()}/site-default.png`);
+      await save.click();
+      await p.locator('.save-bar').getByRole('button', { name: /Save/ }).click();
+      await expect.poll(async () => (await stored(link.id)).og_image).toBe(`${baseUrl()}/site-default.png`);
+      expect(s.errors.filter((e) => !EXPECTED_NOISE.test(e))).toEqual([]);
     } finally {
       await s.context.close();
       await visitor.context.close();

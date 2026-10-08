@@ -19,7 +19,7 @@
     "test:api": "vitest run --project api",
     "test:e2e": "vitest run --project e2e",
     "test:all": "vitest run",
-    "brand": "node scripts/make-brand-assets.mjs"
+    "brand": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/make-brand-assets.mjs"
   },
   "dependencies": {
     "basecoat-css": "^1.0.2",

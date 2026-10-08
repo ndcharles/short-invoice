@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
+import { SITE_DEFAULT, isSiteDefaultImage, siteDefaultImage } from '@/lib/site-default';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const pub = (name: string) => path.join(ROOT, 'public', name);
@@ -68,6 +69,23 @@ describe('icons and social image', () => {
     expect(await pixel(master, 5, 5)).toEqual([...BLUE, 255]);
   });
 
+  it('the site default preview image is 1200x630, fully opaque and in the brand blues', async () => {
+    const file = pub('site-default.png');
+    const meta = await sharp(file).metadata();
+    expect([meta.format, meta.width, meta.height]).toEqual(['png', 1200, 630]);
+    const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] !== 255) throw new Error(`transparent pixel at ${(i - 3) / 4 / info.width | 0}`);
+    }
+    // It is a gradient, so the corners are near (not exactly) the brand blue; the white mark sits at the left.
+    for (const [x, y] of [[0, 0], [1199, 629], [0, 629]]) {
+      const [r, g, b] = await pixel(file, x, y);
+      expect(Math.abs(r - BLUE[0]) + Math.abs(g - BLUE[1]) + Math.abs(b - BLUE[2]), `${x},${y}`).toBeLessThan(90);
+    }
+    const [markR, markG, markB] = await pixel(file, 200, 350); // inside the "4" of the logo
+    expect([markR, markG, markB]).toEqual([255, 255, 255]);
+  });
+
   it('the old default favicon is gone, so nothing competes with the new one', () => {
     expect(existsSync(path.join(ROOT, 'src/app/favicon.ico'))).toBe(false);
   });
@@ -103,5 +121,27 @@ describe('web app manifest', () => {
     }
     expect(manifest.icons.some((i: { purpose?: string }) => i.purpose === 'maskable')).toBe(true);
     expect(manifest.icons.some((i: { sizes: string; purpose?: string }) => i.sizes === '512x512' && i.purpose === 'any')).toBe(true);
+  });
+});
+
+describe('the site default link preview', () => {
+  it('uses exactly the title and tagline the company asked for', () => {
+    expect(SITE_DEFAULT.title).toBe('4th Entity Technologies');
+    expect(SITE_DEFAULT.description).toBe('AI, Data And Technology Training, Consulting, & Solutions.');
+    expect(SITE_DEFAULT.imagePath).toBe('/site-default.png');
+    expect(existsSync(pub(SITE_DEFAULT.imagePath.replace(/^\//, '')))).toBe(true); // the file the editor points at exists
+  });
+
+  it('the image address is absolute on whatever address the app is reached at, and recognised again', () => {
+    expect(siteDefaultImage('https://app.4th-entity.com')).toBe('https://app.4th-entity.com/site-default.png');
+    expect(siteDefaultImage('https://app.4th-entity.com/')).toBe('https://app.4th-entity.com/site-default.png');
+    expect(siteDefaultImage('http://127.0.0.1:8792')).toBe('http://127.0.0.1:8792/site-default.png');
+    expect(isSiteDefaultImage(siteDefaultImage('https://anything.example'))).toBe(true);
+    for (const other of [null, undefined, '', 'https://cdn.example.com/cover.png', 'https://example.com/og.png']) expect(isSiteDefaultImage(other), String(other)).toBe(false);
+  });
+
+  it('is kept short enough for the preview fields', () => {
+    expect(SITE_DEFAULT.title.length).toBeLessThanOrEqual(120);
+    expect(SITE_DEFAULT.description.length).toBeLessThanOrEqual(240);
   });
 });

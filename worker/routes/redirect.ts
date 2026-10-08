@@ -295,12 +295,13 @@ export async function serveLink(
   }
   const target = checked.value;
   logClick(c, record.id);
+  // Keeps the destination's own details on the link current (only when they are missing or old, and after the response).
+  scheduleRefresh(c.env, c.executionCtx, record);
 
   if (record.cloak) {
     // The page is only a frame, so it says what is inside it: the destination's own title, description and
     // image (kept on the link and refreshed in the background, never fetched while the visitor waits),
     // unless the owner wrote their own. Each of the three is decided separately.
-    scheduleRefresh(c.env, c.executionCtx, record);
     const og = resolveOg({
       dest: record.dest,
       alias,

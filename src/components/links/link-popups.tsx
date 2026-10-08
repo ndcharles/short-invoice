@@ -30,6 +30,7 @@ import type { UtmPreset } from '@/lib/utm-builder';
 import { OG_DESC_MAX, OG_TITLE_MAX, OgContent } from '@/lib/og';
 import { Portal } from '@/components/portal';
 import { formatDateTime, parseNaturalDate, timeZoneName } from '@/lib/links/expiry';
+import { SITE_DEFAULT, isSiteDefaultImage, siteDefaultImage } from '@/lib/site-default';
 import { parseHttpUrl } from '@/lib/validate';
 
 /* -------------------------------------------------------------------------- */
@@ -762,6 +763,17 @@ export function ExpirationPopup({
 
 const MAX_IMAGE_BYTES = 300 * 1024;
 
+/** A tiny favicon button: "use the company's own title / description / image" for that part of the preview. */
+function SiteDefaultButton({ what, active, onClick }: { what: string; active: boolean; onClick: () => void }) {
+  const label = `Use the site default ${what}`;
+  return (
+    <button type="button" className={`popup-icon-btn site-default-btn${active ? ' is-active' : ''}`} title={label} aria-label={label} aria-pressed={active} onClick={onClick}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/favicon-32x32.png" alt="" width={14} height={14} />
+    </button>
+  );
+}
+
 export function LinkPreviewPopup({
   fallback,
   initialTitle,
@@ -799,6 +811,20 @@ export function LinkPreviewPopup({
   const dirty =
     overrides.og_title !== initialTitle || overrides.og_description !== initialDescription || overrides.og_image !== initialImage;
 
+  // "Site default": the company's own image, title and description, so nobody has to upload or retype them.
+  const applySiteDefaultImage = () => {
+    setImage(siteDefaultImage(window.location.origin));
+    setImageError(null);
+    setUrlRowOpen(false);
+  };
+  const applySiteDefaultTitle = () => setTitle(SITE_DEFAULT.title);
+  const applySiteDefaultDescription = () => setDescription(SITE_DEFAULT.description);
+  const applySiteDefaultAll = () => {
+    applySiteDefaultImage();
+    applySiteDefaultTitle();
+    applySiteDefaultDescription();
+  };
+
   const onPickFile = (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -826,15 +852,21 @@ export function LinkPreviewPopup({
       wide
       onClose={onClose}
       footerLeft={
-        <button
-          className="popup-link-btn"
-          onClick={() => {
-            onReset();
-            onClose();
-          }}
-        >
-          Reset to default
-        </button>
+        <div className="popup-footer-left">
+          <button
+            className="popup-link-btn"
+            title="Remove your changes and use the destination's own title, description and image"
+            onClick={() => {
+              onReset();
+              onClose();
+            }}
+          >
+            Reset to destination
+          </button>
+          <button className="popup-link-btn" title="Fill in the site's own image, title and description" onClick={applySiteDefaultAll}>
+            Use site default
+          </button>
+        </div>
       }
       footerRight={
         <>
@@ -865,6 +897,7 @@ export function LinkPreviewPopup({
           >
             Remove
           </button>
+          <SiteDefaultButton what="image" active={isSiteDefaultImage(image)} onClick={applySiteDefaultImage} />
           <button className="popup-icon-btn" title="Use an image URL" onClick={() => setUrlRowOpen(!urlRowOpen)}>
             <LinkIcon width="14" height="14" />
           </button>
@@ -918,6 +951,7 @@ export function LinkPreviewPopup({
           <span className="popup-counter">
             {title.length}/{OG_TITLE_MAX}
           </span>
+          <SiteDefaultButton what="title" active={title.trim() === SITE_DEFAULT.title} onClick={applySiteDefaultTitle} />
           <button className="popup-link-btn" title="Use the destination title" onClick={() => setTitle(fallback.title)}>
             <Sparkle />
           </button>
@@ -938,6 +972,7 @@ export function LinkPreviewPopup({
           <span className="popup-counter">
             {description.length}/{OG_DESC_MAX}
           </span>
+          <SiteDefaultButton what="description" active={description.trim() === SITE_DEFAULT.description} onClick={applySiteDefaultDescription} />
           <button
             className="popup-link-btn"
             title="Use the destination description"
