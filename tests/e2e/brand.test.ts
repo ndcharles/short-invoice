@@ -30,7 +30,10 @@ describe('icons and social tags on the built site', () => {
       expect(attr(meta('og:image:height')!, 'content')).toBe('630');
       expect(attr(meta('og:image:alt')!, 'content')).toContain('May the 4th be with you!');
       expect(attr(meta('og:description')!, 'content')).toBe('May the 4th be with you!');
-      expect(attr(meta('og:site_name')!, 'content')).toBe('4th Entity');
+      expect(attr(meta('og:site_name')!, 'content')).toBe('4th Entity Technologies');
+      expect(attr(meta('og:title')!, 'content')).toBe('4th Entity Technologies Workspace');
+      expect(attr(meta('twitter:title')!, 'content')).toBe('4th Entity Technologies Workspace');
+      expect(html).toContain('<title>4th Entity Technologies Workspace</title>');
       expect(attr(meta('twitter:card')!, 'content')).toBe('summary_large_image');
       expect(attr(meta('twitter:image')!, 'content')).toBe('https://app.4th-entity.com/og.png');
       expect(attr(meta('description')!, 'content')).toBe('May the 4th be with you!');
@@ -110,7 +113,7 @@ inChrome('in Chrome', () => {
       const { errors, data } = await client.send('Page.getAppManifest');
       expect(errors).toEqual([]);
       const manifest = JSON.parse(data ?? '{}');
-      expect(manifest.name).toBe('4th Entity');
+      expect(manifest.name).toBe('4th Entity Technologies Workspace');
       expect(manifest.icons).toHaveLength(3);
       await s.context.close();
     } finally {

@@ -87,7 +87,7 @@ describe('web app manifest', () => {
   const manifest = JSON.parse(readFileSync(pub('site.webmanifest'), 'utf8'));
 
   it('names the app, starts on Links and uses the brand colour', () => {
-    expect(manifest).toMatchObject({ name: '4th Entity', description: 'May the 4th be with you!', start_url: '/links', scope: '/', display: 'standalone' });
+    expect(manifest).toMatchObject({ name: '4th Entity Technologies Workspace', short_name: '4th Entity', description: 'May the 4th be with you!', start_url: '/links', scope: '/', display: 'standalone' });
     expect(manifest.theme_color.toLowerCase()).toBe('#2f27ce');
     expect(manifest.background_color.toLowerCase()).toBe('#2f27ce');
   });
