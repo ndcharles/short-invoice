@@ -31,6 +31,7 @@ npm run db:seed:local            # optional demo links and campaigns
 npm run dev                      # http://localhost:3000
 npm test                         # unit + API tests
 npm run test:e2e                 # browser tests (needs Google Chrome)
+npm run brand                    # rebuild icons and the social image from assets/brand/4e-logo.png
 ```
 
 ## Deploying

@@ -1,0 +1,16 @@
+{
+  "name": "4th Entity",
+  "short_name": "4th Entity",
+  "description": "May the 4th be with you!",
+  "id": "/",
+  "start_url": "/links",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#2F27CE",
+  "theme_color": "#2F27CE",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

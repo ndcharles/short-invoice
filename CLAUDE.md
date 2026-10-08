@@ -146,6 +146,29 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   lock a known account for 15 minutes. Members can email arbitrary recipients
   through the company SMTP (100/day, 10 recipients per message).
 
+## Brand: icons and the social preview
+
+Every icon and the social image are built from one master, `assets/brand/4e-logo.png`
+(1200×1200, white "4e" on brand blue `#2F27CE`), by `npm run brand`
+(`scripts/make-brand-assets.mjs`; needs sharp and Google Chrome, set `CHROME_PATH`
+if Chrome lives elsewhere). To change the logo, replace the master and run it again;
+commit the regenerated files in `public/`.
+
+- `favicon.ico` (16/32/48) plus 16 and 32 px PNGs, cropped a little tighter than the
+  master so the mark stays legible in a tab; `apple-touch-icon.png` (180);
+  `icon-192.png`, `icon-512.png` and `icon-maskable-512.png` (listed in
+  `public/site.webmanifest`); `og.png` (1200×630: the mark and "May the 4th be with you!",
+  kept in the middle so a square centre-crop still shows all of it).
+- Icons must stay fully opaque (iPhones paint transparent corners black); the unit test
+  checks the corners. The mark must stay inside the inner 80% of the maskable icon.
+- `src/app/layout.tsx` declares them (icons, manifest, Open Graph, Twitter). Social crawlers
+  need absolute URLs, so `metadataBase` is fixed at build time: `NEXT_PUBLIC_APP_URL`, default
+  `https://app.4th-entity.com`. Set it if the app is ever built for another host.
+- Do not add `src/app/favicon.ico` back; it would compete with these. The workspace logo and the
+  invoice logo are separate settings (Settings → General / Invoice), not these files.
+- Short domains serve the same favicon (browsers ask for `/favicon.ico` on the password and
+  expired pages); the Worker only runs for paths with no static file.
+
 ## Settings
 
 `settings` stores overrides only; defaults live in

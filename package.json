@@ -18,7 +18,8 @@
     "test:unit": "vitest run --project unit",
     "test:api": "vitest run --project api",
     "test:e2e": "vitest run --project e2e",
-    "test:all": "vitest run"
+    "test:all": "vitest run",
+    "brand": "node scripts/make-brand-assets.mjs"
   },
   "dependencies": {
     "basecoat-css": "^1.0.2",
@@ -40,6 +41,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "playwright-core": "1.62.0",
+    "sharp": "0.35.4",
     "typescript": "^5",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0"
