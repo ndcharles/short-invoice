@@ -313,3 +313,63 @@ describe('cloaked link page', () => {
     expect(page.html).toContain('&lt;script&gt;');
   });
 });
+
+describe('cloaked link page: what it says about the destination', () => {
+  const preview = {
+    title: 'Blog Roll | Charles',
+    description: 'Posts I keep coming back to',
+    image: 'https://cdn.example.com/cover.png',
+    site: 'Charles',
+    url: 'https://trim.ng/charles',
+  };
+  const tag = (html: string, key: string) => new RegExp(`<meta (?:property|name)="${key}" content="([^"]*)">`).exec(html)?.[1] ?? null;
+
+  it('uses the preview for the tab title and every social tag', () => {
+    const { html } = cloakPage('charles', 'https://example.com/blog-roll', true, preview);
+    expect(html).toContain('<title>Blog Roll | Charles</title>');
+    expect(tag(html, 'description')).toBe('Posts I keep coming back to');
+    expect(tag(html, 'og:title')).toBe('Blog Roll | Charles');
+    expect(tag(html, 'og:description')).toBe('Posts I keep coming back to');
+    expect(tag(html, 'og:image')).toBe('https://cdn.example.com/cover.png');
+    expect(tag(html, 'og:site_name')).toBe('Charles');
+    expect(tag(html, 'og:url')).toBe('https://trim.ng/charles');
+    expect(tag(html, 'og:type')).toBe('website');
+    expect(tag(html, 'twitter:card')).toBe('summary_large_image');
+    expect(tag(html, 'twitter:image')).toBe('https://cdn.example.com/cover.png');
+    expect(html).toContain('<iframe src="https://example.com/blog-roll"'); // still just a frame
+  });
+
+  it('is a small card with no image tags when there is no usable image', () => {
+    for (const image of [null, 'javascript:alert(1)', 'data:image/png;base64,AAAA', 'not a url']) {
+      const { html } = cloakPage('a', 'https://example.com/', true, { ...preview, image });
+      expect(tag(html, 'og:image'), String(image)).toBeNull();
+      expect(tag(html, 'twitter:image'), String(image)).toBeNull();
+      expect(tag(html, 'twitter:card'), String(image)).toBe('summary');
+    }
+  });
+
+  it('leaves out the site name when there is none, and escapes everything it was given', () => {
+    expect(tag(cloakPage('a', 'https://example.com/', true, { ...preview, site: null }).html, 'og:site_name')).toBeNull();
+    const hostile = cloakPage('a', 'https://example.com/', true, {
+      title: '"><script>alert(1)</script>',
+      description: '<img src=x onerror=alert(1)> & "quotes"',
+      image: 'https://cdn.example.com/a.png?x="onload="alert(1)',
+      site: '</title><b>',
+      url: 'https://trim.ng/a"><i>',
+    });
+    expect(hostile.html).not.toMatch(/<script>alert|<img src=x|<b>|<i>|"onload="/);
+    expect(hostile.html).toContain('&lt;script&gt;');
+    expect(hostile.html).toContain('&amp; &quot;quotes&quot;');
+  });
+
+  it('is unchanged without a preview: the tab shows the alias and there are no social tags', () => {
+    const { html } = cloakPage('charles', 'https://example.com/', true);
+    expect(html).toContain('<title>charles</title>');
+    expect(html).not.toContain('og:');
+    expect(html).not.toContain('twitter:');
+  });
+
+  it('falls back to the alias when the title is blank', () => {
+    expect(cloakPage('charles', 'https://example.com/', true, { ...preview, title: '   ' }).html).toContain('<title>charles</title>');
+  });
+});

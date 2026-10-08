@@ -20,7 +20,11 @@ exporter.get('/', async (c) => {
   ]);
   const body = {
     exported_at: new Date().toISOString(),
-    links: (links.results as Record<string, unknown>[]).map(({ password_hash, ...rest }) => ({ ...rest, has_password: !!password_hash })),
+    links: (links.results as Record<string, unknown>[]).map((row) => {
+      const { password_hash, dest_meta, ...rest } = row;
+      void dest_meta; // a cache of what each destination says about itself; not part of a backup
+      return { ...rest, has_password: !!password_hash };
+    }),
     utms: utms.results,
     invoices: invoices.results,
     folders: folders.results,

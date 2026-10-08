@@ -771,7 +771,7 @@ export function LinkPreviewPopup({
   onSave,
   onReset,
 }: {
-  /** The preview currently shown in the rail (destination metadata or derived). */
+  /** What the destination says about itself (or a plain fallback), without any of the owner's own wording. */
   fallback: OgContent;
   initialTitle: string;
   initialDescription: string;
@@ -789,8 +789,15 @@ export function LinkPreviewPopup({
   const [imageError, setImageError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Only a part that differs from the destination's own details is saved as an override. A part left (or put
+  // back) the way the destination has it is saved empty, so it keeps following the destination if that changes.
+  const overrides = {
+    og_title: title.trim() === fallback.title ? '' : title,
+    og_description: description.trim() === fallback.description ? '' : description,
+    og_image: image === (fallback.image ?? '') ? '' : image,
+  };
   const dirty =
-    title !== initialTitle || description !== initialDescription || image !== initialImage;
+    overrides.og_title !== initialTitle || overrides.og_description !== initialDescription || overrides.og_image !== initialImage;
 
   const onPickFile = (file: File | undefined) => {
     if (!file) return;
@@ -837,7 +844,7 @@ export function LinkPreviewPopup({
           <button
             className="btn btn-primary"
             disabled={!dirty}
-            onClick={() => onSave({ og_title: title, og_description: description, og_image: image })}
+            onClick={() => onSave(overrides)}
           >
             Save changes
           </button>
@@ -948,7 +955,8 @@ export function LinkPreviewPopup({
         onChange={(e) => setDescription(e.target.value)}
       />
       <div className="popup-hint">
-        If the destination page has preview metadata it is used here automatically; anything you save overrides it.
+        The destination&apos;s own title, description and image are used automatically, in the browser tab of a cloaked
+        link and when it is shared. Change one here and only that part is replaced; the rest keeps following the destination.
       </div>
     </Popup>
   );

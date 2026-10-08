@@ -9,6 +9,8 @@ import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
 import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
 import { cloakPage } from '../lib/cloak';
+import { readPreview, remoteFrom, scheduleRefresh } from '../lib/dest-preview';
+import { resolveOg } from '../../src/lib/og';
 import { clientIp, withinLimit } from '../lib/auth';
 import { GENERATED_PAGE_CSP } from '../lib/page-csp';
 
@@ -65,7 +67,8 @@ type RedirectContext = Context<AppEnv>;
 type LinkRecord = Pick<
   LinkItem,
   'id' | 'dest' | 'cloak' | 'password_hash' | 'expires_at' | 'expires_url' |
-  'utm_source' | 'utm_medium' | 'utm_campaign' | 'utm_term' | 'utm_content' | 'utm_referral'
+  'utm_source' | 'utm_medium' | 'utm_campaign' | 'utm_term' | 'utm_content' | 'utm_referral' |
+  'custom_preview' | 'og_title' | 'og_description' | 'og_image' | 'dest_meta'
 >;
 
 /**
@@ -191,7 +194,8 @@ const PASSWORD_WINDOW_MS = 10 * 60_000;
 const PASSWORDS_PER_LINK_HOUR = 300;
 
 const LINK_COLUMNS = `id, domain, dest, cloak, password_hash, expires_at, expires_url,
-  utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral`;
+  utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referral,
+  custom_preview, og_title, og_description, og_image, dest_meta`;
 
 /** One indexed lookup on UNIQUE(domain, alias); the default domain is read in the same query. */
 export function findLink(db: D1Database, scope: LinkScope, alias: string) {
@@ -293,7 +297,29 @@ export async function serveLink(
   logClick(c, record.id);
 
   if (record.cloak) {
-    const page = cloakPage(alias, target, new URL(c.req.url).protocol === 'https:');
+    // The page is only a frame, so it says what is inside it: the destination's own title, description and
+    // image (kept on the link and refreshed in the background, never fetched while the visitor waits),
+    // unless the owner wrote their own. Each of the three is decided separately.
+    scheduleRefresh(c.env, c.executionCtx, record);
+    const og = resolveOg({
+      dest: record.dest,
+      alias,
+      custom_preview: record.custom_preview,
+      og_title: record.og_title,
+      og_description: record.og_description,
+      og_image: record.og_image,
+      remote: remoteFrom(readPreview(record.dest_meta)),
+    });
+    const shortUrl = new URL(c.req.url);
+    shortUrl.search = '';
+    shortUrl.hash = '';
+    const page = cloakPage(alias, target, shortUrl.protocol === 'https:', {
+      title: og.title,
+      description: og.description,
+      image: og.image,
+      site: og.site ?? null,
+      url: shortUrl.toString(),
+    });
     return c.html(page.html, 200, { 'Content-Security-Policy': page.csp });
   }
 

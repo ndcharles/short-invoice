@@ -11,13 +11,16 @@ import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin } from '../lib/auth';
 import { unknownPick } from '../lib/collections';
+import { scheduleRefresh } from '../lib/dest-preview';
 
 const links = new Hono<AppEnv>();
 
 /** Never send password hashes to the browser; the UI only needs to know one is set. */
 function publicLink(link: LinkItem | null) {
   if (!link) return null;
-  const { password_hash, ...rest } = link;
+  // dest_meta is a server-side cache of what the destination says about itself; clients never need the raw JSON.
+  const { password_hash, dest_meta, ...rest } = link;
+  void dest_meta;
   return { ...rest, password_hash: null, has_password: !!password_hash };
 }
 
@@ -116,6 +119,7 @@ links.post('/', async (c) => {
   ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
+  if (link) scheduleRefresh(c.env, c.executionCtx, link);
   return c.json({ link: publicLink(link) }, 201);
 });
 
@@ -175,7 +179,8 @@ links.patch('/:id', async (c) => {
            password_hash = ?8, expires_at = ?9, expires_url = ?10,
            utm_source = ?11, utm_medium = ?12, utm_campaign = ?13, utm_term = ?14, utm_content = ?15, utm_referral = ?16,
            custom_preview = ?17, og_title = ?18, og_description = ?19, og_image = ?20,
-           archived = ?21, updated_at = ?22, updated_by = ?24
+           archived = ?21, updated_at = ?22, updated_by = ?24,
+           dest_meta = CASE WHEN dest = ?3 THEN dest_meta ELSE NULL END
        WHERE id = ?23`
     )
     .bind(
@@ -201,6 +206,7 @@ links.patch('/:id', async (c) => {
   ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
+  if (link) scheduleRefresh(c.env, c.executionCtx, link);
   return c.json({ link: publicLink(link) });
 });
 

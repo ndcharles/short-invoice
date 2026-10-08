@@ -28,6 +28,8 @@ export interface LinkItem {
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
+  /** Server only (what a cloaked link's destination says about itself); never in API responses. */
+  dest_meta?: string | null;
   archived: number;
   clicks: number;
   last_clicked_at: number | null;

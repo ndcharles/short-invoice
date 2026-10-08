@@ -122,6 +122,25 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   - Cloaked links: an https page cannot frame an http page (mixed content, a
     blank page). On https `cloakPage()` rewrites the frame to https and adds
     `upgrade-insecure-requests`.
+- **Cloaked link previews** (`worker/lib/cloak.ts`, `dest-preview.ts`, `page-meta.ts`). The cloak
+  page is only a frame, so it carries the destination's own title (browser tab), description and
+  image (social tags), unless the owner wrote their own.
+  - What the destination said is kept in `links.dest_meta` (JSON, migration 0005: `state`
+    ok/failed/pending, `at`, title, description, image, siteName). It is **never fetched while a
+    visitor waits**: `scheduleRefresh()` runs it in `waitUntil` after a create or update and after a
+    visit when the copy is missing or stale (a good copy lasts 7 days, a failed one is retried after
+    1 hour, a "pending" marker is forgotten after 60 s). The first caller claims the job with a
+    compare-and-swap `UPDATE`, so simultaneous visitors fetch once, and the result is saved only if
+    `dest` has not changed meanwhile. Updating a link clears `dest_meta` when `dest` changes.
+  - The tags come from `resolveOg()` (shared with the editor's preview): the owner's text/image
+    replaces each of the three separately, only while `custom_preview` is on, and an empty override
+    means "follow the destination". The editor popup saves an override only for a part that differs
+    from the destination's own (`LinkPreviewPopup` gets that via `destinationPreview`, not the
+    resolved preview, or reopening it would wipe overrides).
+  - The password and expiry gates run first, so neither leaks the destination's details. Text is
+    escaped and the image must be a web address. `dest_meta` is stripped from API responses and the export.
+  - `DEST_PREVIEW_FETCH=off` stops the background fetching (the test Workers set it so tests never
+    touch the network; it is also a kill-switch). Tests set up `dest_meta` directly.
 - **Headers.** `worker/index.ts` adds nosniff, Referrer-Policy, COOP,
   `X-Frame-Options: DENY` and HSTS to every response; `public/_headers` does the
   same for static files. Worker-generated pages (password, cloak, expired) carry
@@ -361,5 +380,10 @@ RTT, several of them). There is no app-side fix; do not cache redirects.
 ## Known gaps (next steps)
 
 - Duplicating a link or UTM does not copy anything to the clipboard (only creating does).
+- "Upload an image" in Link Preview cannot be saved: it produces a `data:` URL and the server only
+  accepts an `https://` address for `og_image`. Fixing it means hosting the uploaded image (it must
+  not live in the `links` rows that lists read in bulk).
+- A custom preview (title, description, image) on a link that is not cloaked is stored but never
+  served: social crawlers follow the redirect and see the destination's own tags.
 - A cloaked link to a destination that only works over plain `http` cannot be shown
   from an https short link (browsers block it); nothing can fix that server-side.

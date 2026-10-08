@@ -108,8 +108,8 @@ export async function fetchOg(dest: string): Promise<RemoteOg | null> {
   try {
     const res = await fetch(`/api/metadata?url=${encodeURIComponent(url)}`);
     if (!res.ok) return null;
-    const data = await res.json();
-    return (data.metadata as RemoteOg) ?? null;
+    const data = (await res.json()) as { metadata?: RemoteOg };
+    return data.metadata ?? null;
   } catch {
     return null;
   }
