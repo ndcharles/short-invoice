@@ -28,6 +28,17 @@ export interface LinkItem {
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
+  /** Server only (the raw copy of what the destination says about itself); never in API responses. */
+  dest_meta?: string | null;
+  /** What the destination says about itself, as stored on the server; only on a single link, not in lists. */
+  preview?: {
+    title: string | null;
+    description: string | null;
+    image: string | null;
+    siteName: string | null;
+    state: 'ok' | 'failed' | 'pending';
+    fetched_at: number;
+  } | null;
   archived: number;
   clicks: number;
   last_clicked_at: number | null;

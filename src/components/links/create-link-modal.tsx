@@ -169,6 +169,8 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
     og_description: ogDescription,
     og_image: ogImage,
   });
+  // What the destination says about itself, before any of the owner's own wording (the popup's starting point).
+  const destinationPreview = resolveOg({ dest, alias, remote });
 
   const utmActive = hasUtm(utm);
   const passwordActive = !!password;
@@ -611,7 +613,7 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
       )}
       {activePopup === 'preview' && (
         <LinkPreviewPopup
-          fallback={preview}
+          fallback={destinationPreview}
           initialTitle={ogTitle}
           initialDescription={ogDescription}
           initialImage={ogImage}

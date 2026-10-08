@@ -63,6 +63,8 @@ export function createWorker(port: number, opts: { real?: boolean } = {}) {
       '--var', 'ADMIN_EMAILS:boss@test.example',
       '--var', 'DEV_AUTH_BYPASS:1',
       '--var', 'AUTH_PEPPER:test-pepper',
+      // Cloaked links would fetch real websites in the background; tests set up their previews directly.
+      '--var', 'DEST_PREVIEW_FETCH:off',
       '--show-interactive-dev-session=false',
     ],
     { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true }

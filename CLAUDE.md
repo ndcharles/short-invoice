@@ -122,6 +122,67 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   - Cloaked links: an https page cannot frame an http page (mixed content, a
     blank page). On https `cloakPage()` rewrites the frame to https and adds
     `upgrade-insecure-requests`.
+- **Link previews** (`worker/lib/cloak.ts`, `dest-preview.ts`, `page-meta.ts`). Every link keeps
+  what its destination says about itself (title, description, image), cloaked or not. The editor
+  starts from that copy, and a cloaked link's page (only a frame) carries it as its title (browser
+  tab) and social tags, unless the owner wrote their own.
+  - It is kept in `links.dest_meta` (JSON, migration 0005: `state` ok/failed/pending, `at`, title,
+    description, image, siteName). It is **never fetched while a visitor waits or the editor
+    loads**: `scheduleRefresh()` runs it in `waitUntil` after a create or update, after a visit,
+    and when the editor opens the link, whenever the copy is missing or stale (a good copy lasts
+    7 days, a failed one is retried after 1 hour, a "pending" marker is forgotten after 60 s).
+  - A single-link response (GET/POST/PATCH `/api/links/:id`) carries a cleaned-up `preview`
+    (`summaryOf()`); lists do not. Call `publicLink(row)` explicitly in `.map` (a bare `.map(publicLink)`
+    would pass the index as the "with preview" flag). The editor uses `link.preview` while the
+    address is still the saved one, and looks live (debounced) only for an address just typed. The first caller claims the job with a
+    compare-and-swap `UPDATE`, so simultaneous visitors fetch once, and the result is saved only if
+    `dest` has not changed meanwhile. Updating a link clears `dest_meta` when `dest` changes.
+  - The tags come from `resolveOg()` (shared with the editor's preview): the owner's text/image
+    replaces each of the three separately, only while `custom_preview` is on, and an empty override
+    means "follow the destination". The editor popup saves an override only for a part that differs
+    from the destination's own (`LinkPreviewPopup` gets that via `destinationPreview`, not the
+    resolved preview, or reopening it would wipe overrides).
+  - The password and expiry gates run first, so neither leaks the destination's details. Text is
+    escaped and the image must be a web address. `dest_meta` is stripped from API responses and the export.
+  - `DEST_PREVIEW_FETCH=off` stops the background fetching (the test Workers set it so tests never
+    touch the network; it is also a kill-switch). Tests set up `dest_meta` directly.
+  - **Shared links.** A custom preview (`hasCustomPreview()`: switched on and at least one part
+    written) is also what the card shows when the link is shared. A link-preview crawler
+    (`isPreviewBot()` in `worker/lib/ua.ts`: WhatsApp, Slack, X, LinkedIn, Facebook/Instagram,
+    Discord, Telegram, Pinterest, Reddit, Mastodon, Bluesky, Skype, Embedly, iMessage's spoofed
+    Facebook/X agent) is answered with `sharePage()` (HTTP 200, tags and a plain link only) instead
+    of the redirect; people still get the instant 302. Rules to keep:
+    - The list is deliberately **narrow**, unlike `isBot()` (which only decides what to count): someone
+      wrongly matched would be stuck on the card. In-app browsers (Instagram, Facebook "FBAN", the
+      LinkedIn/Twitter apps, Slack desktop) are tested not to match. Crawlers not on the list just
+      follow the redirect and show the destination's own card.
+    - The card page must **not redirect** (no meta refresh, no script): a crawler that followed it
+      would draw the destination's card instead. It is `no-store`, with `Vary: User-Agent` (also on
+      the 302 of links that have a custom preview, so a shared cache never mixes the two up).
+    - A crawler never counts as a click, and may wait briefly for a destination nobody has looked at
+      yet (`destinationForNow()`, 2.5 s, only when a part is not the owner's and nothing usable is
+      stored; skipped when `DEST_PREVIEW_FETCH=off`).
+    - Gates first: an expired link shows crawlers the expired page; a password-protected link with a
+      custom preview gets `gatedPreview()` — only the owner's own wording, plain words for the rest,
+      and **nothing about the destination, not even its address** (tests check). Without a custom
+      preview it still meets crawlers with the password page.
+    - The platforms keep their own copy of a card (Facebook, LinkedIn and WhatsApp for a long time);
+      changing a preview shows up there when they refresh, not when we save.
+  - **Site default.** The Link Preview popup has a tiny favicon button per part (image, title,
+    description) and "Use site default" for all three. The company's wording lives in one place,
+    `src/lib/site-default.ts`; `public/site-default.png` is drawn from those same words by
+    `npm run brand`. The image address stored is absolute on the address the editor was opened at
+    (crawlers need that), and the popup recognises it again with `isSiteDefaultImage()`. "Reset to
+    destination" clears the owner's wording; do not call anything else "default" in that popup.
+- **Expiry on screen.** The server checks a link's expiry on every request, but a page already open is
+  never asked again. A cloaked link that will expire therefore **locks itself** (`CLOAK_LOCK_SCRIPT` in
+  `worker/lib/cloak.ts`): it reloads at the moment of expiry (`location.replace`, a plain GET, so a page
+  that answered the password form is not re-sent) and the server then answers with the expired notice.
+  The time left is sent as `data-expires-in` from the server's clock, never the visitor's; long waits are
+  an hour at a time, and it re-checks when a sleeping tab returns (`visibilitychange`, `pageshow`). The
+  script is fixed text allowed by its hash in the page's CSP (`scriptHash()`; tests keep them in step).
+  If the owner moves the date while a page is open, it reloads at the old time and simply gets a new
+  timer. A plain redirect link cannot be locked: the visitor is already on the destination's own site.
 - **Headers.** `worker/index.ts` adds nosniff, Referrer-Policy, COOP,
   `X-Frame-Options: DENY` and HSTS to every response; `public/_headers` does the
   same for static files. Worker-generated pages (password, cloak, expired) carry
@@ -145,6 +206,31 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   one (needed for the two-step sign-in; per-IP limited), and wrong guesses can
   lock a known account for 15 minutes. Members can email arbitrary recipients
   through the company SMTP (100/day, 10 recipients per message).
+
+## Brand: icons and the social preview
+
+Every icon and the social image are built from one master, `assets/brand/4e-logo.png`
+(1200×1200, white "4e" on brand blue `#2F27CE`), by `npm run brand`
+(`scripts/make-brand-assets.mjs`; needs sharp and Google Chrome, set `CHROME_PATH`
+if Chrome lives elsewhere). To change the logo, replace the master and run it again;
+commit the regenerated files in `public/`.
+
+- `site-default.png` (1200×630): the "site default" link preview, with the mark at the left and
+  the title and tagline at the right (see Link previews).
+- `favicon.ico` (16/32/48) plus 16 and 32 px PNGs, cropped a little tighter than the
+  master so the mark stays legible in a tab; `apple-touch-icon.png` (180);
+  `icon-192.png`, `icon-512.png` and `icon-maskable-512.png` (listed in
+  `public/site.webmanifest`); `og.png` (1200×630: the mark and "May the 4th be with you!",
+  kept in the middle so a square centre-crop still shows all of it).
+- Icons must stay fully opaque (iPhones paint transparent corners black); the unit test
+  checks the corners. The mark must stay inside the inner 80% of the maskable icon.
+- `src/app/layout.tsx` declares them (icons, manifest, Open Graph, Twitter). Social crawlers
+  need absolute URLs, so `metadataBase` is fixed at build time: `NEXT_PUBLIC_APP_URL`, default
+  `https://app.4th-entity.com`. Set it if the app is ever built for another host.
+- Do not add `src/app/favicon.ico` back; it would compete with these. The workspace logo and the
+  invoice logo are separate settings (Settings → General / Invoice), not these files.
+- Short domains serve the same favicon (browsers ask for `/favicon.ico` on the password and
+  expired pages); the Worker only runs for paths with no static file.
 
 ## Settings
 
@@ -338,5 +424,12 @@ RTT, several of them). There is no app-side fix; do not cache redirects.
 ## Known gaps (next steps)
 
 - Duplicating a link or UTM does not copy anything to the clipboard (only creating does).
+- "Upload an image" in Link Preview still cannot be saved: it produces a `data:` URL and the server
+  only accepts an `https://` address for `og_image`. The site default icon covers the company's own
+  image, and any other image can be pasted as an address. Real uploads would need hosting the image
+  (it must not live in the `links` rows that lists read in bulk).
+- Crawlers that are not on the `isPreviewBot()` list follow the redirect, so a custom preview does not
+  show on their cards (add them to the list, with a test that the apps' own browsers still do not match).
+- A page that is already open on a plain (non-cloaked) redirect link cannot be locked when it expires.
 - A cloaked link to a destination that only works over plain `http` cannot be shown
   from an https short link (browsers block it); nothing can fix that server-side.

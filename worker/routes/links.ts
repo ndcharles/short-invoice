@@ -11,14 +11,25 @@ import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin } from '../lib/auth';
 import { unknownPick } from '../lib/collections';
+import { readPreview, scheduleRefresh, summaryOf } from '../lib/dest-preview';
 
 const links = new Hono<AppEnv>();
 
 /** Never send password hashes to the browser; the UI only needs to know one is set. */
-function publicLink(link: LinkItem | null) {
+/**
+ * A link as the browser sees it. `dest_meta` is a server-side copy of what the destination says about
+ * itself, so the raw JSON never goes out; a single link (not a list) carries a cleaned-up `preview` instead,
+ * so the editor can show it straight away without asking the destination again.
+ */
+function publicLink(link: LinkItem | null, withPreview = false) {
   if (!link) return null;
-  const { password_hash, ...rest } = link;
-  return { ...rest, password_hash: null, has_password: !!password_hash };
+  const { password_hash, dest_meta, ...rest } = link;
+  return {
+    ...rest,
+    password_hash: null,
+    has_password: !!password_hash,
+    ...(withPreview ? { preview: summaryOf(readPreview(dest_meta)) } : {}),
+  };
 }
 
 links.get('/', async (c) => {
@@ -43,7 +54,7 @@ links.get('/', async (c) => {
     c.env.DB.prepare(sql).bind(...params),
     c.env.DB.prepare('SELECT archived, COUNT(*) AS count FROM links GROUP BY archived'),
   ]);
-  const list = (rows.results as LinkItem[]).map(publicLink);
+  const list = (rows.results as LinkItem[]).map((row) => publicLink(row));
   const grouped = counts.results as { archived: number; count: number }[];
 
   return c.json({
@@ -116,13 +127,16 @@ links.post('/', async (c) => {
   ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
-  return c.json({ link: publicLink(link) }, 201);
+  if (link) scheduleRefresh(c.env, c.executionCtx, link);
+  return c.json({ link: publicLink(link, true) }, 201);
 });
 
 links.get('/:id', async (c) => {
   const link = await c.env.DB.prepare('SELECT * FROM links WHERE id = ?1').bind(c.req.param('id')).first<LinkItem>();
   if (!link) return c.json({ error: 'Link not found' }, 404);
-  return c.json({ link: publicLink(link) });
+  // Opening a link in the editor also fills in (or renews) what its destination says, ready for next time.
+  scheduleRefresh(c.env, c.executionCtx, link);
+  return c.json({ link: publicLink(link, true) });
 });
 
 links.patch('/:id', async (c) => {
@@ -175,7 +189,8 @@ links.patch('/:id', async (c) => {
            password_hash = ?8, expires_at = ?9, expires_url = ?10,
            utm_source = ?11, utm_medium = ?12, utm_campaign = ?13, utm_term = ?14, utm_content = ?15, utm_referral = ?16,
            custom_preview = ?17, og_title = ?18, og_description = ?19, og_image = ?20,
-           archived = ?21, updated_at = ?22, updated_by = ?24
+           archived = ?21, updated_at = ?22, updated_by = ?24,
+           dest_meta = CASE WHEN dest = ?3 THEN dest_meta ELSE NULL END
        WHERE id = ?23`
     )
     .bind(
@@ -201,7 +216,8 @@ links.patch('/:id', async (c) => {
   ]);
 
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
-  return c.json({ link: publicLink(link) });
+  if (link) scheduleRefresh(c.env, c.executionCtx, link);
+  return c.json({ link: publicLink(link, true) });
 });
 
 links.delete('/:id', requireAdmin, async (c) => {

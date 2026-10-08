@@ -8,6 +8,23 @@ export function isBot(ua: string): boolean {
   return !ua || BOT_RE.test(ua);
 }
 
+/**
+ * The services that fetch a shared link to draw its card (title, description, image): WhatsApp, Slack, X,
+ * LinkedIn, Facebook and Instagram, Discord, Telegram, Pinterest, Reddit, Mastodon, Bluesky, Skype, and
+ * iMessage (which presents itself as Facebook's and X's crawlers).
+ *
+ * This is much narrower than isBot() on purpose. isBot() only decides what to count; this decides who is given a
+ * different page, and anyone wrongly matched would be stuck on it instead of reaching the destination. So it
+ * names the crawlers themselves, and the apps' own in-app browsers (Instagram, Facebook "FBAN", the LinkedIn and
+ * Twitter apps, Slack desktop, ...) must not match.
+ */
+const PREVIEW_BOT_RE =
+  /facebookexternalhit|Facebot|meta-externalagent|meta-externalfetcher|Twitterbot|LinkedInBot|Slackbot|Slack-ImgProxy|Discordbot|TelegramBot|WhatsApp\/\d|Pinterestbot|Pinterest\/\d|SkypeUriPreview|redditbot|Mastodon\/|Bluesky|Embedly|Iframely|kakaotalk-scrap|vkShare/i;
+
+export function isPreviewBot(ua: string): boolean {
+  return !!ua && PREVIEW_BOT_RE.test(ua);
+}
+
 export function deviceOf(ua: string): string {
   if (/tablet|ipad/i.test(ua)) return 'Tablet';
   if (/mobile|iphone|android/i.test(ua)) return 'Mobile';

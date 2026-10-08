@@ -13,6 +13,12 @@ export interface Env {
   AUTH_PEPPER?: string;
   /** Tests only: "1" lets localhost requests with `x-dev-user` skip sign-in. Never set in production. */
   DEV_AUTH_BYPASS?: string;
+  /**
+   * "off" stops cloaked links from fetching their destination's title, description and image in the
+   * background (they then show what the owner wrote, or a plain fallback). Tests set it; it is also a
+   * kill-switch if that fetching ever misbehaves.
+   */
+  DEST_PREVIEW_FETCH?: string;
 }
 
 export type AppEnv = { Bindings: Env; Variables: { user: CurrentUser; authMode: AuthMode } };
