@@ -5,12 +5,14 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { verifyPassword } from '../lib/password';
 import { signUnlock, unlockCookieName, UNLOCK_TTL_SECONDS, verifyUnlock } from '../lib/unlock';
 import { withUtm, pickUtm } from '../../src/lib/links/utm';
-import { browserOf, deviceOf, isBot, osOf, refererHost } from '../lib/ua';
+import { browserOf, deviceOf, isBot, isPreviewBot, osOf, refererHost } from '../lib/ua';
 import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
-import { cloakPage } from '../lib/cloak';
-import { readPreview, remoteFrom, scheduleRefresh } from '../lib/dest-preview';
-import { resolveOg } from '../../src/lib/og';
+import { CLOAK_LOCK_SCRIPT, cloakPage } from '../lib/cloak';
+import { destinationForNow, readPreview, remoteFrom, scheduleRefresh } from '../lib/dest-preview';
+import { coversEverything, gatedPreview, hasCustomPreview, previewFor } from '../lib/share-preview';
+import { sharePage } from '../lib/share-page';
+import { scriptHash } from '../lib/inline-script';
 import { clientIp, withinLimit } from '../lib/auth';
 import { GENERATED_PAGE_CSP } from '../lib/page-csp';
 
@@ -145,14 +147,6 @@ const EXPIRED_NOTICE_SECONDS = 2;
  */
 const EXPIRED_SCRIPT = `(function(){var a=document.getElementById("go");function go(){location.replace(a.href)}a.addEventListener("click",function(e){e.preventDefault();go()});setTimeout(go,${EXPIRED_NOTICE_SECONDS * 1000})})()`;
 
-let expiredScriptHash: Promise<string> | null = null;
-function scriptHash(): Promise<string> {
-  expiredScriptHash ??= crypto.subtle
-    .digest('SHA-256', new TextEncoder().encode(EXPIRED_SCRIPT))
-    .then((digest) => btoa(String.fromCharCode(...new Uint8Array(digest))));
-  return expiredScriptHash;
-}
-
 /**
  * "This link has expired", then on to `next` (the link's own expiration URL, or the Settings redirect)
  * after a couple of seconds, or straight away from the link. With nowhere to go this is the expired page itself.
@@ -171,7 +165,7 @@ async function expiredResponse(c: RedirectContext, label: string, next: string |
       headers
     );
   }
-  headers['Content-Security-Policy'] = `${GENERATED_PAGE_CSP}; script-src 'sha256-${await scriptHash()}'`;
+  headers['Content-Security-Policy'] = `${GENERATED_PAGE_CSP}; script-src 'sha256-${await scriptHash(EXPIRED_SCRIPT)}'`;
   return c.html(
     htmlPage(
       'Link expired',
@@ -246,6 +240,20 @@ export async function serveLink(
     return expiredResponse(c, label, next);
   }
 
+  // A link-preview crawler is what draws the card when a link is shared (WhatsApp, Slack, X, LinkedIn, ...). For a
+  // link with a custom preview it is given a page carrying that preview instead of the redirect, so the shared card
+  // shows what the owner chose. People are never affected.
+  const crawler = c.req.method !== 'POST' && isPreviewBot(c.req.header('user-agent') ?? '');
+  const custom = hasCustomPreview(record);
+  const publicUrl = new URL(c.req.url);
+  publicUrl.search = '';
+  publicUrl.hash = '';
+  const shortUrl = publicUrl.toString();
+
+  // A crawler cannot enter a password. If the owner wrote a preview it still gets that (and nothing about the
+  // destination), so the shared link shows a proper card; with none, it meets the password page like anyone.
+  if (record.password_hash && crawler && custom) return shareResponse(c, alias, null, gatedPreview(record, shortUrl));
+
   // Password gate. The password arrives as a POST body so it never lands in
   // URLs, logs or Referer headers. A valid unlock cookie skips PBKDF2.
   if (record.password_hash) {
@@ -294,38 +302,46 @@ export async function serveLink(
     );
   }
   const target = checked.value;
-  logClick(c, record.id);
-  // Keeps the destination's own details on the link current (only when they are missing or old, and after the response).
-  scheduleRefresh(c.env, c.executionCtx, record);
+  logClick(c, record.id); // (crawlers are never counted)
 
   if (record.cloak) {
     // The page is only a frame, so it says what is inside it: the destination's own title, description and
-    // image (kept on the link and refreshed in the background, never fetched while the visitor waits),
-    // unless the owner wrote their own. Each of the three is decided separately.
-    const og = resolveOg({
-      dest: record.dest,
-      alias,
-      custom_preview: record.custom_preview,
-      og_title: record.og_title,
-      og_description: record.og_description,
-      og_image: record.og_image,
-      remote: remoteFrom(readPreview(record.dest_meta)),
-    });
-    const shortUrl = new URL(c.req.url);
-    shortUrl.search = '';
-    shortUrl.hash = '';
-    const page = cloakPage(alias, target, shortUrl.protocol === 'https:', {
-      title: og.title,
-      description: og.description,
-      image: og.image,
-      site: og.site ?? null,
-      url: shortUrl.toString(),
-    });
+    // image, unless the owner wrote their own. Each of the three is decided separately.
+    const stored = await destinationDetails(c, record, crawler);
+    // A link that will expire locks itself on screen at that moment (see cloak.ts), so nobody keeps using an expired one.
+    const now = Date.now();
+    const lock =
+      record.expires_at && record.expires_at > now
+        ? { expiresInMs: record.expires_at - now, scriptHash: await scriptHash(CLOAK_LOCK_SCRIPT) }
+        : undefined;
+    const page = cloakPage(alias, target, publicUrl.protocol === 'https:', previewFor(record, alias, remoteFrom(stored), shortUrl), lock);
     return c.html(page.html, 200, { 'Content-Security-Policy': page.csp });
   }
 
+  if (crawler && custom) {
+    // Only what the owner did not write needs the destination, and a crawler can wait a moment for it.
+    const stored = coversEverything(record) ? readPreview(record.dest_meta) : await destinationDetails(c, record, true);
+    return shareResponse(c, alias, target, previewFor(record, alias, remoteFrom(stored), shortUrl));
+  }
+
+  // Keeps the destination's own details on the link current (only when they are missing or old, and after the response).
+  scheduleRefresh(c.env, c.executionCtx, record);
+  // People are redirected and crawlers are not, so a shared cache must not mix the two up.
+  if (custom) c.header('Vary', 'User-Agent');
   // 303 after a POST so the browser follows with a GET.
   return c.redirect(target, c.req.method === 'POST' ? 303 : 302);
+}
+
+/** What the destination says about itself, for this request. A crawler may wait a moment for it; a person never does (it is refreshed in the background). */
+async function destinationDetails(c: RedirectContext, record: LinkRecord, crawler: boolean) {
+  if (crawler) return destinationForNow(c.env, record);
+  scheduleRefresh(c.env, c.executionCtx, record);
+  return readPreview(record.dest_meta);
+}
+
+/** The page a crawler gets for a link with a custom preview: 200, different for crawlers and people, never cached. */
+function shareResponse(c: RedirectContext, alias: string, target: string | null, preview: Parameters<typeof sharePage>[2]) {
+  return c.html(sharePage(alias, target, preview), 200, { 'Cache-Control': 'no-store', Vary: 'User-Agent' });
 }
 
 async function suppliedPassword(c: RedirectContext): Promise<string> {

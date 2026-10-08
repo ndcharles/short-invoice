@@ -1,9 +1,14 @@
+import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { checkFetchUrl, isBlockedHost, readLimited } from '../../worker/lib/ssrf';
 import { decryptSecret, encryptSecret, isEncrypted } from '../../worker/lib/secrets';
 import { newSetupCode, normaliseCode, passwordProblem, setupCodeMatches, sha256, listOf, displayName } from '../../worker/lib/auth';
 import { buildMessage } from '../../worker/lib/mime';
-import { cloakPage } from '../../worker/lib/cloak';
+import { CLOAK_LOCK_SCRIPT, cloakPage } from '../../worker/lib/cloak';
+import { scriptHash } from '../../worker/lib/inline-script';
+import { isPreviewBot } from '../../worker/lib/ua';
+import { sharePage } from '../../worker/lib/share-page';
+import { coversEverything, gatedPreview, hasCustomPreview, previewFor } from '../../worker/lib/share-preview';
 import { mailSetup, parseSendRequest, isMailAddress, MAX_RECIPIENTS } from '../../worker/lib/invoice-mail';
 import { changedFields } from '../../worker/lib/activity';
 import { initials } from '../../worker/lib/initials';
@@ -371,5 +376,253 @@ describe('cloaked link page: what it says about the destination', () => {
 
   it('falls back to the alias when the title is blank', () => {
     expect(cloakPage('charles', 'https://example.com/', true, { ...preview, title: '   ' }).html).toContain('<title>charles</title>');
+  });
+});
+
+describe('which visitors are link-preview crawlers', () => {
+  it.each([
+    ['Facebook', 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'],
+    ['Facebook (Instagram)', 'Facebot'],
+    ['Meta', 'meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)'],
+    ['X', 'Twitterbot/1.0'],
+    ['LinkedIn', 'LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)'],
+    ['Slack', 'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)'],
+    ['Slack (older)', 'Slackbot 1.0 (+https://api.slack.com/robots)'],
+    ['Discord', 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)'],
+    ['Telegram', 'TelegramBot (like TwitterBot)'],
+    ['WhatsApp', 'WhatsApp/2.23.20.0 A'],
+    ['WhatsApp (iPhone)', 'WhatsApp/2.2326.3 i'],
+    ['Pinterest', 'Pinterest/0.2 (+http://www.pinterest.com/bot.html)'],
+    ['Skype', 'Mozilla/5.0 (Windows NT 6.1; WOW64) SkypeUriPreview Preview/0.5 skype-url-preview@microsoft.com'],
+    ['Reddit', 'redditbot/1.0 (+http://www.reddit.com/feedback)'],
+    ['Mastodon', 'http.rb/5.1.1 (Mastodon/4.2.1; +https://mastodon.social/)'],
+    ['Bluesky', 'Bluesky Cardyb/1.1'],
+    ['Embedly', 'Mozilla/5.0 (compatible; Embedly/0.2; +http://support.embed.ly/)'],
+    ['iMessage (presents itself as Facebook and X)', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.2 Safari/605.1.15 facebookexternalhit/1.1 Facebot Twitterbot/1.0'],
+  ])('%s is a crawler', (_name, ua) => expect(isPreviewBot(ua)).toBe(true));
+
+  it.each([
+    ['Chrome', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'],
+    ['Safari on iPhone', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1'],
+    ['Firefox', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0'],
+    ['Instagram\'s own browser', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/20A362 Instagram 250.0.0.17.109 (iPhone14,5; iOS 16_0; en_US; en; scale=3.00)'],
+    ['Facebook\'s own browser', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/21C62 [FBAN/FBIOS;FBAV/450.0.0.38.108;FBBV/565;FBDV/iPhone14,5]'],
+    ['the LinkedIn app\'s own browser', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 LinkedInApp'],
+    ['the Twitter app\'s own browser', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Twitter for iPhone/10.20'],
+    ['Slack desktop', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Slack/4.36.140 Chrome/120.0.0.0 Electron/28.0.0 Safari/537.36'],
+    ['Pinterest\'s own browser', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 [Pinterest for iOS/12.3]'],
+    ['curl', 'curl/8.4.0'],
+    ['Googlebot (follows the redirect, as search should)', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'],
+    ['empty', ''],
+  ])('%s is a person (or not one of these crawlers)', (_name, ua) => expect(isPreviewBot(ua)).toBe(false));
+});
+
+describe('whether a link has a custom preview, and what shared cards say', () => {
+  const link = { dest: 'https://example.com/private/page?x=1', custom_preview: 1, og_title: null, og_description: null, og_image: null } as const;
+  const url = 'https://trim.ng/abc';
+
+  it('has one when it is switched on and at least one part is filled in', () => {
+    expect(hasCustomPreview({ ...link, og_title: 'Mine' })).toBe(true);
+    expect(hasCustomPreview({ ...link, og_image: 'https://e.com/i.png' })).toBe(true);
+    expect(hasCustomPreview({ ...link })).toBe(false); // on, but nothing written
+    expect(hasCustomPreview({ ...link, og_title: '   ', og_description: '' })).toBe(false);
+    expect(hasCustomPreview({ ...link, custom_preview: 0, og_title: 'Mine' })).toBe(false); // written, but switched off
+  });
+
+  it('covers everything only when all three parts are written', () => {
+    expect(coversEverything({ ...link, og_title: 'T', og_description: 'D', og_image: 'https://e.com/i.png' })).toBe(true);
+    expect(coversEverything({ ...link, og_title: 'T', og_description: 'D' })).toBe(false);
+    expect(coversEverything({ ...link, custom_preview: 0, og_title: 'T', og_description: 'D', og_image: 'https://e.com/i.png' })).toBe(false);
+  });
+
+  it('writes each part from the owner when given, and from the destination for the rest', () => {
+    const remote = { title: 'Their title', description: 'Their words', image: 'https://their.example/i.png', siteName: 'Their Site' };
+    expect(previewFor({ ...link, og_title: 'Mine' }, 'abc', remote, url)).toEqual({
+      title: 'Mine', description: 'Their words', image: 'https://their.example/i.png', site: 'Their Site', url,
+    });
+    expect(previewFor({ ...link, og_description: 'My words', og_image: 'https://mine.example/i.png' }, 'abc', remote, url)).toMatchObject({
+      title: 'Their title', description: 'My words', image: 'https://mine.example/i.png',
+    });
+  });
+
+  it('for a password-protected link says nothing at all about the destination', () => {
+    const plain = gatedPreview({ ...link, og_title: 'Mine' }, url);
+    expect(plain).toEqual({ title: 'Mine', description: 'Enter the password to open this link.', image: null, site: null, url });
+    const bare = gatedPreview({ ...link, og_image: 'https://mine.example/i.png' }, url);
+    expect(bare).toMatchObject({ title: 'Password protected link', image: 'https://mine.example/i.png' });
+    expect(JSON.stringify([plain, bare])).not.toMatch(/example\.com\/private|private\/page/);
+  });
+});
+
+describe('the page a crawler gets', () => {
+  const preview = { title: 'My own title', description: 'My own words', image: 'https://mine.example/card.png', site: 'Site', url: 'https://trim.ng/abc' };
+  const tag = (html: string, key: string) => new RegExp(`<meta (?:property|name)="${key}" content="([^"]*)">`).exec(html)?.[1] ?? null;
+
+  it('carries the tags and a plain link, and does not redirect by itself', () => {
+    const html = sharePage('abc', 'https://example.com/dest', preview);
+    expect(html).toContain('<title>My own title</title>');
+    expect([tag(html, 'og:title'), tag(html, 'og:description'), tag(html, 'og:image'), tag(html, 'og:url'), tag(html, 'twitter:card')]).toEqual([
+      'My own title', 'My own words', 'https://mine.example/card.png', 'https://trim.ng/abc', 'summary_large_image',
+    ]);
+    expect(html).toContain('<a href="https://example.com/dest">');
+    expect(html).not.toMatch(/http-equiv|<script|location\./i); // a crawler that followed this would draw the destination's card instead
+  });
+
+  it('for a password-protected link has no link to the destination', () => {
+    const html = sharePage('abc', null, preview);
+    expect(html).not.toContain('<a ');
+    expect(html).toContain('password protected');
+  });
+
+  it('escapes whatever the owner wrote', () => {
+    const html = sharePage('abc', 'https://example.com/"><script>x</script>', { ...preview, title: '"><script>alert(1)</script>', description: '<img src=x onerror=alert(1)>' });
+    expect(html).not.toMatch(/<script>|<img src=x/);
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('a cloaked page that locks itself when its link expires', () => {
+  const lock = { expiresInMs: 90_000, scriptHash: 'HASHVALUE=' };
+
+  it('carries how long is left, the script, and a policy that allows exactly that script', async () => {
+    const hash = await scriptHash(CLOAK_LOCK_SCRIPT);
+    for (const secure of [true, false]) {
+      const { html, csp } = cloakPage('a', 'https://example.com/', secure, undefined, { expiresInMs: 90_000.4, scriptHash: hash });
+      expect(html).toContain('<body data-expires-in="90000">');
+      expect(html).toContain(`<script>${CLOAK_LOCK_SCRIPT}</script>`);
+      expect(csp).toContain(`script-src 'sha256-${hash}';`);
+      expect(csp).toContain("default-src 'none'"); // nothing else may run or load
+      expect(csp).toContain("frame-ancestors 'none'");
+    }
+  });
+
+  it('the policy hash really is the hash of the script (a mismatch would silently stop the lock)', async () => {
+    const { createHash } = await import('node:crypto');
+    expect(await scriptHash(CLOAK_LOCK_SCRIPT)).toBe(createHash('sha256').update(CLOAK_LOCK_SCRIPT).digest('base64'));
+  });
+
+  it('has no script and no script permission for a link that never expires', () => {
+    const { html, csp } = cloakPage('a', 'https://example.com/', true);
+    expect(html).toContain('<body>');
+    expect(html).not.toMatch(/<script|data-expires-in/);
+    expect(csp).not.toContain('script-src');
+  });
+
+  it('rounds up so a very short wait is still a wait', () => {
+    expect(cloakPage('a', 'https://example.com/', true, undefined, { ...lock, expiresInMs: 0.2 }).html).toContain('data-expires-in="1"');
+  });
+});
+
+/** Runs the real lock script against a fake page and a fake clock. */
+function lockHarness(expiresIn: string | null) {
+  let now = 1_000_000;
+  let nextId = 1;
+  const timers: { id: number; at: number; fn: () => void }[] = [];
+  const handlers: Record<string, (() => void)[]> = {};
+  const replaced: string[] = [];
+  const doc = {
+    hidden: false,
+    body: { getAttribute: () => expiresIn },
+    addEventListener: (type: string, fn: () => void) => void (handlers[`document:${type}`] ??= []).push(fn),
+  };
+  const sandbox = {
+    document: doc,
+    window: { addEventListener: (type: string, fn: () => void) => void (handlers[`window:${type}`] ??= []).push(fn) },
+    location: { href: 'https://trim.ng/charles', replace: (url: string) => void replaced.push(url) },
+    Date: { now: () => now },
+    Number,
+    Math,
+    setTimeout: (fn: () => void, ms: number) => {
+      const id = nextId++;
+      timers.push({ id, at: now + ms, fn });
+      return id;
+    },
+    clearTimeout: (id: number) => {
+      const at = timers.findIndex((t) => t.id === id);
+      if (at >= 0) timers.splice(at, 1);
+    },
+  };
+  vm.runInNewContext(CLOAK_LOCK_SCRIPT, sandbox);
+  return {
+    doc,
+    replaced,
+    timers,
+    handlers,
+    /** Time passes normally: timers fire when due. */
+    advance(ms: number) {
+      const target = now + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.at <= target).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        now = due.at;
+        timers.splice(timers.indexOf(due), 1);
+        due.fn();
+      }
+      now = target;
+    },
+    /** The device slept: the clock moved on and no timer fired. */
+    sleep(ms: number) {
+      now += ms;
+    },
+    fire(type: string) {
+      for (const fn of handlers[type] ?? []) fn();
+    },
+  };
+}
+
+describe('the lock script itself', () => {
+  it('reloads once the time is up, a moment after and never before', () => {
+    const page = lockHarness('5000');
+    page.advance(4_999);
+    expect(page.replaced).toEqual([]);
+    page.advance(100);
+    expect(page.replaced).toEqual(['https://trim.ng/charles']); // the same address, as a plain GET
+  });
+
+  it('takes a long wait an hour at a time, and still locks at the right moment', () => {
+    const page = lockHarness(String(2 * 3_600_000 + 30_000));
+    expect(Math.max(...page.timers.map((t) => t.at - 1_000_000))).toBeLessThanOrEqual(3_600_000);
+    page.advance(3_600_000);
+    page.advance(3_600_000);
+    expect(page.replaced).toEqual([]); // 30 seconds still to go
+    page.advance(30_100);
+    expect(page.replaced).toHaveLength(1);
+  });
+
+  it('locks straight away when a sleeping device wakes up after the time (the tab comes back to the front)', () => {
+    const page = lockHarness('60000');
+    page.sleep(10 * 60_000); // closed laptop: no timer fired
+    expect(page.replaced).toEqual([]);
+    page.fire('document:visibilitychange');
+    expect(page.replaced).toHaveLength(1);
+  });
+
+  it('and when the page is restored from the back/forward cache after the time', () => {
+    const page = lockHarness('60000');
+    page.sleep(61_000);
+    page.fire('window:pageshow');
+    expect(page.replaced).toHaveLength(1);
+  });
+
+  it('does nothing while the tab is hidden or the time has not come', () => {
+    const page = lockHarness('60000');
+    page.doc.hidden = true;
+    page.sleep(120_000);
+    page.fire('document:visibilitychange');
+    expect(page.replaced).toEqual([]);
+    page.doc.hidden = false;
+    const early = lockHarness('60000');
+    early.sleep(10_000);
+    early.fire('document:visibilitychange');
+    expect(early.replaced).toEqual([]);
+    expect(early.timers).toHaveLength(1); // and it keeps counting down
+  });
+
+  it.each([[null], ['0'], ['-5'], ['abc'], ['']])('does nothing at all without a usable time (%j)', (value) => {
+    const page = lockHarness(value);
+    expect(page.timers).toHaveLength(0);
+    expect(Object.keys(page.handlers)).toHaveLength(0);
+    page.advance(10 * 3_600_000);
+    expect(page.replaced).toEqual([]);
   });
 });

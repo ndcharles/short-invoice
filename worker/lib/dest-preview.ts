@@ -68,23 +68,24 @@ export function remoteFrom(preview: DestPreview | null): RemoteOg | null {
 }
 
 /**
- * Fetches the destination's details and stores them on the link. Safe to call from many places at once:
- * the first caller claims the job by swapping the stored value (compare-and-swap), and everyone else
- * returns at once. The result is only saved if the link still points at the same destination.
+ * Fetches the destination's details and stores them on the link, and returns what it found (or null when it
+ * did not do the job). Safe to call from many places at once: the first caller claims the job by swapping the
+ * stored value (compare-and-swap), and everyone else returns null at once. The result is only saved if the
+ * link still points at the same destination.
  */
 export async function refreshPreview(
   db: D1Database,
   link: { id: string; dest: string; dest_meta: string | null },
   now = Date.now(),
   timeoutMs = FETCH_TIMEOUT_MS
-): Promise<void> {
+): Promise<DestPreview | null> {
   const before = readPreview(link.dest_meta);
   const pending: DestPreview = { ...before, state: 'pending', at: now };
   const claim = await db
     .prepare('UPDATE links SET dest_meta = ?1 WHERE id = ?2 AND dest = ?3 AND dest_meta IS ?4')
     .bind(JSON.stringify(pending), link.id, link.dest, link.dest_meta)
     .run();
-  if (!claim.meta.changes) return; // someone else is on it, or the link has changed
+  if (!claim.meta.changes) return null; // someone else is on it, or the link has changed
 
   let result: DestPreview;
   try {
@@ -106,6 +107,7 @@ export async function refreshPreview(
     .prepare('UPDATE links SET dest_meta = ?1 WHERE id = ?2 AND dest = ?3')
     .bind(JSON.stringify(result), link.id, link.dest)
     .run();
+  return result;
 }
 
 /**
@@ -145,4 +147,24 @@ export function summaryOf(preview: DestPreview | null): PreviewSummary | null {
     state: preview.state,
     fetched_at: preview.at,
   };
+}
+
+/** How long a link-preview crawler is made to wait for a destination that has never been looked at. */
+const CRAWLER_WAIT_MS = 2500;
+
+/**
+ * The destination's details for a link-preview crawler, which can wait a moment (a person clicking cannot).
+ * What is stored is used when there is anything usable in it. Only when there is nothing yet, and it is time
+ * to look, is the destination fetched right now, briefly, so the very first card is right. Nothing is fetched
+ * while DEST_PREVIEW_FETCH is "off".
+ */
+export async function destinationForNow(
+  env: { DB: D1Database; DEST_PREVIEW_FETCH?: string },
+  link: { id: string; dest: string; dest_meta?: string | null },
+  now = Date.now(),
+  waitMs = CRAWLER_WAIT_MS
+): Promise<DestPreview | null> {
+  const stored = readPreview(link.dest_meta);
+  if (remoteFrom(stored) || env.DEST_PREVIEW_FETCH === 'off' || !previewIsStale(stored, now)) return stored;
+  return (await refreshPreview(env.DB, { id: link.id, dest: link.dest, dest_meta: link.dest_meta ?? null }, now, waitMs)) ?? stored;
 }

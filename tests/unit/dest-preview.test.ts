@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parsePageMeta } from '../../worker/lib/page-meta';
 import {
-  PENDING_FOR_MS, REFRESH_AFTER_MS, RETRY_AFTER_MS, previewIsStale, readPreview, refreshPreview, remoteFrom, scheduleRefresh, summaryOf, type DestPreview,
+  PENDING_FOR_MS, REFRESH_AFTER_MS, RETRY_AFTER_MS, destinationForNow, previewIsStale, readPreview, refreshPreview, remoteFrom, scheduleRefresh, summaryOf, type DestPreview,
 } from '../../worker/lib/dest-preview';
 
 describe('reading a page for its own title, description and image', () => {
@@ -246,5 +246,59 @@ describe('what the editor is given about the stored copy', () => {
   });
   it('keeps what an earlier good fetch found, even while a refresh runs or after a failure', () => {
     for (const state of ['pending', 'failed'] as const) expect(summaryOf({ state, at: 9, title: 'Kept' })).toMatchObject({ title: 'Kept', state });
+  });
+});
+
+describe('a crawler waits a moment for a destination nobody has looked at yet', () => {
+  let db: DatabaseSync;
+  const dest = 'https://example.com/blog-roll';
+  const html = '<html><head><meta property="og:title" content="Fetched just now"></head></html>';
+  const row = () => db.prepare('SELECT dest_meta FROM links WHERE id = ?').get('lnk_1') as { dest_meta: string | null };
+
+  beforeEach(() => {
+    db = new DatabaseSync(':memory:');
+    db.exec('CREATE TABLE links (id TEXT PRIMARY KEY, dest TEXT NOT NULL, dest_meta TEXT)');
+    db.prepare('INSERT INTO links (id, dest) VALUES (?, ?)').run('lnk_1', dest);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(html, { headers: { 'content-type': 'text/html' } })));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const env = () => ({ DB: d1(db) });
+  const link = (dest_meta: string | null = null) => ({ id: 'lnk_1', dest, dest_meta });
+
+  it('fetches right now when there is nothing usable, and hands back what it found', async () => {
+    const found = await destinationForNow(env(), link());
+    expect(found).toMatchObject({ state: 'ok', title: 'Fetched just now' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(row().dest_meta!).title).toBe('Fetched just now'); // and kept for next time
+  });
+
+  it('uses what is stored, without fetching, whenever there is anything usable in it (even if it is old)', async () => {
+    const old = JSON.stringify({ state: 'ok', at: Date.now() - REFRESH_AFTER_MS * 3, title: 'Stored' });
+    expect(await destinationForNow(env(), link(old))).toMatchObject({ title: 'Stored' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not keep trying a destination that just failed', async () => {
+    const failed = JSON.stringify({ state: 'failed', at: Date.now() - 1000 });
+    expect(await destinationForNow(env(), link(failed))).toMatchObject({ state: 'failed' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when switched off', async () => {
+    expect(await destinationForNow({ DB: d1(db), DEST_PREVIEW_FETCH: 'off' }, link())).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('gives back what it had when someone else is already fetching, instead of waiting for them', async () => {
+    db.prepare('UPDATE links SET dest_meta = ? WHERE id = ?').run(JSON.stringify({ state: 'pending', at: Date.now() - PENDING_FOR_MS - 1 }), 'lnk_1');
+    const raced = link(null); // read as empty, but someone claimed it since
+    expect(await destinationForNow(env(), raced)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('refreshPreview itself reports what it found, or null when it did not do the job', async () => {
+    expect(await refreshPreview(d1(db), link())).toMatchObject({ state: 'ok', title: 'Fetched just now' });
+    expect(await refreshPreview(d1(db), link())).toBeNull(); // the stored value is no longer what this caller read
   });
 });

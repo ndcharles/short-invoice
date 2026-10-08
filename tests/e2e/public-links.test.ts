@@ -354,3 +354,90 @@ run('Setting an expiration in the editor', () => {
     }
   });
 });
+
+run('A cloaked link locks itself the moment it expires', () => {
+  const noticeGone = (page: import('playwright-core').Page) => page.getByText('This link has expired');
+
+  it('shows the expired page by itself, with nobody refreshing, while someone is looking at it', async () => {
+    const link = await seedLink({ dest: `${dest}/inside`, cloak: true, expires_at: Date.now() + 6_000 });
+    const v = await visitor();
+    try {
+      await v.page.goto(`/s/${link.alias}`);
+      await expect(v.page.frameLocator('iframe').locator('#dest')).toContainText('/inside'); // usable for now
+      expect(await noticeGone(v.page).count()).toBe(0);
+
+      // Nothing is clicked and nothing is reloaded: the page replaces itself once the time is up.
+      await expect.poll(() => noticeGone(v.page).count(), { timeout: 20_000, interval: 250 }).toBe(1);
+      expect(await v.page.locator('iframe').count()).toBe(0); // the destination is no longer on screen
+      expect(new URL(v.page.url()).pathname).toBe(`/s/${link.alias}`);
+      expect(v.errors).toEqual([]);
+    } finally {
+      await v.context.close();
+    }
+  });
+
+  it('also when the page was the answer to the password form (no "resend form?" question)', async () => {
+    const link = await seedLink({ dest: `${dest}/inside`, cloak: true, password: 'a good password here', expires_at: Date.now() + 9_000 });
+    const v = await visitor();
+    try {
+      await v.page.goto(`/s/${link.alias}`);
+      await v.page.getByLabel('Password').fill('a good password here');
+      await v.page.getByRole('button', { name: 'Unlock link' }).click();
+      await expect(v.page.frameLocator('iframe').locator('#dest')).toContainText('/inside');
+      await expect.poll(() => noticeGone(v.page).count(), { timeout: 25_000, interval: 250 }).toBe(1);
+      expect(await v.page.locator('iframe').count()).toBe(0);
+      expect(await v.page.getByLabel('Password').count()).toBe(0); // not sent back to the password form either
+    } finally {
+      await v.context.close();
+    }
+  });
+
+  it('if the owner extends the date while the page is open, it stays open and starts counting to the new date', async () => {
+    const link = await seedLink({ dest: `${dest}/inside`, cloak: true, expires_at: Date.now() + 5_000 });
+    const v = await visitor();
+    try {
+      await v.page.goto(`/s/${link.alias}`);
+      await expect(v.page.frameLocator('iframe').locator('#dest')).toContainText('/inside');
+      expect((await api('PATCH', `/api/links/${link.id}`, { expires_at: Date.now() + 3_600_000 })).status).toBe(200);
+      await v.page.waitForTimeout(7_000); // well past the date the page was sent with
+      expect(await noticeGone(v.page).count()).toBe(0);
+      await expect(v.page.frameLocator('iframe').locator('#dest')).toContainText('/inside');
+      expect(Number(await v.page.locator('body').getAttribute('data-expires-in'))).toBeGreaterThan(3_000_000); // the new date
+    } finally {
+      await v.context.close();
+    }
+  });
+});
+
+run('A shared link with a custom preview', () => {
+  it('shows a link-preview crawler the owner\'s card and leaves it there, while a person is sent on to the destination', async () => {
+    const link = await seedLink({
+      dest: `${dest}/landing`,
+      custom_preview: 1,
+      og_title: 'My own title',
+      og_description: 'My own words',
+      og_image: 'https://mine.example.com/card.png',
+    });
+    // What X's crawler looks like; the page is drawn by real Chrome, as a card-maker would read it.
+    const crawler = await openSession(browser, { user: null, userAgent: 'Twitterbot/1.0' });
+    const person = await visitor();
+    try {
+      await crawler.page.goto(`/s/${link.alias}`);
+      await crawler.page.waitForTimeout(1_500); // long enough for any redirect to have happened
+      expect(new URL(crawler.page.url()).pathname).toBe(`/s/${link.alias}`);
+      expect(await crawler.page.title()).toBe('My own title');
+      const content = (selector: string) => crawler.page.locator(selector).getAttribute('content');
+      expect(await content('meta[property="og:title"]')).toBe('My own title');
+      expect(await content('meta[property="og:description"]')).toBe('My own words');
+      expect(await content('meta[property="og:image"]')).toBe('https://mine.example.com/card.png');
+      expect(await content('meta[name="twitter:card"]')).toBe('summary_large_image');
+
+      await person.page.goto(`/s/${link.alias}`);
+      await person.page.waitForURL((url) => url.origin === dest);
+      await expect(person.page.locator('#dest')).toContainText('/landing');
+    } finally {
+      await crawler.context.close();
+      await person.context.close();
+    }
+  });
+});
