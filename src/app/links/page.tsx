@@ -10,6 +10,7 @@ import { useCollections, useSettings } from '@/lib/collections';
 import { useConfirm } from '@/components/invoices/choice-modal';
 import { useShortUrls } from '@/lib/use-short-url';
 import { usePopoverDismiss } from '@/lib/popover';
+import { showToast } from '@/components/toast';
 import {
   ChevronDown,
   Filter,
@@ -158,7 +159,7 @@ export default function LinksPage() {
 
   const handleDuplicate = async (link: LinkItem) => {
     try {
-      await fetch('/api/links', {
+      const res = await fetch('/api/links', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -184,6 +185,8 @@ export default function LinksPage() {
           og_image: link.og_image,
         }),
       });
+      // For example a cloaked link to a site that cannot be cloaked: say so instead of quietly doing nothing.
+      if (!res.ok) showToast(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? 'Could not duplicate the link', 'info');
       refresh();
     } catch (err) {
       console.error('Duplicate failed:', err);

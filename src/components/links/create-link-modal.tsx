@@ -30,6 +30,8 @@ import {
 import { hasUtm } from '@/lib/links/utm';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
+import { useCloakCheck } from '@/lib/use-cloak-check';
+import { CloakNote } from '@/components/links/cloak-note';
 import { useCollections, useSettings } from '@/lib/collections';
 import { useMe } from '@/lib/team';
 import { useShortUrls } from '@/lib/use-short-url';
@@ -160,6 +162,30 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
 
   const fullShortUrl = urlFor({ domain, alias: alias || 'link' }).url;
   const { remote, loading: ogLoading } = useOgMetadata(dest);
+  // Whether the destination can be shown in a cloaked link (checked on its own while cloaking is on).
+  const { answer: cloakAnswer, checking: cloakChecking, check: checkCloak } = useCloakCheck(dest, domain, cloak);
+  // Turning cloaking on asks whether the site allows it; if not, the switch goes back off and the note says why.
+  // The address (trimmed) that cloaking was last refused for, so the note can explain why the switch went back.
+  const [cloakRefusedFor, setCloakRefusedFor] = useState<string | null>(null);
+  const destNow = useRef(dest);
+  useEffect(() => {
+    destNow.current = dest;
+  }, [dest]);
+  const toggleCloak = () => {
+    setCloakRefusedFor(null);
+    if (cloak) {
+      setCloak(false);
+      return;
+    }
+    const asked = dest.trim();
+    setCloak(true);
+    void checkCloak(asked, domain).then((answer) => {
+      // Unless the address has been changed meanwhile, in which case the answer is about another site.
+      if (answer.status !== 'blocked' || destNow.current.trim() !== asked) return;
+      setCloak(false);
+      setCloakRefusedFor(asked);
+    });
+  };
   const preview = resolveOg({
     dest,
     alias,
@@ -437,10 +463,24 @@ function CreateLinkForm({ onClose, onSuccess }: CreateLinkFormProps) {
                 Cloak link
                 <span className="field-hint"><Info /></span>
               </label>
-              <div className={`toggle ${cloak ? 'on' : ''}`} onClick={() => setCloak(!cloak)}>
+              <div
+                className={`toggle ${cloak ? 'on' : ''}`}
+                role="switch"
+                aria-checked={cloak}
+                aria-label="Cloak link"
+                tabIndex={0}
+                onClick={toggleCloak}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleCloak();
+                  }
+                }}
+              >
                 <div className="toggle-switch" />
               </div>
             </div>
+            <CloakNote cloak={cloak} checking={cloakChecking} answer={cloakAnswer} refused={cloakRefusedFor === dest.trim()} />
           </div>
 
           {/* Right column */}

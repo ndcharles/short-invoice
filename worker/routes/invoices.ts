@@ -20,6 +20,7 @@ import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin, type CurrentUser } from '../lib/auth';
 import { unknownPick } from '../lib/collections';
+import { containsText } from '../lib/search';
 import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
@@ -112,8 +113,9 @@ invoices.get('/', async (c) => {
     where += ` AND tag = ?${params.length}`;
   }
   if (search) {
-    params.push(`%${search}%`);
-    where += ` AND (number LIKE ?${params.length} OR client_name LIKE ?${params.length} OR client_email LIKE ?${params.length})`;
+    params.push(search);
+    const text = `?${params.length}`;
+    where += ` AND (${containsText('number', text)} OR ${containsText('client_name', text)} OR ${containsText('client_email', text)})`;
   }
   let listSql = `SELECT * FROM invoices WHERE ${where}`;
   const listParams = [...params];

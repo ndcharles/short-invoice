@@ -3,8 +3,9 @@
 An internal multi-tool workspace for a small team:
 
 - **URL shortener**: short links on your own domain (or `/s/` on the app),
-  folders, tags, UTM params, passwords, expiry, cloaking, custom link
-  previews, QR codes and click analytics
+  folders, tags, UTM params, passwords, expiry, cloaking (refused for sites
+  that cannot be shown in a frame), custom link previews, QR codes and click
+  analytics
 - **UTM builder**: tagged campaign URLs with presets and QR codes
 - **Invoice generator**: Draft → Sent → Overdue → Partially paid → Paid →
   Cancelled, payment logging, receipts, PDF export and analytics

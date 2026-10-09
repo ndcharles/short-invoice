@@ -46,6 +46,11 @@ expect.extend({
     const value = await settle(() => loc.first().isChecked(), (v) => !!v, this.isNot);
     return { pass: !!value, message: () => `expected locator ${this.isNot ? 'not ' : ''}to be checked` };
   },
+  async toHaveAttribute(this: { isNot: boolean }, loc: Locator, name: string, expected: string | RegExp) {
+    const test = (v: string | null) => v !== null && v !== undefined && (expected instanceof RegExp ? expected.test(v) : v === expected);
+    const value = await settle(() => loc.first().getAttribute(name), test, this.isNot);
+    return { pass: test(value), message: () => `expected attribute ${name} to be ${String(expected)} but got ${JSON.stringify(value)}`, actual: value, expected };
+  },
   async toContainText(this: { isNot: boolean }, loc: Locator, expected: string | RegExp) {
     const test = (v: string) => (expected instanceof RegExp ? expected.test(v) : (v ?? '').includes(expected));
     const value = await settle(() => loc.first().evaluate((el) => (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) ? String((el as HTMLInputElement).value) : (el as HTMLElement).innerText)), test, this.isNot);
@@ -61,6 +66,7 @@ interface LocatorMatchers<R = unknown> {
   toBeEnabled(): Promise<R>;
   toBeChecked(): Promise<R>;
   toContainText(text: string | RegExp): Promise<R>;
+  toHaveAttribute(name: string, value: string | RegExp): Promise<R>;
 }
 
 declare module 'vitest' {

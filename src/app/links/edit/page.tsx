@@ -41,6 +41,8 @@ import { ShortUrlHint } from '@/components/links/short-url-hint';
 import { usePopoverDismiss } from '@/lib/popover';
 import { resolveOg } from '@/lib/og';
 import { useOgMetadata } from '@/lib/use-og-metadata';
+import { useCloakCheck } from '@/lib/use-cloak-check';
+import { CloakNote } from '@/components/links/cloak-note';
 
 
 type ActivePopup = 'utm' | 'password' | 'expiration' | 'preview' | null;
@@ -141,6 +143,11 @@ function EditLinkPageInner() {
   const { items: tags, create: createTag } = useCollections('tags');
   const settings = useSettings();
   const { urlFor, domains } = useShortUrls(settings);
+  // Whether the destination can be shown in a cloaked link. Checked on its own while cloaking is on, so a link
+  // that is already cloaked (and would show a blank page) is flagged as soon as it opens.
+  const { answer: cloakAnswer, checking: cloakChecking, check: checkCloak } = useCloakCheck(draft?.dest ?? '', draft?.domain ?? '', !!draft?.cloak);
+  // The address (trimmed) that cloaking was last refused for, so the note can explain why the switch went back.
+  const [cloakRefusedFor, setCloakRefusedFor] = useState<string | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [creatingTag, setCreatingTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
@@ -184,6 +191,24 @@ function EditLinkPageInner() {
   const patch = useCallback((partial: Partial<LinkDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...partial } : prev));
   }, []);
+
+  // Turning cloaking on asks whether the site allows it. If it does not, the switch goes back off and the note
+  // under it says "This link cannot be cloaked" (unless the person has already changed the address meanwhile).
+  const toggleCloak = () => {
+    if (!draft) return;
+    setCloakRefusedFor(null);
+    if (draft.cloak) {
+      patch({ cloak: false });
+      return;
+    }
+    const asked = draft.dest.trim();
+    patch({ cloak: true });
+    void checkCloak(asked, draft.domain).then((answer) => {
+      if (answer.status !== 'blocked') return;
+      setDraft((prev) => (prev && prev.cloak && prev.dest.trim() === asked ? { ...prev, cloak: false } : prev));
+      setCloakRefusedFor(asked);
+    });
+  };
 
   const closePickers = useCallback(() => {
     setOpenPicker(null);
@@ -570,17 +595,18 @@ function EditLinkPageInner() {
               aria-checked={draft.cloak}
               aria-label="Cloak link"
               tabIndex={0}
-              onClick={() => patch({ cloak: !draft.cloak })}
+              onClick={toggleCloak}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  patch({ cloak: !draft.cloak });
+                  toggleCloak();
                 }
               }}
             >
               <div className="toggle-switch" />
             </div>
           </div>
+          <CloakNote cloak={draft.cloak} checking={cloakChecking} answer={cloakAnswer} refused={cloakRefusedFor === draft.dest.trim()} />
 
           <div className="tools-bar" style={{ marginTop: '16px' }}>
             <button className={`tool-btn ${utmActive ? 'on' : ''}`} onClick={() => setActivePopup('utm')}>

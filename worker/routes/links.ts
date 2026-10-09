@@ -9,9 +9,12 @@ import { getSettings } from '../lib/settings';
 import { knownDomains } from '../lib/domains';
 import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
-import { requireAdmin } from '../lib/auth';
+import { requireAdmin, withinLimit } from '../lib/auth';
 import { unknownPick } from '../lib/collections';
 import { readPreview, scheduleRefresh, summaryOf } from '../lib/dest-preview';
+import { cloakCheckFor, cloakRefusal } from '../lib/cloak-guard';
+import { containsText } from '../lib/search';
+import { parseHostname, parseHttpUrl } from '../../src/lib/validate';
 
 const links = new Hono<AppEnv>();
 
@@ -44,9 +47,8 @@ links.get('/', async (c) => {
     params.push(folder);
   }
   if (search) {
-    sql += ' AND (alias LIKE ? OR dest LIKE ? OR comments LIKE ?)';
-    const like = `%${search}%`;
-    params.push(like, like, like);
+    sql += ` AND (${containsText('alias', '?')} OR ${containsText('dest', '?')} OR ${containsText('comments', '?')})`;
+    params.push(search, search, search);
   }
   sql += ' ORDER BY created_at DESC';
 
@@ -95,6 +97,12 @@ links.post('/', async (c) => {
     return c.json({ error: 'This short link alias is already in use.' }, 409);
   }
 
+  // Last, because it may have to ask the destination: some sites cannot be shown in a cloaked link.
+  if (input.cloak === 1) {
+    const refusal = await cloakRefusal(c, input.dest ?? '', domain);
+    if (refusal) return c.json(refusal, 400);
+  }
+
   const id = `lnk_${randomAlias()}${randomAlias().slice(0, 3)}`;
   const now = Date.now();
   const utm = pickUtm(input.utm ?? {});
@@ -129,6 +137,24 @@ links.post('/', async (c) => {
   const link = await db.prepare('SELECT * FROM links WHERE id = ?1').bind(id).first<LinkItem>();
   if (link) scheduleRefresh(c.env, c.executionCtx, link);
   return c.json({ link: publicLink(link, true) }, 201);
+});
+
+/**
+ * Can this destination be cloaked? Asked when the Cloak switch is turned on, and when a cloaked link is opened.
+ * It looks at another site for the person, so it is limited per person (like link previews).
+ */
+const CLOAK_CHECKS_PER_10_MIN = 60;
+links.get('/cloak-check', async (c) => {
+  const dest = parseHttpUrl(c.req.query('url'), 'Destination URL');
+  if (!dest.ok) return c.json({ error: dest.error }, 400);
+  const asked = c.req.query('domain');
+  const domain = asked ? parseHostname(asked) : null;
+  if (domain && !domain.ok) return c.json({ error: domain.error }, 400);
+  if (!(await withinLimit(c.env.DB, `cloak:${c.var.user.email}`, CLOAK_CHECKS_PER_10_MIN, 10 * 60_000))) {
+    return c.json({ error: 'Too many checks. Try again in a few minutes.' }, 429);
+  }
+  const host = domain?.ok ? domain.value : (await getSettings(c.env.DB)).default_domain;
+  return c.json({ cloak: await cloakCheckFor(c, dest.value, host) });
 });
 
 links.get('/:id', async (c) => {
@@ -171,6 +197,15 @@ links.patch('/:id', async (c) => {
       .bind(domain, alias, id)
       .first();
     if (conflict) return c.json({ error: 'Alias already in use' }, 409);
+  }
+
+  // Cloaking is only checked when it is being turned on, or a cloaked link is pointed somewhere else (or onto another
+  // domain). A link that is already cloaked keeps saving other changes, so a site that later stops allowing frames
+  // never traps its owner: they can still open the link and turn cloaking off.
+  const nextDest = input.dest ?? existing.dest;
+  if ((input.cloak ?? existing.cloak) === 1 && (existing.cloak !== 1 || nextDest !== existing.dest || domain !== existing.domain)) {
+    const refusal = await cloakRefusal(c, nextDest, domain);
+    if (refusal) return c.json(refusal, 400);
   }
 
   // Password: absent = leave as-is, null/'' = clear, string = set.
