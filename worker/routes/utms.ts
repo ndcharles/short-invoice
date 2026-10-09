@@ -8,6 +8,7 @@ import { getSettings } from '../lib/settings';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin } from '../lib/auth';
 import { unknownPick } from '../lib/collections';
+import { containsText } from '../lib/search';
 
 const utms = new Hono<AppEnv>();
 
@@ -60,9 +61,9 @@ utms.get('/', async (c) => {
     params.push(folder);
   }
   if (search) {
-    sql += ' AND (website LIKE ? OR source LIKE ? OR medium LIKE ? OR campaign LIKE ? OR content LIKE ?)';
-    const like = `%${search}%`;
-    params.push(like, like, like, like, like);
+    const columns = ['website', 'source', 'medium', 'campaign', 'content'];
+    sql += ` AND (${columns.map((column) => containsText(column, '?')).join(' OR ')})`;
+    params.push(...columns.map(() => search));
   }
   sql += ' ORDER BY created_at DESC';
 

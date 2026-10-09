@@ -83,7 +83,7 @@ export function parsePageMeta(html: string, finalUrl: string): LinkMetadata {
 }
 
 /** Follows redirects by hand so every hop is checked, not just the first address. */
-async function fetchPage(start: URL, timeoutMs: number): Promise<{ res: Response; finalUrl: string } | { error: string; status: 400 | 502 }> {
+export async function fetchPage(start: URL, timeoutMs: number): Promise<{ res: Response; finalUrl: string } | { error: string; status: 400 | 502 }> {
   let url = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     const problem = checkFetchUrl(url);

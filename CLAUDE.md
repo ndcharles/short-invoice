@@ -93,6 +93,10 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
 - Multi-statement writes use `db.batch([...])` (one round trip, atomic).
 - SQL uses bound placeholders (`?1`); never interpolate request input.
   Table names only from fixed maps (see `worker/lib/collections.ts`).
+- **List searches use `containsText()` (`worker/lib/search.ts`), never `LIKE '%text%'`.** D1 rejects a
+  LIKE pattern longer than 50 bytes ("LIKE or GLOB pattern too complex"), so a pasted address made the
+  search fail with a 500, and LIKE treats the person's own `%` and `_` as wildcards. `instr(lower(...))`
+  has neither problem. `tests/api/list-search.test.ts` covers links, UTM campaigns and invoices.
 - **Validate every input on the server** with `src/lib/validate.ts`
   (`parseHttpUrl` for anything that ends up in a redirect, href, src or
   iframe). Worker-rendered HTML escapes every value. API writes require JSON
@@ -122,6 +126,31 @@ Audited 2026-10-07 (external attackers, sign-in, member vs admin). Keep these:
   - Cloaked links: an https page cannot frame an http page (mixed content, a
     blank page). On https `cloakPage()` rewrites the frame to https and adds
     `upgrade-insecure-requests`.
+- **Cloak check** (`worker/lib/framing.ts`, `cloak-check.ts`, `cloak-guard.ts`; shared type in
+  `src/lib/links/cloak-check.ts`). A cloaked link shows its destination in a frame, and some sites forbid
+  that (the visitor gets a blank page), so cloaking is refused for them with **"This link cannot be cloaked"**
+  (`NOT_CLOAKABLE`; the API answers 400 with `code: 'not_cloakable'` and a plain-words `detail`).
+  - It is decided from the destination's own response headers by `framingAllowed()`:
+    `Content-Security-Policy: frame-ancestors` when present (it wins), else `X-Frame-Options`. `ALLOW-FROM`
+    and other values are ignored, report-only policies never block, every policy must allow, and a source
+    with a path is invalid and skipped. **Chrome is the judge:** `tests/e2e/framing-parity.test.ts` serves 35
+    header combinations to real Chrome inside a frame and compares (it found the path rule). Keep it green
+    when changing `framing.ts`.
+  - `GET /api/links/cloak-check?url=&domain=` (any signed-in person; 60 / 10 min each; answers cached 10 min in
+    the Cache API, "could not tell" never cached). `POST`/`PATCH /api/links` ask the same question, **only when
+    cloaking is being turned on or a cloaked link's destination or domain changes**. A link that is already
+    cloaked keeps saving other changes, so its owner can always open it and turn cloaking off.
+  - **Could not tell means allowed.** A bot challenge (`cf-mitigated`), 401/403/429, a missing page, a failed
+    request, a private address, or `DEST_PREVIEW_FETCH=off` (which switches this off too) all give
+    `status: 'unknown'`. Never block on a guess: a challenge page's headers describe the challenge, not the site.
+  - `KNOWN_SITES` in `cloak-check.ts` are refused without asking, for sites whose headers cannot say so:
+    Zoom (the meeting page loads in a frame, but a call needs the camera and microphone and the cloak page's
+    frame is given neither: the iframe has no `allow=`, deliberately, so other sites cannot request them under
+    the short domain's name) and Claude (its pages forbid frames, but the home page challenges bots). Add a
+    site only after seeing it fail in a real browser.
+  - UI: `useCloakCheck()` and `<CloakNote>` sit under the Cloak switch in the editor and the new-link form.
+    Turning the switch on asks; if refused it goes back off and the red note explains why. A cloaked link
+    opened in the editor is checked on its own and flagged.
 - **Link previews** (`worker/lib/cloak.ts`, `dest-preview.ts`, `page-meta.ts`). Every link keeps
   what its destination says about itself (title, description, image), cloaked or not. The editor
   starts from that copy, and a cloaked link's page (only a frame) carries it as its title (browser
@@ -382,6 +411,7 @@ Settings UI. **The repo is public; never commit them.**
 
 - `tests/unit`: pure functions. `worker-libs.test.ts` imports Worker code, so it
   is compiled by `worker/tsconfig.json` (and excluded from the root tsconfig).
+  `framing.test.ts` also imports Worker code, but only code that needs no Worker types, so both compile it.
 - `tests/api`: black-box HTTP against `wrangler dev` with a fresh D1;
   `security.test.ts` covers auth, CSRF, roles, SSRF, headers and body limits.
 - `tests/e2e`: Playwright (playwright-core) driving system Chrome against the
@@ -431,5 +461,9 @@ RTT, several of them). There is no app-side fix; do not cache redirects.
 - Crawlers that are not on the `isPreviewBot()` list follow the redirect, so a custom preview does not
   show on their cards (add them to the list, with a test that the apps' own browsers still do not match).
 - A page that is already open on a plain (non-cloaked) redirect link cannot be locked when it expires.
+- A link cloaked before the cloak check existed (or whose site later forbids frames) still shows visitors a
+  blank page; the editor flags it, but nothing falls back to a plain redirect at visit time yet.
+- The cloak check sees what our server sees. Sites that answer a browser differently (bot challenge, per
+  country), or that forbid frames in JavaScript, pass as "could not tell" or "fine".
 - A cloaked link to a destination that only works over plain `http` cannot be shown
   from an https short link (browsers block it); nothing can fix that server-side.

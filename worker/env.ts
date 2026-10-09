@@ -14,9 +14,11 @@ export interface Env {
   /** Tests only: "1" lets localhost requests with `x-dev-user` skip sign-in. Never set in production. */
   DEV_AUTH_BYPASS?: string;
   /**
-   * "off" stops cloaked links from fetching their destination's title, description and image in the
-   * background (they then show what the owner wrote, or a plain fallback). Tests set it; it is also a
-   * kill-switch if that fetching ever misbehaves.
+   * "off" stops the Worker from looking at destination sites: cloaked links stop fetching their destination's
+   * title, description and image in the background (they then show what the owner wrote, or a plain fallback),
+   * and the cloak check stops asking sites whether they allow frames (only its list of known sites still
+   * applies, everything else is "could not tell"). Tests set it; it is also a kill-switch if that fetching
+   * ever misbehaves.
    */
   DEST_PREVIEW_FETCH?: string;
 }

@@ -46,6 +46,11 @@
 }
 .field-row > * { width: auto; }
 
+/* What the Cloak link switch has to say under it: checking, could not check, or "This link cannot be cloaked". */
+.cloak-note { margin-top: 8px; font-size: 12px; line-height: 1.45; color: var(--muted-foreground); }
+.cloak-note.is-blocked { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: #fee2e2; color: #991b1b; border-radius: var(--radius-sm); }
+.cloak-note.is-blocked strong { font-size: 13px; font-weight: 600; }
+
 /* .empty collides with Basecoat's .empty (flex:1 + text-wrap:balance).
    The design's empty state is a bordered block, not a flex filler. */
 .empty {
