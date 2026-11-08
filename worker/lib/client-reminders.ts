@@ -101,7 +101,7 @@ export async function dailyRun(env: Env, now = Date.now()): Promise<DailyRunResu
     const left = daysUntil(date, now);
     const days = reminderDaysFor(s, { reminder_days: s.reminder_days ?? '' } as Pick<ServiceTypeRow, 'reminder_days'>, rules);
     const steps = s.kind === 'visits' ? visitChecklist(parseMeta(s.meta), settings).length : 0;
-    const what = s.kind === 'job' ? 'is due' : s.kind === 'visits' ? `visit is due${steps ? ` (${steps} steps)` : ''}` : 'renews';
+    const what = s.kind === 'job' ? 'is due' : s.kind === 'visits' ? `is scheduled${steps ? ` (${steps} steps)` : ''}` : 'renews';
     if (left >= 0 && days.includes(left)) {
       const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : `in ${left} days (${fmt(date)})`;
       due.push({ service_id: s.id, client: s.client_name, text: `${s.name} ${what} ${when}`, days_before: left, for_date: date });
@@ -181,7 +181,7 @@ export function reminderText(lines: ReminderLine[], drafted: DailyRunResult['dra
     for (const d of drafted) out.push(`  - ${d.invoice}: ${d.client}, ${d.service}`);
     out.push('');
   }
-  out.push('Open Clients → Due dates in the app to renew, mark visits done or deliver jobs.');
+  out.push('Open Clients → Due dates in the app to renew, mark schedules done or deliver jobs.');
   out.push('These reminders are for your team only. Nothing was sent to your clients.');
   return out.join('\n');
 }

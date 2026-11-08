@@ -111,11 +111,18 @@ describe('clients', () => {
     expect(again.body.invoice).toBeNull();
   });
 
-  it('keeps how a service works fixed', async () => {
-    const client = await createClient({ services: [{ type_id: 'st_hosting', next_date: todayUtc() + 30 * DAY }] });
-    const service = (await detail(client.id)).services[0];
-    expect((await api('PATCH', `/api/clients/services/${service.id}`, { kind: 'job' })).status).toBe(400);
-    expect((await api('PATCH', `/api/clients/services/${service.id}`, { cycle: 'once' })).status).toBe(400);
+  it('lets any service change how it works', async () => {
+    // A website built as a one-off job from the start.
+    const client = await createClient({ services: [{ type_id: 'st_website', kind: 'job', price: 300_000 }] });
+    const site = (await detail(client.id)).services[0];
+    expect(site).toMatchObject({ kind: 'job', cycle: 'once', job_status: 'not_started' });
+    // Then switched to renew yearly, and on to a monthly schedule.
+    const renews = await api('PATCH', `/api/clients/services/${site.id}`, { kind: 'renews', next_date: todayUtc() + 30 * DAY });
+    expect(renews.status, JSON.stringify(renews.body)).toBe(200);
+    expect(renews.body.service).toMatchObject({ kind: 'renews', cycle: 'yearly', job_status: '' });
+    const scheduled = await api('PATCH', `/api/clients/services/${site.id}`, { kind: 'visits', cycle: 'monthly' });
+    expect(scheduled.body.service).toMatchObject({ kind: 'visits', cycle: 'monthly' });
+    expect((await api('PATCH', `/api/clients/services/${site.id}`, { cycle: 'once' })).status).toBe(400);
   });
 
   it('lets members add and edit clients but not delete them or invent tags', async () => {
@@ -138,10 +145,16 @@ describe('service types', () => {
     expect(made.body.type).toMatchObject({ kind: 'job', cycle: 'once', reminder_days: '7,1', used: 0 });
   });
 
-  it('fixes how a type works once it is used, and refuses to delete it', async () => {
+  it('lets a type change how it works (new services only), and refuses to delete one in use', async () => {
     const made = (await api('POST', '/api/service-types', { name: `Bulk certs ${Date.now()}`, kind: 'job', price: 200, price_unit: 'each' })).body.type;
-    await createClient({ services: [{ type_id: made.id, quantity: 350 }] });
-    expect((await api('PATCH', `/api/service-types/${made.id}`, { kind: 'renews' })).status).toBe(400);
+    const client = await createClient({ services: [{ type_id: made.id, quantity: 350 }] });
+    const changed = await api('PATCH', `/api/service-types/${made.id}`, { kind: 'renews' });
+    expect(changed.body.type).toMatchObject({ kind: 'renews', cycle: 'yearly' });
+    expect((await detail(client.id)).services[0].kind).toBe('job');
+    const builtIn = await api('PATCH', '/api/service-types/st_website', { kind: 'job' });
+    expect(builtIn.body.type.kind).toBe('job');
+    await api('PATCH', '/api/service-types/st_website', { kind: 'renews' });
+    await api('PATCH', `/api/service-types/${made.id}`, { kind: 'job' });
     const renamed = await api('PATCH', `/api/service-types/${made.id}`, { name: `${made.name} v2`, show_in_add: false });
     expect(renamed.body.type).toMatchObject({ show_in_add: 0, used: 1 });
     expect((await api('DELETE', `/api/service-types/${made.id}`)).status).toBe(400);
@@ -199,7 +212,7 @@ describe('notes, visits and import', () => {
     const res = await api('POST', `/api/clients/services/${plan.id}/visit`, { done_steps: 2, total_steps: 3, note: 'DNS fine' });
     expect(res.status).toBe(200);
     const notes = (await api('GET', `/api/clients/${client.id}`)).body.notes;
-    expect(notes[0].text).toBe('Visit: DNS fine');
+    expect(notes[0].text).toBe('Schedule: DNS fine');
   });
 
   it('imports clients from invoices and links their invoices', async () => {

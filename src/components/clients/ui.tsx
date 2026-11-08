@@ -1,15 +1,72 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Portal } from '@/components/portal';
 import { fromDateInput, toDateInput } from '@/lib/dates';
 import { MoneyInput } from '@/components/invoices/money-input';
 
-/** The little "i" next to a label: its words show on hover and are read out by screen readers. */
+/**
+ * The little "i" next to a label. Its words show on hover, on keyboard focus and on a tap (phones have no hover),
+ * in a bubble drawn above everything else, so a card that clips its contents cannot cut it off.
+ */
 export function Tip({ text }: { text: string }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; below: boolean } | null>(null);
+  const id = useId();
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = Math.min(280, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - 8));
+    const below = r.top < 90;
+    setPos({ left, top: below ? r.bottom + 6 : r.top - 6, below });
+  };
+  const hide = () => setPos(null);
+  useEffect(() => {
+    if (!pos) return;
+    const close = (e: Event) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key !== 'Escape') return;
+      if (e.type === 'pointerdown' && ref.current?.contains(e.target as Node)) return;
+      setPos(null);
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', close);
+    window.addEventListener('pointerdown', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', close);
+      window.removeEventListener('pointerdown', close);
+    };
+  }, [pos]);
   return (
-    <button type="button" className="ct-tip" title={text} aria-label={text} tabIndex={0}>
-      i
-    </button>
+    <>
+      <button
+        ref={ref}
+        type="button"
+        className="ct-tip"
+        aria-label={text}
+        aria-describedby={pos ? id : undefined}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={show}
+      >
+        i
+      </button>
+      {pos && (
+        <Portal>
+          <div
+            id={id}
+            role="tooltip"
+            className={`ct-tip-pop${pos.below ? ' below' : ''}`}
+            style={{ left: pos.left, top: pos.top, width: Math.min(280, window.innerWidth - 16) }}
+          >
+            {text}
+          </div>
+        </Portal>
+      )}
+    </>
   );
 }
 

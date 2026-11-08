@@ -141,7 +141,7 @@ export default function ClientsPage() {
         ) : clients.length === 0 && !search && !archived ? (
           <div className="empty">
             <h3>No clients yet</h3>
-            <p>Log your first client and what they have with you. Their renewals, visits and jobs then remind you on time.</p>
+            <p>Log your first client and what they have with you. Their renewals, schedules and jobs then remind you on time.</p>
             <Link className="btn btn-primary" href="/clients/new">
               <Plus />
               <span>New client</span>

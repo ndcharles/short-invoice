@@ -8,9 +8,9 @@ import { parseServiceTypeInput } from '../lib/client-input';
 
 /**
  * Service types (Settings → Clients). Everyone reads them (the forms list them); only admins change them
- * (see worker/index.ts). A type in use keeps how it works, and cannot be deleted: hide it from the Add
- * list instead. The built-in parts (website, domain, ...) keep how they work too, because the Log a
- * client form depends on them.
+ * (see worker/index.ts). How a type works is the default for new services and can change at any time;
+ * services already added keep their own way. A type in use, or built in, cannot be deleted: hide it from
+ * the Add list instead.
  */
 const serviceTypes = new Hono<AppEnv>();
 
@@ -76,10 +76,8 @@ serviceTypes.patch('/:id', async (c) => {
   const existing = await db.prepare(LIST.replace('ORDER BY t.sort, t.created_at', 'WHERE t.id = ?1')).bind(id).first<ServiceTypeRow>();
   if (!existing) return c.json({ error: 'Service type not found' }, 404);
   if (input.name !== undefined && !input.name) return c.json({ error: 'Give the service type a name' }, 400);
-  if (input.kind !== undefined && input.kind !== existing.kind) {
-    if (existing.part) return c.json({ error: 'How a built-in type works cannot change' }, 400);
-    if ((existing.used ?? 0) > 0) return c.json({ error: 'How it works is fixed once a service uses this type' }, 400);
-  }
+  // How a type works is only the default for new services; services already added keep their own way.
+  if (input.kind === 'any' && existing.part !== 'other') return c.json({ error: 'Pick renews, schedule or one-off job' }, 400);
   if (input.name && input.name.toLowerCase() !== existing.name.toLowerCase()) {
     if (await db.prepare('SELECT id FROM service_types WHERE name = ?1 COLLATE NOCASE AND id != ?2').bind(input.name, id).first()) {
       return c.json({ error: `There is already a service type called ${input.name}` }, 409);

@@ -73,7 +73,7 @@ function buildService(
 ): { ok: true; value: BuiltService } | { ok: false; error: string } {
   const type = input.type_id ? types.get(input.type_id) : undefined;
   if (!type) return { ok: false, error: 'Pick what kind of service it is' };
-  const kind = type.kind === 'any' ? input.kind ?? 'job' : type.kind;
+  const kind = input.kind ?? (type.kind === 'any' ? 'job' : type.kind);
   const name = (type.kind === 'any' ? input.name : input.name || type.name) || '';
   if (!name) return { ok: false, error: 'Give the service a name' };
   let cycle = input.cycle ?? (kind === 'job' ? 'once' : type.cycle === 'once' ? (kind === 'visits' ? 'monthly' : 'yearly') : type.cycle);
@@ -493,6 +493,7 @@ async function serviceAndClient(c: Ctx) {
 
 const SERVICE_FIELDS: Record<string, string> = {
   name: 'name',
+  kind: 'how it works',
   details: 'details',
   meta: 'details',
   cycle: 'billing cycle',
@@ -516,30 +517,34 @@ clients.patch('/services/:sid', async (c) => {
   const db = c.env.DB;
   const user = c.var.user;
   const now = Date.now();
-  if (input.kind !== undefined && input.kind !== service.kind) {
-    return c.json({ error: 'How a service works cannot change. Remove it and add it again.' }, 400);
-  }
+  // How a service works can change: the fields that only one way uses are reset to match.
+  const kind = input.kind ?? service.kind;
+  const kindChanged = kind !== service.kind;
   if (input.name !== undefined && !input.name) return c.json({ error: 'Give the service a name' }, 400);
-  if (service.kind !== 'job' && input.cycle === 'once') return c.json({ error: 'Pick yearly or monthly' }, 400);
+  if (kind !== 'job' && input.cycle === 'once') return c.json({ error: 'Pick yearly or monthly' }, 400);
 
-  const jobStatus = service.kind === 'job' ? input.job_status ?? service.job_status : '';
+  const jobStatus = kind === 'job' ? input.job_status ?? (kindChanged ? 'not_started' : service.job_status) : '';
   let endedAt = service.ended_at;
   if (body.ended === true && endedAt === null) endedAt = now;
   if (body.ended === false) endedAt = null;
-  if (service.kind === 'job' && jobStatus !== service.job_status) endedAt = jobStatus === 'delivered' ? now : null;
+  if (kind === 'job' && jobStatus !== service.job_status) endedAt = jobStatus === 'delivered' ? now : null;
+  if (kindChanged && service.kind === 'job' && service.job_status === 'delivered') endedAt = null;
 
   const next: ServiceRow = {
     ...service,
     name: input.name ?? service.name,
     details: input.details ?? service.details,
     meta: input.meta === undefined ? service.meta : JSON.stringify(input.meta),
-    cycle: service.kind === 'job' ? 'once' : input.cycle ?? service.cycle,
+    kind,
+    cycle: kind === 'job' ? 'once' : input.cycle ?? (service.cycle === 'once' ? (kind === 'visits' ? 'monthly' : 'yearly') : service.cycle),
     next_date: input.next_date === undefined ? service.next_date : input.next_date,
     price: input.price ?? service.price,
     quantity: input.quantity ?? service.quantity,
     currency: input.currency ?? service.currency,
     job_status: jobStatus,
-    invoice_when: service.kind === 'job' ? input.invoice_when ?? service.invoice_when : '',
+    invoice_when: kind === 'job' ? input.invoice_when ?? service.invoice_when : '',
+    invoice_id: kindChanged ? null : service.invoice_id,
+    invoiced_for: kindChanged ? null : service.invoiced_for,
     ended_at: endedAt,
   };
 
@@ -562,11 +567,11 @@ clients.patch('/services/:sid', async (c) => {
     db
       .prepare(
         `UPDATE client_services SET name = ?1, details = ?2, meta = ?3, cycle = ?4, next_date = ?5, price = ?6, quantity = ?7, currency = ?8,
-          job_status = ?9, invoice_when = ?10, ended_at = ?11, invoice_id = ?12, updated_at = ?13, updated_by = ?14
+          job_status = ?9, invoice_when = ?10, ended_at = ?11, invoice_id = ?12, updated_at = ?13, updated_by = ?14, kind = ?16, invoiced_for = ?17
          WHERE id = ?15`
       )
       .bind(next.name, next.details, next.meta, next.cycle, next.next_date, next.price, next.quantity, next.currency, next.job_status,
-        next.invoice_when, next.ended_at, next.invoice_id, now, user.email, service.id)
+        next.invoice_when, next.ended_at, next.invoice_id, now, user.email, service.id, next.kind, next.invoiced_for)
   );
   const action =
     jobStatus !== service.job_status && jobStatus === 'delivered'
@@ -614,21 +619,21 @@ clients.post('/services/:sid/renew', async (c) => {
   return moveOn(c, service, client, parsed.value.price ?? service.price, body.invoice === true, 'renewed');
 });
 
-/** A maintenance visit is done: the next one is a cycle on. Its invoice is drafted ahead of time by the daily run. */
+/** A scheduled service is done: the next date is a cycle on. Its invoice is drafted ahead of time by the daily run. */
 clients.post('/services/:sid/visit', async (c) => {
   const found = await serviceAndClient(c);
   if (!found) return c.json({ error: 'Service not found' }, 404);
   const { service, client } = found;
-  if (service.kind !== 'visits') return c.json({ error: 'Only maintenance plans have visits' }, 400);
-  if (service.ended_at) return c.json({ error: 'This plan has ended. Restore it first.' }, 400);
-  if (service.next_date === null) return c.json({ error: 'Set the next visit date first' }, 400);
+  if (service.kind !== 'visits') return c.json({ error: 'Only scheduled services can be marked done this way' }, 400);
+  if (service.ended_at) return c.json({ error: 'This service has ended. Restore it first.' }, 400);
+  if (service.next_date === null) return c.json({ error: 'Set the next scheduled date first' }, 400);
   const body = (await readJsonObject(c)) ?? {};
   const done = Math.max(0, Math.min(50, Math.floor(Number(body.done_steps) || 0)));
   const total = Math.max(0, Math.min(50, Math.floor(Number(body.total_steps) || 0)));
   const note = parseMultiline(body.note ?? '', 'Note');
   if (!note.ok) return c.json({ error: note.error }, 400);
-  const extra = note.value ? [noteInsert(c.env.DB, client.id, c.var.user.email, `Visit: ${note.value}`, null, Date.now())] : [];
-  return moveOn(c, service, client, service.price, false, 'visit done', total ? ` · ${done} of ${total} steps done` : '', extra);
+  const extra = note.value ? [noteInsert(c.env.DB, client.id, c.var.user.email, `Schedule: ${note.value}`, null, Date.now())] : [];
+  return moveOn(c, service, client, service.price, false, 'schedule done', total ? ` · ${done} of ${total} steps done` : '', extra);
 });
 
 async function moveOn(c: Ctx, service: ServiceRow, client: ClientRow, price: number, invoice: boolean, action: string, suffix = '', extra: D1PreparedStatement[] = []) {

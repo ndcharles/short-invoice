@@ -31,11 +31,24 @@ run('client tracker', () => {
     await page.locator('#c-site').fill('lagosfresh.example');
     await page.locator('#c-logins').fill('Password manager › Clients');
 
-    // Off parts are one collapsed row each.
+    // The "i" tips open on hover and on a tap.
+    await page.locator('.ct-tip').first().hover();
+    await expect(page.getByRole('tooltip')).toBeVisible();
+    await shot('00-tooltip');
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await page.locator('.ct-tip').first().click();
+    await expect(page.getByRole('tooltip')).toBeVisible();
+    await page.locator('#c-name').click();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+
+    // Every part can choose how it works.
+    await expect(page.locator('.ct-svc.on')).toHaveCount(0);
     await expect(page.locator('.ct-svc:not(.on)', { hasText: 'Email' })).toContainText('Not with us');
     await shot('01-log-client-empty');
 
     await page.getByRole('switch', { name: 'Domain is with us' }).click();
+    await expect(page.locator('.ct-svc.on', { hasText: 'Domain' }).getByRole('group', { name: 'How it works' })).toBeVisible();
     await page.locator('#p-domain-registrar').fill('Namecheap');
     await page.locator('#p-domain-date').fill(isoIn(40));
     await page.locator('#p-domain-price').fill('22000');
@@ -85,11 +98,12 @@ run('client tracker', () => {
     await page.locator('#dlg-date').fill(isoIn(0));
     await page.getByRole('dialog').locator('label.ct-pill', { hasText: 'Email' }).click();
     await page.getByRole('button', { name: 'Save service' }).click();
-    await page.locator('.ct-row', { hasText: 'Maintenance plan' }).getByRole('button', { name: 'Mark visit done' }).click();
+    await page.locator('.ct-row', { hasText: 'Maintenance plan' }).getByRole('button', { name: 'Mark done' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Schedule:');
     await expect(page.getByRole('dialog')).toContainText('Check the DNS records');
     await page.getByRole('dialog').getByLabel('Check the DNS records').check();
     await shot('05b-visit');
-    await page.getByRole('dialog').getByRole('button', { name: 'Mark visit done' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Mark done' }).click();
     await expect(page.locator('.toast').first()).toContainText('1 of 3 steps');
 
     // A note with a reminder date.
