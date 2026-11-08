@@ -138,4 +138,19 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   smtp_from_email: '',
   smtp_reply_to: '',
 
+
+  // Client tracker (Settings → Clients). Reminders are for the team, never the client.
+  clients_reminder_days: '60,30,14,7',
+  clients_job_reminder_days: '7,1',
+  clients_overdue_every: '3',
+  clients_draft_days_yearly: '30',
+  clients_draft_days_monthly: '5',
+  clients_job_invoice: 'delivered',
+  clients_auto_draft: 'true',
+  clients_reminders_on: 'true',
+  // Comma-separated emails that get the daily reminder email; empty = the owners (ADMIN_EMAILS).
+  clients_reminder_emails: '',
+  // Maintenance visit steps: website and hosting, and domain and email (a plan gets the lists for what it looks after).
+  clients_checklist_site: JSON.stringify(['Update plugins and themes', 'Check that backups ran', 'Check uptime and page speed', 'Send the monthly report']),
+  clients_checklist_mail: JSON.stringify(['Check the DNS records', 'Check mailbox space and spam settings', 'Check the domain expiry date']),
 };

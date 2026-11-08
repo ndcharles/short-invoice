@@ -36,5 +36,9 @@
     }
   ],
 
+  // Once a day at 07:00 UTC (8 AM in Lagos): client reminder email and invoices drafted ahead of
+  // renewals (worker/lib/client-reminders.ts). Cron triggers are free and do not count as requests.
+  "triggers": { "crons": ["0 7 * * *"] },
+
   "observability": { "enabled": true }
 }

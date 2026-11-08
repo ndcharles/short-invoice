@@ -20,6 +20,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const isShortener = pathname === '/' || pathname.startsWith('/links');
   const isUtm = pathname.startsWith('/utms');
   const isInvoice = pathname.startsWith('/invoices');
+  const isClients = pathname.startsWith('/clients');
   const isSettings = pathname.startsWith('/settings');
   const settings = useSettings();
   const { me } = useMe();
@@ -209,6 +210,27 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
                 <line x1="6" y1="20" x2="6" y2="14" />
               </svg>
               <span>Analytics</span>
+            </Link>
+          </div>
+        )}
+      </div>
+
+      {/* Clients */}
+      <div>
+        <Link href="/clients" className={`nav-item ${isClients ? 'active' : ''}`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="7" width="20" height="14" rx="2" />
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+          </svg>
+          <span>Clients</span>
+        </Link>
+        {isClients && !collapsed && (
+          <div className="nav-sub">
+            <Link href="/clients" className={`nav-item ${pathname === '/clients' || pathname.startsWith('/clients/view') || pathname.startsWith('/clients/new') ? 'active' : ''}`}>
+              <span>All clients</span>
+            </Link>
+            <Link href="/clients/due" className={`nav-item ${pathname.startsWith('/clients/due') ? 'active' : ''}`}>
+              <span>Due dates</span>
             </Link>
           </div>
         )}

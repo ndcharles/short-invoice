@@ -26,6 +26,7 @@ const TYPES = [
   { id: 'link', label: 'Links' },
   { id: 'utm', label: 'UTMs' },
   { id: 'invoice', label: 'Invoices' },
+  { id: 'client', label: 'Clients' },
   { id: 'settings', label: 'Settings' },
   { id: 'team', label: 'Team' },
 ];
@@ -39,6 +40,8 @@ const TYPE_WORD: Record<string, string> = {
   folder: 'folder',
   tag: 'tag',
   domain: 'domain',
+  client: 'client',
+  service_type: 'service type',
 };
 
 /** Activity actions as they read in a sentence: "Ada logged a payment on invoice INV-12". */
@@ -49,6 +52,13 @@ const PHRASE: Record<string, string> = {
   'email failed': 'tried to email',
   'verify failed': 'could not verify',
   'made default': 'made the default',
+  'added service': 'added a service to',
+  'updated service': 'changed a service of',
+  'removed service': 'removed a service from',
+  'ended service': 'ended a service of',
+  'restored service': 'restored a service of',
+  'visit done': 'marked a visit done for',
+  delivered: 'delivered a job for',
 };
 
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
@@ -58,6 +68,7 @@ function hrefFor(row: ActivityRow): string | null {
   if (row.entity_type === 'link') return `/links/edit?id=${encodeURIComponent(row.entity_id)}`;
   if (row.entity_type === 'utm') return `/utms/edit?id=${encodeURIComponent(row.entity_id)}`;
   if (row.entity_type === 'invoice') return `/invoices/edit?id=${encodeURIComponent(row.entity_id)}`;
+  if (row.entity_type === 'client') return `/clients/view?id=${encodeURIComponent(row.entity_id)}`;
   return null;
 }
 
@@ -66,10 +77,11 @@ const ACCESS: { what: string; hint?: string; member: boolean; admin: boolean }[]
   { what: 'Links', hint: 'Create, edit, archive and see analytics', member: true, admin: true },
   { what: 'UTM campaigns', hint: 'Build, edit and archive', member: true, admin: true },
   { what: 'Invoices', hint: 'Create, edit, log payments and email to clients', member: true, admin: true },
+  { what: 'Clients', hint: 'Log clients, add, renew and end services, deliver jobs', member: true, admin: true },
   { what: 'Use existing folders and tags', member: true, admin: true },
-  { what: 'Delete links, UTMs and invoices', member: false, admin: true },
+  { what: 'Delete links, UTMs, invoices, clients and services', member: false, admin: true },
   { what: 'Create, rename and delete folders and tags', member: false, admin: true },
-  { what: 'Settings', hint: 'Workspace, short domains, UTM and invoice setup, email server', member: false, admin: true },
+  { what: 'Settings', hint: 'Workspace, short domains, UTM, invoice and client setup (service types, reminders), email server', member: false, admin: true },
   { what: 'Export all data', member: false, admin: true },
   { what: 'Activity log', hint: 'Who did what', member: false, admin: true },
   { what: 'Team', hint: 'Add or remove people, new setup codes, choose who is an admin', member: false, admin: false },
@@ -78,7 +90,7 @@ const ACCESS: { what: string; hint?: string; member: boolean; admin: boolean }[]
 const ACCESS_SUMMARY = {
   owner: 'Everything, including the team',
   admin: 'Everything except managing the team',
-  member: 'Links, UTMs and invoices. No settings',
+  member: 'Links, UTMs, invoices and clients. No settings',
 } as const;
 
 function Yes() {
@@ -427,7 +439,7 @@ export default function TeamSettingsPage() {
               </table>
             </SettingsCard>
 
-            <SettingsCard title="Activity" subtitle="Every change to links, UTMs, invoices, settings and the team, newest first, 20 at a time.">
+            <SettingsCard title="Activity" subtitle="Every change to links, UTMs, invoices, clients, settings and the team, newest first, 20 at a time.">
               <div ref={activityTop} className="activity-top" />
               <div className="team-filters">
                 <span className="setting-select" style={{ maxWidth: '220px' }}>

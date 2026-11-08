@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
-import type { AppEnv } from './env';
+import type { AppEnv, Env } from './env';
+import { dailyRun } from './lib/client-reminders';
 import links from './routes/links';
 import utms from './routes/utms';
 import invoices from './routes/invoices';
@@ -11,6 +12,8 @@ import domains, { markVerifiedByHost, VERIFY_PATH, verifyToken } from './routes/
 import exporter from './routes/export';
 import email from './routes/email';
 import team from './routes/team';
+import clients from './routes/clients';
+import serviceTypes from './routes/service-types';
 import authRoutes from './routes/auth';
 import { requireAdmin, requireUser } from './lib/auth';
 import { GENERATED_PAGE_CSP } from './lib/page-csp';
@@ -101,6 +104,9 @@ app.use('/api/domains', adminWrites);
 // Everyone may pick from the folders and tags; only admins create or change them.
 app.use('/api/collections/*', adminWrites);
 app.use('/api/collections', adminWrites);
+// Everyone picks from the service types (the forms list them); only admins change them.
+app.use('/api/service-types/*', adminWrites);
+app.use('/api/service-types', adminWrites);
 app.use('/api/email/*', requireAdmin);
 app.use('/api/export', requireAdmin);
 app.use('/api/export/*', requireAdmin);
@@ -110,6 +116,8 @@ app.route('/api/team', team);
 app.route('/api/links', links);
 app.route('/api/utms', utms);
 app.route('/api/invoices', invoices);
+app.route('/api/clients', clients);
+app.route('/api/service-types', serviceTypes);
 app.route('/api/collections', collections);
 app.route('/api/settings', settings);
 app.route('/api/metadata', metadata);
@@ -175,4 +183,13 @@ app.on(['GET', 'HEAD', 'POST'], '/:alias', async (c) => {
 
 app.all('*', (c) => appNotFound(c));
 
-export default app;
+/**
+ * Once a day (the cron in wrangler.jsonc, 07:00 UTC = 8 AM in Lagos): client reminder email and the
+ * invoices due to be drafted ahead of renewals. See worker/lib/client-reminders.ts.
+ */
+export default {
+  fetch: app.fetch,
+  scheduled(_event, env, ctx) {
+    ctx.waitUntil(dailyRun(env).then((r) => console.log('daily run', JSON.stringify({ reminders: r.reminders.length, drafted: r.drafted.length, email: r.email, error: r.error }))));
+  },
+} satisfies ExportedHandler<Env>;

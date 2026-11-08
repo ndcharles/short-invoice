@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { CurrentUser } from './auth';
 
-export type EntityType = 'link' | 'utm' | 'invoice' | 'settings' | 'team' | 'folder' | 'tag' | 'domain';
+export type EntityType = 'link' | 'utm' | 'invoice' | 'settings' | 'team' | 'folder' | 'tag' | 'domain' | 'client' | 'service_type';
 
 export interface ActivityEntry {
   action: string;

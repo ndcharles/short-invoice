@@ -3,7 +3,6 @@ import { nanoid } from 'nanoid';
 import type { AppEnv } from '../env';
 import type { InvoiceRow } from '../../src/lib/types';
 import {
-  currencyCode,
   draftTotals,
   fmtMoney,
   STATUS_META,
@@ -14,8 +13,7 @@ import {
   parsePayments,
   resolveStatus,
 } from '../../src/lib/invoices';
-import { startOfDay } from '../../src/lib/dates';
-import { getSettings, type SettingsMap } from '../lib/settings';
+import { getSettings } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
 import { activity, changedFields } from '../lib/activity';
 import { requireAdmin, type CurrentUser } from '../lib/auth';
@@ -25,44 +23,11 @@ import { parseInvoiceInput, type InvoiceInput } from '../lib/invoice-input';
 import { DAILY_EMAIL_CAP, mailSetup, parseSendRequest } from '../lib/invoice-mail';
 import { sendMail, SmtpError } from '../lib/smtp';
 import { decryptSecret } from '../lib/secrets';
+import { advanceNumberStatement, invoiceDefaults, markOverdue, nextInvoiceNumber, numberTaken } from '../lib/invoice-create';
 
 const invoices = new Hono<AppEnv>();
 
-/**
- * Issued invoices become overdue the day after their due date. One UPDATE
- * that only writes rows that actually change, run before every read so lists,
- * counts and the status filter always agree.
- */
-const markOverdue = (db: D1Database, now: number) =>
-  db
-    .prepare("UPDATE invoices SET status = 'overdue', updated_at = ?1 WHERE status = 'sent' AND due_at < ?2")
-    .bind(now, startOfDay(now));
 
-const settingOrNull = (value: string | undefined) => (!value || value === 'None' ? null : value);
-
-/** Defaults for a new invoice, all taken from Settings → Invoice. */
-function invoiceDefaults(settings: SettingsMap, now: number) {
-  const methods = (() => {
-    try {
-      const list = JSON.parse(settings.inv_methods || '[]') as { name?: string; enabled?: boolean }[];
-      return list.filter((m) => m && m.enabled !== false && m.name).map((m) => String(m.name));
-    } catch {
-      return [];
-    }
-  })();
-  const taxPercent = Number(settings.inv_tax_rate);
-  const issuedAt = startOfDay(now);
-  return {
-    issued_at: issuedAt,
-    due_at: dueDateFor(issuedAt, settings.inv_payment_terms),
-    currency: currencyCode(settings.inv_default_currency),
-    tax_rate: Number.isFinite(taxPercent) && taxPercent >= 0 && taxPercent <= 100 ? taxPercent / 100 : 0,
-    terms: settings.inv_terms_note ?? '',
-    payment_method: methods.includes(settings.inv_default_method) ? settings.inv_default_method : methods[0] ?? 'Bank transfer',
-    folder: settingOrNull(settings.inv_default_folder) ?? 'Invoices',
-    tag: settingOrNull(settings.inv_default_tag),
-  };
-}
 
 /** Totals and status derived from the merged fields; the client never sends these. */
 type DerivedFrom = Required<Pick<InvoiceInput, 'items' | 'payments' | 'discount' | 'discount_type' | 'charges' | 'tax_rate' | 'due_at'>> & {
@@ -85,11 +50,6 @@ function derive(fields: DerivedFrom, now: number) {
     now,
   });
   return { totals, status };
-}
-
-async function numberTaken(db: D1Database, number: string, exceptId = ''): Promise<boolean> {
-  const row = await db.prepare('SELECT id FROM invoices WHERE number = ?1 AND id != ?2 LIMIT 1').bind(number, exceptId).first();
-  return !!row;
 }
 
 invoices.get('/', async (c) => {
@@ -165,16 +125,12 @@ invoices.post('/', async (c) => {
   if (number) {
     if (await numberTaken(db, number)) return c.json({ error: `Invoice number ${number} is already in use` }, 409);
   } else {
-    const padding = Math.min(12, Math.max(1, Number(settings.inv_number_padding) || 6));
-    let next = Math.max(1, Math.floor(Number(settings.inv_next_number) || 1));
-    for (let attempt = 0; attempt < 20; attempt += 1, next += 1) {
-      number = `${settings.inv_number_prefix ?? ''}${String(next).padStart(padding, '0')}`;
-      if (!(await numberTaken(db, number))) break;
-    }
-    if (await numberTaken(db, number)) {
+    const allocated = await nextInvoiceNumber(db, settings);
+    if (!allocated) {
       return c.json({ error: 'Could not find a free invoice number. Check "Next number" in Settings → Invoice.' }, 409);
     }
-    advanceTo = next + 1;
+    number = allocated.number;
+    advanceTo = allocated.advanceTo;
   }
 
   const issuedAt = input.issued_at ?? defaults.issued_at;
@@ -238,16 +194,7 @@ invoices.post('/', async (c) => {
       detail: `${input.client_name} · ${fmtMoney(totals.grand, input.currency ?? defaults.currency)}`,
     }, now),
   ];
-  if (advanceTo !== null) {
-    statements.push(
-      db
-        .prepare(
-          `INSERT INTO settings (key, value, updated_at) VALUES ('inv_next_number', ?1, ?2)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-        )
-        .bind(String(advanceTo), now)
-    );
-  }
+  if (advanceTo !== null) statements.push(advanceNumberStatement(db, advanceTo, now));
   await db.batch(statements);
 
   const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ?1').bind(id).first<InvoiceRow>();

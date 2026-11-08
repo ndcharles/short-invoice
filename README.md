@@ -9,7 +9,9 @@ An internal multi-tool workspace for a small team:
 - **UTM builder**: tagged campaign URLs with presets and QR codes
 - **Invoice generator**: Draft → Sent → Overdue → Partially paid → Paid →
   Cancelled, payment logging, receipts, PDF export and analytics
-- **Settings** for all three modules
+- **Clients**: what each client has with you (website, domain, hosting, email,
+  maintenance plans, one-off jobs), renewal reminders by email and draft invoices
+- **Settings** for every module
 
 Built to run on the **Cloudflare Workers free plan**.
 

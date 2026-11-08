@@ -304,7 +304,7 @@ run('Roles in the UI', () => {
       await p.goto('/settings/team');
       const row = p.locator('.team-row', { hasText: who.email });
       await expect(row.locator('.role-badge')).toContainText(/member/i);
-      await expect(row).toContainText('Links, UTMs and invoices. No settings');
+      await expect(row).toContainText('Links, UTMs, invoices and clients. No settings');
       const toggle = row.getByRole('switch', { name: 'Admin access for Dele Gate' });
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false');
 
@@ -344,7 +344,7 @@ run('Roles in the UI', () => {
       // Taking it back needs no confirmation and applies on their next click.
       await toggle.click();
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false');
-      await expect(row).toContainText('Links, UTMs and invoices. No settings');
+      await expect(row).toContainText('Links, UTMs, invoices and clients. No settings');
       await d.goto('/settings');
       await expect(d.getByText('Only admins can view and change settings')).toBeVisible();
       expect(owner.errors).toEqual([]);
@@ -379,7 +379,7 @@ run('Roles in the UI', () => {
       expect([...(await p.getByRole('table').locator('thead th').allInnerTexts())].slice(1)).toEqual(['MEMBER', 'ADMIN', 'OWNER']);
       expect(table['Links']).toEqual(['Yes', 'Yes', 'Yes']);
       expect(table['Use existing folders and tags']).toEqual(['Yes', 'Yes', 'Yes']);
-      expect(table['Delete links, UTMs and invoices']).toEqual(['No', 'Yes', 'Yes']);
+      expect(table['Delete links, UTMs, invoices, clients and services']).toEqual(['No', 'Yes', 'Yes']);
       expect(table['Create, rename and delete folders and tags']).toEqual(['No', 'Yes', 'Yes']);
       expect(table['Settings']).toEqual(['No', 'Yes', 'Yes']);
       expect(table['Team']).toEqual(['No', 'No', 'Yes']);
