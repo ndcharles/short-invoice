@@ -251,19 +251,21 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
             {error && <div className="ct-error" role="alert">{error}</div>}
             <div className="ct-field">
               <Label htmlFor="t-name" required>Name</Label>
-              <input id="t-name" value={name} maxLength={60} placeholder="LMS setup" onChange={(e) => setName(e.target.value)} />
+              <input id="t-name" type="text" value={name} maxLength={60} placeholder="LMS setup" onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="ct-field">
               <Label tip="The default for new services of this type. You can still pick another way on each service, and services already added keep theirs.">How does it work?</Label>
-              {(['renews', 'visits', 'job'] as const).map((k) => (
-                <label key={k} className={`ct-radio${kind === k ? ' on' : ''}`}>
-                  <input type="radio" name="t-kind" checked={kind === k} onChange={() => setKind(k)} />
-                  <span>
-                    <span className="t">{KIND_LABEL[k]}</span>
-                    <span className="d">{KIND_HELP[k]}</span>
-                  </span>
-                </label>
-              ))}
+              <div className="ct-radios-row" role="radiogroup" aria-label="How does it work?">
+                {(['renews', 'visits', 'job'] as const).map((k) => (
+                  <label key={k} className={`ct-radio${kind === k ? ' on' : ''}`}>
+                    <input type="radio" name="t-kind" checked={kind === k} onChange={() => setKind(k)} />
+                    <span>
+                      <span className="t">{KIND_LABEL[k]}</span>
+                      <span className="d">{KIND_HELP[k]}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
               {kind === 'any' && <div className="ct-muted">You choose how each one works when you add it.</div>}
             </div>
             {(kind === 'renews' || kind === 'visits') && (
@@ -293,7 +295,7 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
                 <Label htmlFor="t-days" tip="Empty uses the list in Reminders. Ones already added keep following this type.">
                   {kind === 'job' ? 'Remind us before it is due (days)' : 'Remind us before it renews (days)'}
                 </Label>
-                <input id="t-days" value={days} placeholder={kind === 'job' ? defaults.job : defaults.renews} onChange={(e) => setDays(e.target.value)} />
+                <input id="t-days" type="text" value={days} placeholder={kind === 'job' ? defaults.job : defaults.renews} onChange={(e) => setDays(e.target.value)} />
               </div>
             )}
             {kind === 'job' && (
