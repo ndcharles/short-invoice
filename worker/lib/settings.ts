@@ -50,6 +50,8 @@ const BOOLEAN_KEYS = new Set([
   'utm_lowercase',
   'utm_strip_existing',
   'inv_tagline_on',
+  'clients_auto_draft',
+  'clients_reminders_on',
 ]);
 
 const LIST_KEYS = new Set([
@@ -59,6 +61,8 @@ const LIST_KEYS = new Set([
   'inv_methods',
   'inv_enabled_currencies',
   'inv_currency_options',
+  'clients_checklist_site',
+  'clients_checklist_mail',
 ]);
 
 const asString = (res: Result<string | null>): Result<string> => (res.ok ? { ok: true, value: res.value ?? '' } : res);
@@ -77,6 +81,14 @@ const VALIDATORS: Record<string, (value: string) => Result<string>> = {
   inv_usd_rate: (v) => numberSetting(v, 'USD exchange rate', 0, 1e9),
   inv_number_padding: (v) => numberSetting(v, 'Number padding', 1, 12, true),
   inv_next_number: (v) => numberSetting(v, 'Next invoice number', 1, 1e12, true),
+  clients_reminder_days: (v) => dayList(v, 'Reminder days'),
+  clients_job_reminder_days: (v) => dayList(v, 'Job reminder days'),
+  clients_overdue_every: (v) => numberSetting(v, 'Overdue reminder interval', 0, 60, true),
+  clients_draft_days_yearly: (v) => numberSetting(v, 'Days before a yearly renewal', 0, 365, true),
+  clients_draft_days_monthly: (v) => numberSetting(v, 'Days before a monthly renewal', 0, 28, true),
+  clients_job_invoice: (v) =>
+    ['delivered', 'start', 'none'].includes(v) ? { ok: true, value: v } : { ok: false, error: 'Unknown choice for job invoices' },
+  clients_reminder_emails: (v) => emailList(v),
   smtp_host: (v) => smtpHost(v),
   smtp_port: (v) => numberSetting(v, 'SMTP port', 1, 65535, true),
   smtp_security: (v) =>
@@ -87,6 +99,26 @@ const VALIDATORS: Record<string, (value: string) => Result<string>> = {
   smtp_from_email: (v) => asString(parseEmail(v, 'Sender email')),
   smtp_reply_to: (v) => asString(parseEmail(v, 'Reply-to email')),
 };
+
+/** "60, 30, 14, 7": whole days 0-730, stored largest first. */
+function dayList(value: string, label: string): Result<string> {
+  const parts = value.split(/[,\s]+/).filter(Boolean);
+  if (parts.length > 10 || parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) > 730)) {
+    return { ok: false, error: `${label} must be whole days such as 60, 30, 14, 7` };
+  }
+  return { ok: true, value: Array.from(new Set(parts.map(Number))).sort((a, b) => b - a).join(',') };
+}
+
+/** Comma-separated emails, at most 10. */
+function emailList(value: string): Result<string> {
+  const parts = value.split(/[,\s;]+/).filter(Boolean);
+  if (parts.length > 10) return { ok: false, error: 'Up to 10 reminder emails' };
+  for (const part of parts) {
+    const email = parseEmail(part, 'Reminder email');
+    if (!email.ok) return email;
+  }
+  return { ok: true, value: parts.map((p) => p.toLowerCase()).join(', ') };
+}
 
 function smtpHost(value: string): Result<string> {
   const trimmed = value.trim().toLowerCase();

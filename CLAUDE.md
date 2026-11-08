@@ -298,6 +298,27 @@ Settings UI. **The repo is public; never commit them.**
 - Download PDF is the browser's print dialog; `@media print` in `shared.css`
   prints only the invoice.
 
+## Clients (client tracker)
+
+- Tables (migration 0006): `clients`, `client_services`, `service_types`, `service_reminders`; invoices gain
+  `client_id`/`service_id`. Rules shared by Worker and UI live in `src/lib/clients.ts`.
+- Every service works one of three ways (`kind`): **renews** (`next_date` = renewal), **visits** (next visit,
+  maintenance plans) or **job** (due date + `job_status`). A service's kind is fixed once added; a type's kind is
+  fixed once used, and built-in types (`part` set) never change kind or get deleted. "Something else" (`st_other`,
+  kind `any`) lets each service pick its own kind.
+- Renew moves the date one cycle **from the old date**. Invoices are drafted once per period (`invoiced_for`);
+  jobs draft once (`invoice_id`) when delivered or started (per job, type, or Settings default).
+- Daily cron (07:00 UTC, `worker/lib/client-reminders.ts`, also `POST /api/clients/daily-run` for admins): drafts
+  renewal invoices ahead (max 15 per run) and emails the team one digest. Each reminder is recorded in
+  `service_reminders` only after sending, so it never repeats. Reminders are for the team, never the client.
+- Maintenance visits: "Mark visit done" shows the steps from Settings → Clients (`clients_checklist_site`,
+  `clients_checklist_mail`), chosen by what the plan looks after (`visitChecklist()`), and logs how many were done.
+- Notes (`client_notes`): a note with a "remind me on" date joins the daily email (once) until ticked done. The author
+  or an admin can delete one.
+- Import (admins): client names on invoices with no client yet become clients, and those invoices get `client_id`.
+  Export is a CSV built in the browser.
+- Members add and edit clients and services; deletes and service types are admin-only.
+
 ## Email (SMTP)
 
 - Send emails invoices/receipts through the SMTP server in Settings → Invoice

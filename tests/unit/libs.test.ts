@@ -247,3 +247,21 @@ describe('roles as people see them', () => {
     expect(ROLE_LABEL).toEqual({ owner: 'Owner', admin: 'Admin', member: 'Member' });
   });
 });
+
+import { addCycle, parseDays, visitChecklist, DEFAULT_CHECKLIST_MAIL, DEFAULT_CHECKLIST_SITE } from '@/lib/clients';
+describe('client tracker rules', () => {
+  it('adds cycles to the same calendar day, clamping short months', () => {
+    expect(addCycle(Date.UTC(2026, 0, 31), 'monthly')).toBe(Date.UTC(2026, 1, 28));
+    expect(addCycle(Date.UTC(2028, 1, 29), 'yearly')).toBe(Date.UTC(2029, 1, 28));
+    expect(addCycle(Date.UTC(2026, 2, 14), 'once')).toBe(Date.UTC(2026, 2, 14));
+  });
+  it('reads reminder days', () => {
+    expect(parseDays('7, 60 ,30,7, x, 999')).toEqual([60, 30, 7]);
+    expect(parseDays('')).toEqual([]);
+  });
+  it('builds a visit checklist from what the plan looks after', () => {
+    expect(visitChecklist({ looks_after: [] }, {})).toEqual(DEFAULT_CHECKLIST_SITE);
+    expect(visitChecklist({ looks_after: ['Email'] }, {})).toEqual(DEFAULT_CHECKLIST_MAIL);
+    expect(visitChecklist({ looks_after: ['Website', 'Domain'] }, { clients_checklist_site: '["A"]' })).toEqual(['A', ...DEFAULT_CHECKLIST_MAIL]);
+  });
+});
