@@ -125,7 +125,7 @@ export function ServiceFields({
   const set = <K extends keyof ServiceDraft>(key: K, value: ServiceDraft[K]) => onChange({ ...draft, [key]: value });
   const setMeta = (key: keyof ServiceMeta, value: ServiceMeta[keyof ServiceMeta]) => onChange({ ...draft, meta: { ...draft.meta, [key]: value } });
   const id = (name: string) => `${idPrefix}-${name}`;
-  const per = draft.cycle === 'monthly' ? 'per month' : 'per year';
+  const per = draft.cycle === 'monthly' ? '/ month' : '/ year';
   const part = draft.part;
   const metaText = (key: 'built_with' | 'registrar' | 'provider' | 'plan' | 'mailboxes', label: string, placeholder?: string) => (
     <TextField id={id(key)} label={label} value={draft.meta[key] ?? ''} placeholder={placeholder} maxLength={120} onChange={(v) => setMeta(key, v)} />
@@ -137,14 +137,15 @@ export function ServiceFields({
   );
 
   return (
-    <div className="ct-grid">
+    <div className="ct-grid tight">
       {draft.typeKind === 'any' && (
         <TextField id={id('name')} label="Name" required value={draft.name} maxLength={80} placeholder="What is it?" onChange={(v) => set('name', v)} />
       )}
-      <div className="ct-field">
+      <div className="ct-field full">
         <Label tip={`Renews: ${KIND_HELP.renews} Schedule: ${KIND_HELP.visits} One-off job: ${KIND_HELP.job} The fields below change to match.`}>How it works</Label>
         {allowKindChange ? (
           <Seg
+            wide
             label="How it works"
             value={draft.kind}
             options={(['renews', 'visits', 'job'] as ServiceKind[]).map((k) => ({ id: k, label: KIND_LABEL[k] }))}
@@ -225,9 +226,9 @@ export function ServiceFields({
             onChange={(v) => set('details', v)}
             tip="Describe what you are doing for them. Only your team sees it."
           />
-          <div className="ct-field">
+          <div className="ct-field full">
             <Label>Status</Label>
-            <Seg label="Status" value={draft.job_status} options={JOB_STATUSES.map((s) => ({ id: s, label: JOB_STATUS_LABEL[s] }))} onChange={(v) => set('job_status', v)} />
+            <Seg wide label="Status" value={draft.job_status} options={JOB_STATUSES.map((s) => ({ id: s, label: JOB_STATUS_LABEL[s] }))} onChange={(v) => set('job_status', v)} />
           </div>
           <DateField
             id={id('date')}

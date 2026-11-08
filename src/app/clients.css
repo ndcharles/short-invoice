@@ -22,6 +22,8 @@
 
 .ct-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px 16px; }
 .ct-grid .full { grid-column: 1 / -1; }
+/* the fields inside a service: smaller, so more sit side by side */
+.ct-grid.tight { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 14px; }
 .ct-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ct-label { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
 .ct-label .req { color: var(--destructive); }
@@ -34,10 +36,10 @@
 .ct-field input:focus, .ct-field textarea:focus, .ct-field select:focus, .ct-input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px rgba(0,0,0,0.06); }
 .ct-field input:disabled { background: var(--muted-2); }
 .ct-money { display: flex; align-items: stretch; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--background); }
-.ct-money > span { display: flex; align-items: center; padding: 0 10px; color: var(--muted-foreground); background: var(--muted-2); font-size: 13px; }
+.ct-money > span { display: flex; align-items: center; padding: 0 8px; white-space: nowrap; color: var(--muted-foreground); background: var(--muted-2); font-size: 13px; }
 .ct-money > span:first-child { border-right: 1px solid var(--border); }
 .ct-money > span:last-child:not(:first-child) { border-left: 1px solid var(--border); }
-.ct-money input { flex: 1; min-width: 0; border: 0 !important; box-shadow: none !important; padding: 7px 10px; font: inherit; font-size: 13px; }
+.ct-money input { flex: 1; min-width: 48px; border: 0 !important; box-shadow: none !important; padding: 7px 10px; font: inherit; font-size: 13px; }
 .ct-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #404040; }
 .ct-check input { accent-color: var(--foreground); width: 15px; height: 15px; margin: 0; }
 
@@ -54,6 +56,8 @@
 
 .ct-seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px; background: var(--muted); gap: 2px; flex-wrap: wrap; }
 .ct-seg button { border: 0; background: transparent; color: #525252; font: inherit; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.ct-seg.wide { display: flex; align-self: stretch; flex-wrap: nowrap; width: 100%; box-sizing: border-box; }
+.ct-seg.wide button { flex: 1 1 0; white-space: nowrap; padding: 6px 10px; text-align: center; }
 .ct-seg button.on { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 
 .ct-pills { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -163,6 +167,8 @@ button.ct-tile:hover { border-color: var(--border-strong); }
 .ct-radio { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); cursor: pointer; }
 .ct-radio.on { border-color: var(--foreground); box-shadow: 0 0 0 1px var(--foreground); background: var(--muted-2); }
 .ct-radio.locked { background: var(--muted-2); cursor: not-allowed; color: var(--muted-foreground); }
+.ct-radios-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .ct-radios-row { grid-template-columns: 1fr; } }
 .ct-radio input { accent-color: var(--foreground); width: 15px; height: 15px; margin: 3px 0 0; }
 .ct-radio .t { display: block; font-weight: 500; }
 .ct-radio.on .t { font-weight: 600; }

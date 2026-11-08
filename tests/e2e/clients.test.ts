@@ -55,6 +55,12 @@ run('client tracker', () => {
     await page.getByRole('switch', { name: 'Hosting is with us' }).click();
     await page.locator('#p-hosting-date').fill(isoIn(200));
     await page.locator('#p-hosting-price').fill('45000');
+    // A website built as a one-off job.
+    await page.getByRole('switch', { name: 'Website is with us' }).click();
+    const websiteCard = page.locator('.ct-svc', { has: page.getByRole('switch', { name: 'Website is with us' }) });
+    await websiteCard.getByRole('button', { name: 'One-off job', exact: true }).click();
+    await websiteCard.scrollIntoViewIfNeeded();
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/02a-parts.png` });
 
     await page.getByRole('button', { name: 'Something else', exact: true }).click();
     await page.locator('#o-0-name').fill('Staff training day');

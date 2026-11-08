@@ -91,14 +91,17 @@ export function Seg<T extends string>({
   options,
   onChange,
   label,
+  wide,
 }: {
   value: T;
   options: { id: T; label: string }[];
   onChange: (value: T) => void;
   label: string;
+  /** Stretch across the row, every option on one line. */
+  wide?: boolean;
 }) {
   return (
-    <div className="ct-seg" role="group" aria-label={label}>
+    <div className={`ct-seg${wide ? ' wide' : ''}`} role="group" aria-label={label}>
       {options.map((o) => (
         <button key={o.id} type="button" className={value === o.id ? 'on' : ''} aria-pressed={value === o.id} onClick={() => onChange(o.id)}>
           {o.label}
