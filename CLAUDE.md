@@ -302,16 +302,17 @@ Settings UI. **The repo is public; never commit them.**
 
 - Tables (migration 0006): `clients`, `client_services`, `service_types`, `service_reminders`; invoices gain
   `client_id`/`service_id`. Rules shared by Worker and UI live in `src/lib/clients.ts`.
-- Every service works one of three ways (`kind`): **renews** (`next_date` = renewal), **visits** (next visit,
-  maintenance plans) or **job** (due date + `job_status`). A service's kind is fixed once added; a type's kind is
-  fixed once used, and built-in types (`part` set) never change kind or get deleted. "Something else" (`st_other`,
-  kind `any`) lets each service pick its own kind.
+- Every service works one of three ways (`kind`): **renews** (`next_date` = renewal), **schedule** (stored as
+  `visits`: the next scheduled date, e.g. maintenance plans) or **job** (due date + `job_status`). The UI says
+  "Schedule", never "visit". Any service, built-in parts included, can switch how it works at any time (fields only
+  one way uses are reset, and its invoice tracking starts over). A type's kind is only the default for new services.
+  Built-in types and types in use cannot be deleted. "Something else" (`st_other`, kind `any`) has no default.
 - Renew moves the date one cycle **from the old date**. Invoices are drafted once per period (`invoiced_for`);
   jobs draft once (`invoice_id`) when delivered or started (per job, type, or Settings default).
 - Daily cron (07:00 UTC, `worker/lib/client-reminders.ts`, also `POST /api/clients/daily-run` for admins): drafts
   renewal invoices ahead (max 15 per run) and emails the team one digest. Each reminder is recorded in
   `service_reminders` only after sending, so it never repeats. Reminders are for the team, never the client.
-- Maintenance visits: "Mark visit done" shows the steps from Settings → Clients (`clients_checklist_site`,
+- Schedules: "Mark done" shows the steps from Settings → Clients (`clients_checklist_site`,
   `clients_checklist_mail`), chosen by what the plan looks after (`visitChecklist()`), and logs how many were done.
 - Notes (`client_notes`): a note with a "remind me on" date joins the daily email (once) until ticked done. The author
   or an admin can delete one.

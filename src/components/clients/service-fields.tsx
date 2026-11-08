@@ -98,8 +98,8 @@ export function servicePayload(d: ServiceDraft, includeKind: boolean) {
 export function serviceProblem(d: ServiceDraft): string | null {
   const name = d.name.trim() || 'This service';
   if (d.typeKind === 'any' && !d.name.trim()) return 'Give "Something else" a name';
-  if (['domain', 'hosting', 'email'].includes(d.part ?? '') && d.next_date === null) return `${name}: add the date it renews`;
-  if (d.kind === 'visits' && d.next_date === null) return `${name}: add the first visit date`;
+  if (d.kind === 'renews' && ['domain', 'hosting', 'email'].includes(d.part ?? '') && d.next_date === null) return `${name}: add the date it renews`;
+  if (d.kind === 'visits' && d.next_date === null) return `${name}: add the first scheduled date`;
   return null;
 }
 
@@ -108,7 +108,7 @@ const CYCLE_OPTIONS: { id: Cycle; label: string }[] = [
   { id: 'monthly', label: 'Monthly' },
 ];
 
-/** The fields for one service, matching how it works (renews, visits, one-off job) and its part. */
+/** The fields for one service, matching how it works (renews, schedule, one-off job) and its part. */
 export function ServiceFields({
   draft,
   onChange,
@@ -133,37 +133,37 @@ export function ServiceFields({
 
   const priceTip = 'Filled from Settings → Clients. Change it for this client only.';
   const cycleField = (
-    <SelectField id={id('cycle')} label={draft.kind === 'visits' ? 'How often' : 'Billing cycle'} value={draft.cycle} options={CYCLE_OPTIONS} onChange={(v) => set('cycle', v)} />
+    <SelectField id={id('cycle')} label={draft.kind === 'visits' ? 'Repeats' : 'Billing cycle'} value={draft.cycle} options={CYCLE_OPTIONS} onChange={(v) => set('cycle', v)} />
   );
 
   return (
     <div className="ct-grid">
       {draft.typeKind === 'any' && (
-        <>
-          <TextField id={id('name')} label="Name" required value={draft.name} maxLength={80} placeholder="What is it?" onChange={(v) => set('name', v)} />
-          <div className="ct-field">
-            <Label tip={`Renews: ${KIND_HELP.renews} Visits: ${KIND_HELP.visits} One-off job: ${KIND_HELP.job} The fields below change to match.`}>How it works</Label>
-            {allowKindChange ? (
-              <Seg
-                label="How it works"
-                value={draft.kind}
-                options={(['renews', 'visits', 'job'] as ServiceKind[]).map((k) => ({ id: k, label: KIND_LABEL[k] }))}
-                onChange={(kind) => onChange({ ...draft, kind, cycle: kind === 'job' ? 'once' : draft.cycle === 'once' ? (kind === 'visits' ? 'monthly' : 'yearly') : draft.cycle })}
-              />
-            ) : (
-              <span className="ct-kind" style={{ alignSelf: 'flex-start' }}>{KIND_LABEL[draft.kind]}</span>
-            )}
-          </div>
-        </>
+        <TextField id={id('name')} label="Name" required value={draft.name} maxLength={80} placeholder="What is it?" onChange={(v) => set('name', v)} />
       )}
+      <div className="ct-field">
+        <Label tip={`Renews: ${KIND_HELP.renews} Schedule: ${KIND_HELP.visits} One-off job: ${KIND_HELP.job} The fields below change to match.`}>How it works</Label>
+        {allowKindChange ? (
+          <Seg
+            label="How it works"
+            value={draft.kind}
+            options={(['renews', 'visits', 'job'] as ServiceKind[]).map((k) => ({ id: k, label: KIND_LABEL[k] }))}
+            onChange={(kind) => onChange({ ...draft, kind, cycle: kind === 'job' ? 'once' : draft.cycle === 'once' ? (kind === 'visits' ? 'monthly' : 'yearly') : draft.cycle })}
+          />
+        ) : (
+          <span className="ct-kind" style={{ alignSelf: 'flex-start' }}>{KIND_LABEL[draft.kind]}</span>
+        )}
+      </div>
+
+      {part === 'maintenance' && <TextField id={id('name')} label="Plan name" value={draft.name} maxLength={80} onChange={(v) => set('name', v)} />}
+      {part === 'website' && metaText('built_with', 'Built with', 'WordPress')}
+      {part === 'domain' && metaText('registrar', 'Registrar', 'Namecheap')}
+      {(part === 'hosting' || part === 'email') && metaText('provider', part === 'email' ? 'Provider' : 'Hosting provider', part === 'email' ? 'Google Workspace' : '')}
+      {part === 'hosting' && metaText('plan', 'Plan')}
+      {part === 'email' && metaText('mailboxes', 'Mailboxes', '5')}
 
       {draft.kind === 'renews' && (
         <>
-          {part === 'website' && metaText('built_with', 'Built with', 'WordPress')}
-          {part === 'domain' && metaText('registrar', 'Registrar', 'Namecheap')}
-          {(part === 'hosting' || part === 'email') && metaText('provider', part === 'email' ? 'Provider' : 'Hosting provider', part === 'email' ? 'Google Workspace' : '')}
-          {part === 'hosting' && metaText('plan', 'Plan')}
-          {part === 'email' && metaText('mailboxes', 'Mailboxes', '5')}
           <DateField
             id={id('date')}
             label={part === 'website' ? 'Renews on (if you bill yearly)' : 'Renews on'}
@@ -182,21 +182,18 @@ export function ServiceFields({
 
       {draft.kind === 'visits' && (
         <>
-          {part === 'maintenance' && (
-            <TextField id={id('name')} label="Plan name" value={draft.name} maxLength={80} onChange={(v) => set('name', v)} />
-          )}
           <DateField
             id={id('date')}
-            label="Next visit"
+            label="Next scheduled date"
             required
-            tip="You get a reminder on the day of each visit. The checklist comes from Settings → Clients."
+            tip="You get a reminder on each scheduled date. The checklist comes from Settings → Clients."
             value={draft.next_date}
             onChange={(v) => set('next_date', v)}
           />
           {cycleField}
           <MoneyField id={id('price')} label="What you charge" symbol={symbol} suffix={per} value={draft.price} onChange={(v) => set('price', v)} />
           <div className="ct-field full">
-            <Label tip="Tick everything this plan looks after, even if it is not with us. The visit checklist follows these ticks.">Looks after</Label>
+            <Label tip="Tick everything this plan looks after, even if it is not with us. The schedule checklist follows these ticks.">Looks after</Label>
             <div className="ct-pills" role="group" aria-label="Looks after">
               {LOOKS_AFTER.map((name) => {
                 const on = (draft.meta.looks_after ?? []).includes(name);

@@ -157,7 +157,7 @@ function LogClient() {
       }
       const data = await send<{ client: ClientRow }>('POST', '/api/clients', {
         ...body,
-        services: onServices.map((d) => servicePayload(d, d.typeKind === 'any')),
+        services: onServices.map((d) => servicePayload(d, true)),
       });
       if (another) {
         setForm(EMPTY);
@@ -366,7 +366,7 @@ function LogClient() {
                           <div className="ct-svc-head">
                             <IconBox part={draft.part} kind={draft.kind} />
                             <span className="ct-svc-name">{draft.typeKind === 'any' ? draft.name || 'Something else' : draft.name}</span>
-                            <span className="ct-kind">{draft.kind === 'job' ? 'One-off job' : draft.kind === 'visits' ? 'Visits' : 'Renews'}</span>
+                            <span className="ct-kind">{draft.kind === 'job' ? 'One-off job' : draft.kind === 'visits' ? 'Schedule' : 'Renews'}</span>
                             <span className="ct-svc-actions">
                               <button type="button" className="icon-btn" aria-label="Remove this service" onClick={() => setOthers((o) => o.filter((_, i) => i !== index))}>
                                 <Trash />
@@ -446,7 +446,7 @@ function WhatHappensNext({ services, cfg, types }: { services: ServiceDraft[]; c
             if (s.next_date === null) {
               rows.push(['No date yet', 'No reminders']);
             } else if (s.kind === 'visits') {
-              rows.push(['Visit reminder', cfg.fmt(s.next_date)]);
+              rows.push(['Schedule reminder', cfg.fmt(s.next_date)]);
             } else {
               for (const d of reminderDaysFor(s, type, cfg.rules)) {
                 const at = s.next_date - d * DAY_MS;
@@ -467,7 +467,7 @@ function WhatHappensNext({ services, cfg, types }: { services: ServiceDraft[]; c
                 </div>
                 <div className="ct-next-sub">
                   {s.kind === 'job' ? 'One-off job' : s.cycle === 'monthly' ? 'Monthly' : 'Yearly'}
-                  {s.next_date !== null ? ` · ${s.kind === 'job' ? 'due' : s.kind === 'visits' ? 'next visit' : 'renews'} ${cfg.fmt(s.next_date)}` : ''}
+                  {s.next_date !== null ? ` · ${s.kind === 'job' ? 'due' : s.kind === 'visits' ? 'next scheduled' : 'renews'} ${cfg.fmt(s.next_date)}` : ''}
                 </div>
                 {rows.map(([k, v]) => (
                   <div key={k} className="ct-next-row">

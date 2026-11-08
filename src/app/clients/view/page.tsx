@@ -120,7 +120,7 @@ function ClientView() {
     if (s.kind === 'visits')
       return s.next_date === null ? null : (
         <button className="btn btn-outline btn-sm" onClick={() => setVisiting(s)}>
-          Mark visit done
+          Mark done
         </button>
       );
     if (s.job_status === 'not_started') return <button className="btn btn-outline btn-sm" onClick={() => void setJob(s, 'in_progress')}>Start</button>;
@@ -132,7 +132,7 @@ function ClientView() {
     if (s.next_date === null) return <div className="ct-muted">No date</div>;
     const left = daysUntil(s.next_date);
     const tone = left < 0 ? 'red' : left <= 30 ? 'amber' : '';
-    const word = s.kind === 'job' ? 'Due' : s.kind === 'visits' ? 'Next visit' : left < 0 ? 'Was due' : 'Renews';
+    const word = s.kind === 'job' ? 'Due' : s.kind === 'visits' ? 'Next scheduled' : left < 0 ? 'Was due' : 'Renews';
     return (
       <div>
         <div>{word} {cfg.fmt(s.next_date)}</div>
@@ -343,7 +343,7 @@ function ClientView() {
             <div className="ct-card-head">
               <div>
                 <h2>Coming up for this client</h2>
-                <p>Reminders, visits and invoice drafts, in date order.</p>
+                <p>Reminders, schedules and invoice drafts, in date order.</p>
               </div>
             </div>
             {data.coming_up.length === 0 ? (

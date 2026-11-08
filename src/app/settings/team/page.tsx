@@ -57,7 +57,8 @@ const PHRASE: Record<string, string> = {
   'removed service': 'removed a service from',
   'ended service': 'ended a service of',
   'restored service': 'restored a service of',
-  'visit done': 'marked a visit done for',
+  'visit done': 'marked a schedule done for',
+  'schedule done': 'marked a schedule done for',
   delivered: 'delivered a job for',
 };
 

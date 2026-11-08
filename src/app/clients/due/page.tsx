@@ -17,7 +17,7 @@ const GROUPS: { id: DueBucket; label: string }[] = [
   { id: 'later', label: 'Later' },
 ];
 
-/** Every client's renewals, visits and job due dates, soonest first. */
+/** Every client's renewals, schedules and job due dates, soonest first. */
 export default function DueDatesPage() {
   const cfg = useClientSettings();
   const [rows, setRows] = useState<DueRow[] | null>(null);
@@ -61,7 +61,7 @@ export default function DueDatesPage() {
     if (r.kind === 'visits')
       return (
         <button className="btn btn-outline btn-sm" onClick={() => setVisiting(r)}>
-          Mark visit done
+          Mark done
         </button>
       );
     const next: JobStatus = r.job_status === 'not_started' ? 'in_progress' : 'delivered';
@@ -86,7 +86,7 @@ export default function DueDatesPage() {
         <div className="page-header" style={{ paddingTop: 0 }}>
           <div>
             <div className="page-title">Due dates</div>
-            <div className="ct-sub">Renewals, maintenance visits and one-off jobs across every client.</div>
+            <div className="ct-sub">Renewals, schedules and one-off jobs across every client.</div>
           </div>
         </div>
 
@@ -105,7 +105,7 @@ export default function DueDatesPage() {
         ) : rows.length === 0 ? (
           <div className="empty">
             <h3>Nothing due</h3>
-            <p>Services with a renewal date, a visit date or a due date show up here.</p>
+            <p>Services with a renewal date, a scheduled date or a due date show up here.</p>
           </div>
         ) : (
           GROUPS.map((g) => {
@@ -136,7 +136,7 @@ export default function DueDatesPage() {
                               <IconBox part={r.part} kind={r.kind} />
                               <div>
                                 <div className="ct-strong">{r.name}</div>
-                                <div className="ct-muted">{r.kind === 'job' ? `One-off job · ${JOB_STATUS_LABEL[(r.job_status || 'not_started') as JobStatus]}` : r.kind === 'visits' ? 'Visit' : 'Renewal'}</div>
+                                <div className="ct-muted">{r.kind === 'job' ? `One-off job · ${JOB_STATUS_LABEL[(r.job_status || 'not_started') as JobStatus]}` : r.kind === 'visits' ? 'Schedule' : 'Renewal'}</div>
                               </div>
                             </div>
                             <Link className="ct-strong" href={`/clients/view?id=${encodeURIComponent(r.client_id)}`}>{r.client_name}</Link>

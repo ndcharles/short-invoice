@@ -41,6 +41,13 @@
 .ct-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #404040; }
 .ct-check input { accent-color: var(--foreground); width: 15px; height: 15px; margin: 0; }
 
+/* the tooltip bubble (drawn in a portal, fixed to the screen) */
+.ct-tip-pop { position: fixed; z-index: 1000; transform: translateY(-100%); padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--foreground); color: #fff; font-size: 12px; line-height: 1.45; font-weight: 400; box-shadow: var(--shadow-lg);
+  pointer-events: none; text-transform: none; letter-spacing: 0; }
+.ct-tip-pop.below { transform: none; }
+.ct-tip:hover, .ct-tip:focus-visible { border-color: var(--foreground); color: var(--foreground); outline: none; }
+
 /* the little "i" next to a label: its words show on hover and are read out */
 .ct-tip { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 0; border: 1px solid var(--subtle-foreground);
   border-radius: 50%; background: transparent; font: inherit; font-size: 9px; line-height: 1; color: var(--muted-foreground); cursor: help; flex: none; }

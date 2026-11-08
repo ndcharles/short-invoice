@@ -69,7 +69,7 @@ export default function ClientSettingsPage() {
                   <button className="btn btn-outline btn-sm" onClick={() => setEditing('new')}>
                     <Plus /> Add service type
                   </button>
-                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>A type that is in use can be edited, but not deleted. How it works stays fixed.</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>A type that is in use can be edited, but not deleted. Services already added keep how they work until you change them.</span>
                 </div>
               }
             >
@@ -137,7 +137,7 @@ export default function ClientSettingsPage() {
                   <span style={{ fontSize: 13 }}>days before</span>
                 </div>
               </SettingsRow>
-              <SettingsRow label="Monthly services" help="Days before the date (renewal or visit).">
+              <SettingsRow label="Monthly services" help="Days before the date (renewal or scheduled date).">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input className="input" style={{ width: 80 }} value={get('clients_draft_days_monthly')} onChange={(e) => set('clients_draft_days_monthly', e.target.value)} />
                   <span style={{ fontSize: 13 }}>days before</span>
@@ -155,7 +155,7 @@ export default function ClientSettingsPage() {
               </SettingsRow>
             </SettingsCard>
 
-            <SettingsCard title="Maintenance visits" subtitle="What you do on each visit. A plan gets the steps for what it looks after: website and hosting, domain and email, or both.">
+            <SettingsCard title="Schedule checklists" subtitle="What you do each time a scheduled service comes round. A plan gets the steps for what it looks after: website and hosting, domain and email, or both.">
               <SettingsRow label="Website and hosting" help="One step per line.">
                 <textarea className="input" rows={5} value={lines(draft.clients_checklist_site)} onChange={(e) => set('clients_checklist_site', toList(e.target.value))} />
               </SettingsRow>
@@ -183,13 +183,13 @@ export default function ClientSettingsPage() {
 }
 
 function reminderSummary(t: ServiceTypeRow, get: (key: Key) => string): string {
-  if (t.kind === 'visits') return 'On the day of each visit';
+  if (t.kind === 'visits') return 'On each scheduled date';
   if (t.kind === 'any') return 'Follows the way you set it up';
   const days = parseDays(t.reminder_days).length ? parseDays(t.reminder_days) : parseDays(get(t.kind === 'job' ? 'clients_job_reminder_days' : 'clients_reminder_days'));
   return days.length ? `${days.join(' · ')} days before${t.kind === 'job' ? ' it is due' : ''}` : 'None';
 }
 
-/** New or edit a service type. How it works is fixed once a service uses it (and for the built-in parts). */
+/** New or edit a service type. Changing how it works applies to new services; ones already added keep theirs. */
 function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
   type: ServiceTypeRow | null;
   symbol: string;
@@ -197,7 +197,6 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const locked = !!type && (!!type.part || (type.used ?? 0) > 0);
   const [name, setName] = useState(type?.name ?? '');
   const [kind, setKind] = useState<TypeKind>(type?.kind ?? 'job');
   const [cycle, setCycle] = useState(type?.cycle === 'monthly' ? 'monthly' : 'yearly');
@@ -213,7 +212,7 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
     setSaving(true);
     setError(null);
     try {
-      const body = { name, ...(locked ? {} : { kind }), cycle, price, price_unit: unit, reminder_days: days, invoice_when: invoiceWhen, show_in_add: show };
+      const body = { name, kind, cycle, price, price_unit: unit, reminder_days: days, invoice_when: invoiceWhen, show_in_add: show };
       if (type) await send('PATCH', `/api/service-types/${type.id}`, body);
       else await send('POST', '/api/service-types', body);
       showToast(type ? 'Service type saved' : 'Service type created');
@@ -255,10 +254,10 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
               <input id="t-name" value={name} maxLength={60} placeholder="LMS setup" onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="ct-field">
-              <Label tip={locked ? 'Fixed once a service uses this type (and for the built-in parts), because the services already added depend on it.' : undefined}>How does it work?</Label>
+              <Label tip="The default for new services of this type. You can still pick another way on each service, and services already added keep theirs.">How does it work?</Label>
               {(['renews', 'visits', 'job'] as const).map((k) => (
-                <label key={k} className={`ct-radio${kind === k ? ' on' : ''}${locked && kind !== k ? ' locked' : ''}`}>
-                  <input type="radio" name="t-kind" checked={kind === k} disabled={locked} onChange={() => setKind(k)} />
+                <label key={k} className={`ct-radio${kind === k ? ' on' : ''}`}>
+                  <input type="radio" name="t-kind" checked={kind === k} onChange={() => setKind(k)} />
                   <span>
                     <span className="t">{KIND_LABEL[k]}</span>
                     <span className="d">{KIND_HELP[k]}</span>
@@ -269,7 +268,7 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
             </div>
             {(kind === 'renews' || kind === 'visits') && (
               <div className="ct-field">
-                <Label>{kind === 'visits' ? 'How often' : 'Billing cycle'}</Label>
+                <Label>{kind === 'visits' ? 'Repeats' : 'Billing cycle'}</Label>
                 <select value={cycle} onChange={(e) => setCycle(e.target.value as 'yearly' | 'monthly')}>
                   <option value="yearly">Yearly</option>
                   <option value="monthly">Monthly</option>

@@ -28,7 +28,7 @@ export const FORM_PARTS: Part[] = ['website', 'domain', 'hosting', 'email', 'mai
 
 export const KIND_LABEL: Record<TypeKind, string> = {
   renews: 'Renews',
-  visits: 'Visits',
+  visits: 'Schedule',
   job: 'One-off job',
   any: 'You choose',
 };
@@ -277,7 +277,7 @@ export interface ComingUp {
   text: string;
 }
 
-/** What happens next for these services, in date order: reminders, invoice drafts, visits and due dates. */
+/** What happens next for these services, in date order: reminders, invoice drafts, schedules and due dates. */
 export function comingUp(
   services: ServiceRow[],
   types: Map<string, Pick<ServiceTypeRow, 'reminder_days'>>,
@@ -291,7 +291,7 @@ export function comingUp(
     if (s.ended_at || s.next_date === null) continue;
     const date = s.next_date;
     if (s.kind === 'visits') {
-      out.push({ date, service_id: s.id, kind: 'visit', text: `Visit due: ${s.name}` });
+      out.push({ date, service_id: s.id, kind: 'visit', text: `Scheduled: ${s.name}` });
     } else {
       for (const d of reminderDaysFor(s, types.get(s.type_id) ?? null, rules)) {
         const at = date - d * DAY_MS;

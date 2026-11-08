@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Portal } from '@/components/portal';
 import { XIcon } from '@/components/icons';
-import { addCycle, KIND_LABEL, parseMeta, visitChecklist, type ClientRow, type ServiceRow, type ServiceTypeRow } from '@/lib/clients';
+import { addCycle, parseMeta, visitChecklist, type ClientRow, type ServiceRow, type ServiceTypeRow } from '@/lib/clients';
 import { fmtMoney } from '@/lib/invoices';
 import { send, useClientSettings } from '@/lib/use-clients';
 import { draftFromService, draftFromType, serviceProblem, servicePayload, ServiceFields, type ServiceDraft } from './service-fields';
@@ -47,7 +47,7 @@ function Dialog({ title, sub, icon, small, onClose, children, footer }: {
   );
 }
 
-/** Add a service to a client, or edit one (its type and how it works stay as they are). */
+/** Add a service to a client, or edit one (its type stays; how it works can change). */
 export function ServiceDialog({
   client,
   service,
@@ -81,8 +81,8 @@ export function ServiceDialog({
     setError(null);
     try {
       const data = service
-        ? await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${service.id}`, servicePayload(draft, false))
-        : await send<{ invoice?: { number: string } | null }>('POST', `/api/clients/${client.id}/services`, servicePayload(draft, draft.typeKind === 'any'));
+        ? await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${service.id}`, servicePayload(draft, true))
+        : await send<{ invoice?: { number: string } | null }>('POST', `/api/clients/${client.id}/services`, servicePayload(draft, true));
       const name = draft.name || 'Service';
       onSaved(data.invoice ? `${name} saved. Draft invoice ${data.invoice.number} created.` : `${name} saved`);
       if (another) {
@@ -131,14 +131,9 @@ export function ServiceDialog({
           </div>
         </div>
       )}
-      {service && (
-        <div style={{ fontSize: 12.5, color: 'var(--muted-foreground)' }}>
-          {KIND_LABEL[service.kind]}. How a service works is fixed once it is added.
-        </div>
-      )}
       {error && <div className="ct-error" role="alert">{error}</div>}
       {draft && (
-        <ServiceFields draft={draft} onChange={setDraft} symbol={cfg.symbol} idPrefix="dlg" allowKindChange={!service} />
+        <ServiceFields draft={draft} onChange={setDraft} symbol={cfg.symbol} idPrefix="dlg" allowKindChange />
       )}
     </Dialog>
   );
@@ -238,7 +233,7 @@ export function RenewDialog({ service, clientName, onClose, onDone }: {
   );
 }
 
-/** Mark a maintenance visit done: tick the steps (from what the plan looks after) and note anything worth keeping. */
+/** Mark a scheduled service done: tick the steps (from what the plan looks after) and note anything worth keeping. */
 export function VisitDialog({ service, clientName, onClose, onDone }: {
   service: ServiceRow;
   clientName: string;
@@ -259,7 +254,7 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
     setError(null);
     try {
       await send('POST', `/api/clients/services/${service.id}/visit`, { done_steps: doneCount, total_steps: steps.length, note });
-      onDone(`Visit done (${doneCount} of ${steps.length} steps). Next visit ${cfg.fmt(next)}.`);
+      onDone(`Marked done (${doneCount} of ${steps.length} steps). Next scheduled date ${cfg.fmt(next)}.`);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -271,7 +266,7 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
   return (
     <Dialog
       small
-      title={`Visit: ${service.name}`}
+      title={`Schedule: ${service.name}`}
       sub={`${clientName} · due ${cfg.fmt(service.next_date)}`}
       icon={<PartIcon part="maintenance" size={16} />}
       onClose={onClose}
@@ -279,14 +274,14 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
         <>
           <button className="btn btn-outline" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-            {saving ? 'Saving…' : 'Mark visit done'}
+            {saving ? 'Saving…' : 'Mark done'}
           </button>
         </>
       }
     >
       {error && <div className="ct-error" role="alert">{error}</div>}
       <div className="ct-field">
-        <span className="ct-label">What we did on this visit</span>
+        <span className="ct-label">What we did this time</span>
         {steps.map((step, i) => (
           <label key={step + i} className="ct-check" style={{ fontSize: 13 }}>
             <input type="checkbox" checked={ticked[i]} onChange={() => setTicked((t) => t.map((v, j) => (j === i ? !v : v)))} />
@@ -296,10 +291,10 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
         <span className="ct-muted">Steps come from Settings → Clients and follow what the plan looks after.</span>
       </div>
       <div className="ct-field">
-        <label className="ct-label" htmlFor="visit-note">Note for this visit (optional)</label>
+        <label className="ct-label" htmlFor="visit-note">Note (optional)</label>
         <textarea id="visit-note" rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Updated 6 plugins. Backups fine." />
       </div>
-      <div className="ct-box">The next visit moves to {cfg.fmt(next)}.</div>
+      <div className="ct-box">The next scheduled date moves to {cfg.fmt(next)}.</div>
     </Dialog>
   );
 }
