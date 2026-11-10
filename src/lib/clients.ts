@@ -12,6 +12,7 @@
  */
 
 import { startOfDay } from './dates';
+import { joinAddress } from './invoices';
 
 export type Recurs = 'renews' | 'scheduled';
 export type Mode = Recurs | 'oneoff';
@@ -92,7 +93,10 @@ export interface ClientRow {
   notes: string;
   service_notes: string;
   logins: string;
-  billing_address: string;
+  /** Billing details, laid out like an invoice's "Invoiced To". */
+  address_street: string;
+  address_city: string;
+  address_country: string;
   tax_id: string;
   archived: number;
   created_at: number;
@@ -356,4 +360,17 @@ export function scheduleChecklist(parts: Pick<ServicePart, 'part'>[], settings: 
   if (site || !mail) steps.push(...stringList(settings.clients_checklist_site, DEFAULT_CHECKLIST_SITE));
   if (mail) steps.push(...stringList(settings.clients_checklist_mail, DEFAULT_CHECKLIST_MAIL));
   return steps;
+}
+
+type BillingFields = Pick<ClientRow, 'name' | 'contact_name' | 'email' | 'address_street' | 'address_city' | 'address_country'>;
+
+/** A client's "Invoiced To" block, in the invoice's own layout (name, contact, street, city, country). */
+export function invoiceAddressOf(client: BillingFields): string {
+  return joinAddress({
+    name: client.name,
+    contact: client.contact_name,
+    addr1: client.address_street,
+    addr2: client.address_city,
+    country: client.address_country,
+  });
 }

@@ -79,6 +79,7 @@ export function newInvoiceDraft(cfg: InvoiceSettings, now = Date.now()): Invoice
   const issuedAt = startOfDay(now);
   return {
     number: cfg.numberPreview,
+    clientId: null,
     clientName: '',
     clientContact: '',
     clientAddr1: '',
@@ -120,6 +121,7 @@ export function draftFromInvoice(invoice: InvoiceRow): InvoiceDraft {
 
   return {
     number: invoice.number,
+    clientId: invoice.client_id ?? null,
     clientName: invoice.client_name,
     clientContact: address.contact,
     clientAddr1: address.addr1,
@@ -151,6 +153,7 @@ export function invoicePayload(draft: InvoiceDraft) {
     number: draft.number.trim(),
     client_name: draft.clientName.trim(),
     client_email: draft.clientEmail.trim(),
+    client_id: draft.clientId,
     client_address: joinAddress({
       name: draft.clientName,
       contact: draft.clientContact,

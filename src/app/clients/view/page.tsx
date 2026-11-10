@@ -324,9 +324,11 @@ function ClientView() {
               {client.phone && <div><span className="k">Phone{client.whatsapp ? ' (also WhatsApp)' : ''}</span><span className="v">{client.phone}</span></div>}
               {!client.whatsapp && client.whatsapp_number && <div><span className="k">WhatsApp</span><span className="v">{client.whatsapp_number}</span></div>}
               {client.website && <div><span className="k">Main website or domain</span><span className="v">{client.website}</span></div>}
-              {client.billing_address && <div><span className="k">Billing address</span><span className="v">{client.billing_address}</span></div>}
+              {(client.address_street || client.address_city || client.address_country) && (
+                <div><span className="k">Billing address</span><span className="v">{[client.address_street, client.address_city, client.address_country].filter(Boolean).join(', ')}</span></div>
+              )}
               {client.tax_id && <div><span className="k">Tax ID</span><span className="v">{client.tax_id}</span></div>}
-              {!client.contact_name && !client.email && !client.phone && !client.website && <div className="ct-muted">No contact details yet.</div>}
+              {!client.contact_name && !client.email && !client.phone && !client.website && !client.address_street && !client.address_city && <div className="ct-muted">No contact details yet.</div>}
             </div>
           </section>
           <section className="ct-card">

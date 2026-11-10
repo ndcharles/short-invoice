@@ -1351,6 +1351,17 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
 .inv-party-input:hover { background: var(--muted-2); padding: 3px 8px; margin: 0 -8px; }
 .inv-party-input:focus { background: white; border-color: var(--border-strong); outline: none; padding: 3px 8px; margin: 0 -8px; }
 .inv-party.inv-right .inv-party-input { text-align: right; }
+.inv-client-pick { position: relative; }
+.inv-client-list { position: absolute; top: calc(100% + 4px); left: -8px; z-index: 60; width: min(360px, calc(100vw - 32px)); background: var(--background, white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 4px; }
+.inv-client-list-head { font-size: 11px; font-weight: 500; color: var(--muted-foreground); padding: 6px 8px 4px; }
+.inv-client-option { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; }
+.inv-client-option.on { background: var(--muted-2); }
+.inv-client-option .n { font-size: 13px; font-weight: 500; }
+.inv-client-option .d { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inv-linked { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted-foreground); }
+.inv-linked a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.inv-linked button { border: 0; background: none; padding: 0; font: inherit; color: var(--foreground); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.inv-linked .err { color: var(--destructive); }
 
 .inv-meta-row {
   display: grid;

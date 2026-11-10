@@ -65,7 +65,9 @@ export interface ClientInput {
   notes: string;
   service_notes: string;
   logins: string;
-  billing_address: string;
+  address_street: string;
+  address_city: string;
+  address_country: string;
   tax_id: string;
 }
 
@@ -77,11 +79,13 @@ const TEXT_FIELDS: [keyof ClientInput, string, number][] = [
   ['website', 'Main website or domain', 253],
   ['logins', 'Where the logins are kept', 200],
   ['tax_id', 'Tax ID', 60],
+  ['address_street', 'Street address', 200],
+  ['address_city', 'City, State, Postal code', 200],
+  ['address_country', 'Country', 100],
 ];
 const LONG_FIELDS: [keyof ClientInput, string][] = [
   ['notes', 'Notes'],
   ['service_notes', 'Service notes'],
-  ['billing_address', 'Billing address'],
 ];
 
 /** Validates a client create/update payload. Keys are present only when supplied. */

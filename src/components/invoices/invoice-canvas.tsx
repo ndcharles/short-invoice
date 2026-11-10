@@ -26,9 +26,12 @@ import {
 } from '@/lib/invoices';
 import { MoneyInput } from './money-input';
 import { ChoiceModal, useConfirm } from './choice-modal';
+import { ClientNameInput, invoicedToFrom, LinkedClient } from './client-picker';
 
 export interface InvoiceDraft {
   number: string;
+  /** The client-tracker client this invoice is for, if any. */
+  clientId: string | null;
   clientName: string;
   clientContact: string;
   clientAddr1: string;
@@ -365,12 +368,11 @@ export function InvoiceCanvas({
       <div className="inv-parties">
         <div className="inv-party">
           <div className="inv-party-title">Invoiced To</div>
-          <input
+          <ClientNameInput
             className="inv-party-input inv-party-strong"
             value={draft.clientName}
-            placeholder="Client name"
-            aria-label="Client name"
-            onChange={(e) => onChange({ clientName: e.target.value })}
+            onType={(clientName) => onChange({ clientName })}
+            onPick={(client) => onChange(invoicedToFrom(client))}
           />
           <input
             className={`inv-party-input${draft.clientContact ? '' : ' inv-print-hide'}`}
@@ -403,6 +405,9 @@ export function InvoiceCanvas({
             placeholder="client@company.com"
             onChange={(e) => onChange({ clientEmail: e.target.value })}
           />
+          {draft.clientId && (
+            <LinkedClient clientId={draft.clientId} onFill={(client) => onChange(invoicedToFrom(client))} onUnlink={() => onChange({ clientId: null })} />
+          )}
         </div>
         <div className="inv-party inv-right">
           <div className="inv-party-title">Pay To</div>

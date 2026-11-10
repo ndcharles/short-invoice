@@ -36,7 +36,9 @@ interface ClientForm {
   notes: string;
   service_notes: string;
   logins: string;
-  billing_address: string;
+  address_street: string;
+  address_city: string;
+  address_country: string;
   tax_id: string;
 }
 
@@ -52,7 +54,9 @@ const EMPTY: ClientForm = {
   notes: '',
   service_notes: '',
   logins: '',
-  billing_address: '',
+  address_street: '',
+  address_city: '',
+  address_country: '',
   tax_id: '',
 };
 
@@ -68,7 +72,9 @@ const fromClient = (c: ClientRow): ClientForm => ({
   notes: c.notes,
   service_notes: c.service_notes,
   logins: c.logins,
-  billing_address: c.billing_address,
+  address_street: c.address_street,
+  address_city: c.address_city,
+  address_country: c.address_country,
   tax_id: c.tax_id,
 });
 
@@ -117,7 +123,8 @@ function LogClient() {
       try {
         const data = await send<{ client: ClientRow }>('GET', `/api/clients/${encodeURIComponent(editId)}`);
         setForm(fromClient(data.client));
-        setBillingOpen(!!(data.client.billing_address || data.client.tax_id));
+        const c = data.client;
+        setBillingOpen(!!(c.address_street || c.address_city || c.address_country || c.tax_id));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load the client');
       } finally {
@@ -278,19 +285,28 @@ function LogClient() {
                   tip="Anything you would want to remember before calling them."
                   onChange={(v) => set('notes', v)}
                 />
-                {billingOpen ? (
-                  <>
-                    <AreaField id="c-billing" label="Billing address" value={form.billing_address} tip="Shown on their invoices." onChange={(v) => set('billing_address', v)} />
-                    <TextField id="c-tax" label="Tax ID" value={form.tax_id} maxLength={60} onChange={(v) => set('tax_id', v)} />
-                  </>
-                ) : (
-                  <div className="full">
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBillingOpen(true)}>
-                      Add billing address or tax ID
-                    </button>
-                  </div>
-                )}
               </div>
+
+              {billingOpen ? (
+                <div className="ct-billing">
+                  <div className="ct-billing-head">
+                    <span>Billing details</span>
+                    <Tip text="Fills “Invoiced To” on their invoices, with the contact person and email above. Changing it here does not change invoices already made." />
+                  </div>
+                  <div className="ct-grid three">
+                    <TextField id="c-street" label="Street address" value={form.address_street} placeholder="12 Allen Avenue" onChange={(v) => set('address_street', v)} />
+                    <TextField id="c-city" label="City, State, Postal code" value={form.address_city} placeholder="Ikeja, Lagos 100001" onChange={(v) => set('address_city', v)} />
+                    <TextField id="c-country" label="Country" value={form.address_country} maxLength={100} placeholder="Nigeria" onChange={(v) => set('address_country', v)} />
+                    <TextField id="c-tax" label="Tax ID" value={form.tax_id} maxLength={60} onChange={(v) => set('tax_id', v)} />
+                  </div>
+                </div>
+              ) : (
+                <div className="ct-billing closed">
+                  <button type="button" className="btn btn-ghost btn-sm" aria-expanded={false} onClick={() => setBillingOpen(true)}>
+                    + Add billing details
+                  </button>
+                </div>
+              )}
             </div>
           </section>
 

@@ -79,6 +79,10 @@ export interface InvoiceRow {
   client_name: string;
   client_email: string;
   client_address: string;
+  /** Linked client in the client tracker, if any. */
+  client_id?: string | null;
+  service_id?: string | null;
+  service_for?: number | null;
   issued_at: number;
   due_at: number;
   currency: string;
