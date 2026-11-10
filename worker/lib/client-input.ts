@@ -1,21 +1,18 @@
 import {
   CLIENT_STATUSES,
-  CYCLES,
-  INVOICE_WHEN,
-  JOB_STATUSES,
-  LOOKS_AFTER,
-  SERVICE_KINDS,
+  MODES,
+  PART_NAMES,
+  REPEATS,
+  STATUSES,
   parseDays,
   type ClientStatus,
-  type Cycle,
-  type InvoiceWhen,
-  type JobStatus,
-  type ServiceKind,
-  type ServiceMeta,
-  type TypeKind,
+  type Mode,
+  type PartName,
+  type Repeats,
+  type Status,
 } from '../../src/lib/clients';
 import { round2 } from '../../src/lib/invoices';
-import { LIMITS, parseEmail, parseMultiline, parseNumber, parseText, type Result } from '../../src/lib/validate';
+import { parseEmail, parseMultiline, parseNumber, parseText, type Result } from '../../src/lib/validate';
 
 const fail = <T>(error: string): Result<T> => ({ ok: false, error });
 const ok = <T>(value: T): Result<T> => ({ ok: true, value });
@@ -39,18 +36,19 @@ function oneOf<T extends string>(value: unknown, list: readonly T[], label: stri
   return typeof value === 'string' && (list as readonly string[]).includes(value) ? ok(value as T) : fail(`Unknown ${label}`);
 }
 
-type Collector<T> = { out: Partial<T>; errors: (string | null)[] };
-
-function collector<T>(): Collector<T> & {
-  check: <V>(res: Result<V>, apply: (value: V) => void) => void;
-} {
-  const errors: (string | null)[] = [];
+/** Runs each check, keeps the first error, and applies the values that passed. */
+function collector<T>() {
+  const errors: string[] = [];
+  const out: Partial<T> = {};
   return {
-    out: {},
+    out,
     errors,
-    check(res, apply) {
+    check<V>(res: Result<V>, apply: (value: V) => void) {
       if (!res.ok) errors.push(res.error);
       else apply(res.value);
+    },
+    result(): Result<Partial<T>> {
+      return errors.length ? fail(errors[0]) : ok(out);
     },
   };
 }
@@ -61,9 +59,9 @@ export interface ClientInput {
   email: string;
   phone: string;
   whatsapp: boolean;
+  whatsapp_number: string;
   website: string;
   status: ClientStatus;
-  tags: string[];
   notes: string;
   service_notes: string;
   logins: string;
@@ -71,59 +69,53 @@ export interface ClientInput {
   tax_id: string;
 }
 
+const TEXT_FIELDS: [keyof ClientInput, string, number][] = [
+  ['name', 'Client name', 200],
+  ['contact_name', 'Contact person', 200],
+  ['phone', 'Phone', 40],
+  ['whatsapp_number', 'WhatsApp number', 40],
+  ['website', 'Main website or domain', 253],
+  ['logins', 'Where the logins are kept', 200],
+  ['tax_id', 'Tax ID', 60],
+];
+const LONG_FIELDS: [keyof ClientInput, string][] = [
+  ['notes', 'Notes'],
+  ['service_notes', 'Service notes'],
+  ['billing_address', 'Billing address'],
+];
+
 /** Validates a client create/update payload. Keys are present only when supplied. */
 export function parseClientInput(body: Record<string, unknown>): Result<Partial<ClientInput>> {
   const c = collector<ClientInput>();
-  const text = (key: keyof ClientInput, label: string, max: number = LIMITS.shortText) => {
-    if (has(body, key)) c.check(parseText(body[key] ?? '', label, max), (v) => ((c.out as Record<string, unknown>)[key] = v ?? ''));
-  };
-  const multi = (key: keyof ClientInput, label: string) => {
-    if (has(body, key)) c.check(parseMultiline(body[key] ?? '', label), (v) => ((c.out as Record<string, unknown>)[key] = v ?? ''));
-  };
-  text('name', 'Client name');
-  text('contact_name', 'Contact person');
-  if (has(body, 'email')) c.check(parseEmail(body.email ?? '', 'Email'), (v) => (c.out.email = v ?? ''));
-  text('phone', 'Phone', 40);
+  const set = (key: keyof ClientInput) => (v: string | null) => ((c.out as Record<string, unknown>)[key] = v ?? '');
+  for (const [key, label, max] of TEXT_FIELDS) if (has(body, key)) c.check(parseText(body[key] ?? '', label, max), set(key));
+  for (const [key, label] of LONG_FIELDS) if (has(body, key)) c.check(parseMultiline(body[key] ?? '', label), set(key));
+  if (has(body, 'email')) c.check(parseEmail(body.email ?? '', 'Email'), set('email'));
   if (has(body, 'whatsapp')) c.out.whatsapp = body.whatsapp === true;
-  text('website', 'Main website or domain', 253);
   if (has(body, 'status')) c.check(oneOf(body.status, CLIENT_STATUSES, 'client status'), (v) => (c.out.status = v));
-  if (has(body, 'tags')) {
-    if (!Array.isArray(body.tags) || body.tags.length > 20) c.errors.push('Tags must be a list of up to 20 names');
-    else {
-      const tags: string[] = [];
-      for (const tag of body.tags) {
-        const res = parseText(tag, 'Tag', LIMITS.name);
-        if (!res.ok) c.errors.push(res.error);
-        else if (res.value && !tags.some((t) => t.toLowerCase() === res.value!.toLowerCase())) tags.push(res.value);
-      }
-      c.out.tags = tags;
-    }
-  }
-  multi('notes', 'Notes');
-  multi('service_notes', 'Service notes');
-  text('logins', 'Where the logins are kept');
-  multi('billing_address', 'Billing address');
-  text('tax_id', 'Tax ID', 60);
-  const error = c.errors.find((e) => e !== null);
-  return error ? fail(error) : ok(c.out);
+  return c.result();
+}
+
+export interface PartInput {
+  part: PartName;
+  provider: string;
+  count: number | null;
 }
 
 export interface ServiceInput {
   type_id: string;
   name: string;
-  kind: ServiceKind;
+  mode: Mode;
   details: string;
-  meta: ServiceMeta;
-  cycle: Cycle;
-  next_date: number | null;
-  price: number;
+  repeats: Repeats;
+  next_at: number | null;
+  due_at: number | null;
+  status: Status;
+  amount: number;
   quantity: number;
   currency: string;
-  job_status: JobStatus;
-  invoice_when: InvoiceWhen | '';
+  parts: PartInput[];
 }
-
-const META_TEXT: (keyof ServiceMeta)[] = ['built_with', 'registrar', 'provider', 'plan', 'mailboxes'];
 
 /** Validates a service create/update payload. Keys are present only when supplied. */
 export function parseServiceInput(body: Record<string, unknown>): Result<Partial<ServiceInput>> {
@@ -133,52 +125,44 @@ export function parseServiceInput(body: Record<string, unknown>): Result<Partial
     else c.out.type_id = body.type_id;
   }
   if (has(body, 'name')) c.check(parseText(body.name ?? '', 'Service name', 80), (v) => (c.out.name = v ?? ''));
-  if (has(body, 'kind')) c.check(oneOf(body.kind, SERVICE_KINDS, 'way it works'), (v) => (c.out.kind = v));
+  if (has(body, 'mode')) c.check(oneOf(body.mode, MODES, 'way it works'), (v) => (c.out.mode = v));
   if (has(body, 'details')) c.check(parseMultiline(body.details ?? '', 'Details'), (v) => (c.out.details = v ?? ''));
-  if (has(body, 'meta')) {
-    const raw = body.meta;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) c.errors.push('Service details are invalid');
-    else {
-      const m = raw as Record<string, unknown>;
-      const meta: ServiceMeta = {};
-      for (const key of META_TEXT) {
-        if (m[key] === undefined) continue;
-        c.check(parseText(m[key] ?? '', key.replace('_', ' '), 120), (v) => {
-          if (v) (meta as Record<string, unknown>)[key] = v;
-        });
-      }
-      if (m.looks_after !== undefined) {
-        if (!Array.isArray(m.looks_after)) c.errors.push('"Looks after" must be a list');
-        else meta.looks_after = (LOOKS_AFTER as readonly string[]).filter((name) => (m.looks_after as unknown[]).includes(name));
-      }
-      c.out.meta = meta;
-    }
-  }
-  if (has(body, 'cycle')) c.check(oneOf(body.cycle, CYCLES, 'billing cycle'), (v) => (c.out.cycle = v));
-  if (has(body, 'next_date')) c.check(parseDay(body.next_date, 'Date'), (v) => (c.out.next_date = v));
-  if (has(body, 'price')) c.check(parseNumber(body.price, 'Price', { min: 0, max: MONEY_MAX, fallback: 0 }), (v) => (c.out.price = round2(v)));
+  if (has(body, 'repeats')) c.check(oneOf(body.repeats, REPEATS, 'repeat'), (v) => (c.out.repeats = v));
+  if (has(body, 'next_at')) c.check(parseDay(body.next_at, 'Renewal or next date'), (v) => (c.out.next_at = v));
+  if (has(body, 'due_at')) c.check(parseDay(body.due_at, 'Due date'), (v) => (c.out.due_at = v));
+  if (has(body, 'status')) c.check(oneOf(body.status, STATUSES, 'status'), (v) => (c.out.status = v));
+  if (has(body, 'amount')) c.check(parseNumber(body.amount, 'Charge', { min: 0, max: MONEY_MAX, fallback: 0 }), (v) => (c.out.amount = round2(v)));
   if (has(body, 'quantity')) c.check(parseNumber(body.quantity, 'Quantity', { min: 0, max: 1e7, fallback: 1 }), (v) => (c.out.quantity = v));
   if (has(body, 'currency')) {
     if (typeof body.currency === 'string' && /^[A-Za-z]{3}$/.test(body.currency.trim())) c.out.currency = body.currency.trim().toUpperCase();
     else c.errors.push('Currency must be a 3-letter code such as NGN');
   }
-  if (has(body, 'job_status')) c.check(oneOf(body.job_status, JOB_STATUSES, 'job status'), (v) => (c.out.job_status = v));
-  if (has(body, 'invoice_when')) {
-    if (body.invoice_when === '') c.out.invoice_when = '';
-    else c.check(oneOf(body.invoice_when, INVOICE_WHEN, 'invoice choice'), (v) => (c.out.invoice_when = v));
+  if (has(body, 'parts')) {
+    if (!Array.isArray(body.parts) || body.parts.length > PART_NAMES.length) c.errors.push('Includes must be a short list');
+    else {
+      const parts: PartInput[] = [];
+      for (const raw of body.parts) {
+        const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+        c.check(oneOf(p.part, PART_NAMES, 'item under Includes'), (part) => {
+          if (parts.some((x) => x.part === part)) return;
+          const provider = parseText(p.provider ?? '', 'Provider', 120);
+          const count = p.count === undefined || p.count === null || p.count === '' ? ok<number | null>(null) : parseNumber(p.count, 'Mailboxes', { min: 0, max: 100_000 });
+          if (!provider.ok) c.errors.push(provider.error);
+          else if (!count.ok) c.errors.push(count.error);
+          else parts.push({ part, provider: provider.value ?? '', count: count.value === null ? null : Math.floor(count.value) });
+        });
+      }
+      c.out.parts = parts;
+    }
   }
-  const error = c.errors.find((e) => e !== null);
-  return error ? fail(error) : ok(c.out);
+  return c.result();
 }
 
 export interface ServiceTypeInput {
   name: string;
-  kind: TypeKind;
-  cycle: Cycle;
   price: number;
   price_unit: 'once' | 'each';
   reminder_days: string;
-  invoice_when: InvoiceWhen | '';
   show_in_add: boolean;
 }
 
@@ -186,19 +170,12 @@ export interface ServiceTypeInput {
 export function parseServiceTypeInput(body: Record<string, unknown>): Result<Partial<ServiceTypeInput>> {
   const c = collector<ServiceTypeInput>();
   if (has(body, 'name')) c.check(parseText(body.name ?? '', 'Name', 60), (v) => (c.out.name = v ?? ''));
-  if (has(body, 'kind')) c.check(oneOf(body.kind, [...SERVICE_KINDS, 'any'] as const, 'way it works'), (v) => (c.out.kind = v));
-  if (has(body, 'cycle')) c.check(oneOf(body.cycle, CYCLES, 'billing cycle'), (v) => (c.out.cycle = v));
   if (has(body, 'price')) c.check(parseNumber(body.price, 'Default price', { min: 0, max: MONEY_MAX, fallback: 0 }), (v) => (c.out.price = round2(v)));
   if (has(body, 'price_unit')) c.check(oneOf(body.price_unit, ['once', 'each'] as const, 'price unit'), (v) => (c.out.price_unit = v));
   if (has(body, 'reminder_days')) {
     if (typeof body.reminder_days !== 'string') c.errors.push('Reminder days must be text such as "7,1"');
     else c.out.reminder_days = parseDays(body.reminder_days).join(',');
   }
-  if (has(body, 'invoice_when')) {
-    if (body.invoice_when === '') c.out.invoice_when = '';
-    else c.check(oneOf(body.invoice_when, INVOICE_WHEN, 'invoice choice'), (v) => (c.out.invoice_when = v));
-  }
   if (has(body, 'show_in_add')) c.out.show_in_add = body.show_in_add !== false;
-  const error = c.errors.find((e) => e !== null);
-  return error ? fail(error) : ok(c.out);
+  return c.result();
 }

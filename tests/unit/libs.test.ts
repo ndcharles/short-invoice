@@ -248,20 +248,32 @@ describe('roles as people see them', () => {
   });
 });
 
-import { addCycle, parseDays, visitChecklist, DEFAULT_CHECKLIST_MAIL, DEFAULT_CHECKLIST_SITE } from '@/lib/clients';
+import { addPeriod, datesOf, parseDays, scheduleChecklist, serviceLabel, DEFAULT_CHECKLIST_MAIL, DEFAULT_CHECKLIST_SITE } from '@/lib/clients';
 describe('client tracker rules', () => {
-  it('adds cycles to the same calendar day, clamping short months', () => {
-    expect(addCycle(Date.UTC(2026, 0, 31), 'monthly')).toBe(Date.UTC(2026, 1, 28));
-    expect(addCycle(Date.UTC(2028, 1, 29), 'yearly')).toBe(Date.UTC(2029, 1, 28));
-    expect(addCycle(Date.UTC(2026, 2, 14), 'once')).toBe(Date.UTC(2026, 2, 14));
+  it('adds periods to the same calendar day, clamping short months', () => {
+    expect(addPeriod(Date.UTC(2026, 0, 31), 'monthly')).toBe(Date.UTC(2026, 1, 28));
+    expect(addPeriod(Date.UTC(2026, 10, 30), 'quarterly')).toBe(Date.UTC(2027, 1, 28));
+    expect(addPeriod(Date.UTC(2028, 1, 29), 'yearly')).toBe(Date.UTC(2029, 1, 28));
   });
   it('reads reminder days', () => {
     expect(parseDays('7, 60 ,30,7, x, 999')).toEqual([60, 30, 7]);
     expect(parseDays('')).toEqual([]);
   });
-  it('builds a visit checklist from what the plan looks after', () => {
-    expect(visitChecklist({ looks_after: [] }, {})).toEqual(DEFAULT_CHECKLIST_SITE);
-    expect(visitChecklist({ looks_after: ['Email'] }, {})).toEqual(DEFAULT_CHECKLIST_MAIL);
-    expect(visitChecklist({ looks_after: ['Website', 'Domain'] }, { clients_checklist_site: '["A"]' })).toEqual(['A', ...DEFAULT_CHECKLIST_MAIL]);
+  it('lists the dates a service is waiting on', () => {
+    const base = { due_at: 10, next_at: 20, recurs: 'renews' as const, status: 'in_progress' as const, ended_at: null };
+    expect(datesOf(base)).toEqual([{ date: 10, what: 'due' }, { date: 20, what: 'renews' }]);
+    expect(datesOf({ ...base, status: 'delivered' })).toEqual([{ date: 20, what: 'renews' }]);
+    expect(datesOf({ ...base, recurs: null })).toEqual([{ date: 10, what: 'due' }]);
+    expect(datesOf({ ...base, status: 'cancelled' })).toEqual([]);
+  });
+  it('names a website by what it includes', () => {
+    const parts = [{ part: 'website' as const }, { part: 'domain' as const }, { part: 'other' as const, provider: 'SSL certificate' }];
+    expect(serviceLabel({ name: 'Website', type_part: 'website', parts: parts.map((p) => ({ service_id: 's', provider: '', count: null, ...p })) })).toBe('Website (domain, SSL certificate)');
+    expect(serviceLabel({ name: 'Email', type_part: 'email', parts: [] })).toBe('Email');
+  });
+  it('builds a schedule checklist from what the plan looks after', () => {
+    expect(scheduleChecklist([], {})).toEqual(DEFAULT_CHECKLIST_SITE);
+    expect(scheduleChecklist([{ part: 'email' }], {})).toEqual(DEFAULT_CHECKLIST_MAIL);
+    expect(scheduleChecklist([{ part: 'website' }, { part: 'domain' }], { clients_checklist_site: '["A"]' })).toEqual(['A', ...DEFAULT_CHECKLIST_MAIL]);
   });
 });

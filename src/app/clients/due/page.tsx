@@ -3,11 +3,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Shell } from '@/components/layout/shell';
-import { countdown, dueBucket, JOB_STATUS_LABEL, type DueBucket, type DueRow, type JobStatus } from '@/lib/clients';
+import { countdown, dueBucket, REPEATS_LABEL, STATUS_LABEL, serviceLabel, type DueBucket, type DueRow, type Status } from '@/lib/clients';
 import { fmtMoney } from '@/lib/invoices';
 import { send, useClientSettings } from '@/lib/use-clients';
 import { showToast } from '@/components/toast';
-import { RenewDialog, VisitDialog } from '@/components/clients/dialogs';
+import { DoneDialog, RenewDialog } from '@/components/clients/dialogs';
 import { IconBox } from '@/components/clients/ui';
 
 const GROUPS: { id: DueBucket; label: string }[] = [
@@ -24,12 +24,12 @@ export default function DueDatesPage() {
   const [filter, setFilter] = useState('');
   const [laterOpen, setLaterOpen] = useState(false);
   const [renewing, setRenewing] = useState<DueRow | null>(null);
-  const [visiting, setVisiting] = useState<DueRow | null>(null);
+  const [doing, setDoing] = useState<DueRow | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setRows((await send<{ services: DueRow[] }>('GET', '/api/clients/due')).services);
+      setRows((await send<{ rows: DueRow[] }>('GET', '/api/clients/due')).rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load');
     }
@@ -40,10 +40,10 @@ export default function DueDatesPage() {
     void load();
   }, [load]);
 
-  const names = useMemo(() => Array.from(new Set((rows ?? []).map((r) => r.name))).sort(), [rows]);
+  const names = useMemo(() => Array.from(new Set((rows ?? []).map((r) => r.service.name))).sort(), [rows]);
   const grouped = useMemo(() => {
     const out: Record<DueBucket, DueRow[]> = { overdue: [], week: [], month: [], later: [] };
-    for (const r of rows ?? []) if (!filter || r.name === filter) out[dueBucket(r.next_date as number)].push(r);
+    for (const r of rows ?? []) if (!filter || r.service.name === filter) out[dueBucket(r.date)].push(r);
     return out;
   }, [rows, filter]);
 
@@ -57,18 +57,19 @@ export default function DueDatesPage() {
   };
 
   const action = (r: DueRow) => {
-    if (r.kind === 'renews') return <button className="btn btn-outline btn-sm" onClick={() => setRenewing(r)}>Renew</button>;
-    if (r.kind === 'visits')
+    const sv = r.service;
+    if (r.what === 'renews') return <button className="btn btn-outline btn-sm" onClick={() => setRenewing(r)}>Renew</button>;
+    if (r.what === 'scheduled')
       return (
-        <button className="btn btn-outline btn-sm" onClick={() => setVisiting(r)}>
+        <button className="btn btn-outline btn-sm" onClick={() => setDoing(r)}>
           Mark done
         </button>
       );
-    const next: JobStatus = r.job_status === 'not_started' ? 'in_progress' : 'delivered';
+    const next: Status = sv.status === 'not_started' ? 'in_progress' : 'delivered';
     return (
       <button className="btn btn-outline btn-sm" onClick={() => void act(async () => {
-        const res = await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${r.id}`, { job_status: next });
-        return res.invoice ? `${r.name}: draft invoice ${res.invoice.number} created` : `${r.name}: ${JOB_STATUS_LABEL[next].toLowerCase()}`;
+        const res = await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${sv.id}`, { status: next });
+        return res.invoice ? `${sv.name}: draft invoice ${res.invoice.number} created` : `${sv.name}: ${STATUS_LABEL[next].toLowerCase()}`;
       })}>
         {next === 'in_progress' ? 'Start' : 'Mark delivered'}
       </button>
@@ -86,7 +87,7 @@ export default function DueDatesPage() {
         <div className="page-header" style={{ paddingTop: 0 }}>
           <div>
             <div className="page-title">Due dates</div>
-            <div className="ct-sub">Renewals, schedules and one-off jobs across every client.</div>
+            <div className="ct-sub">Renewals, scheduled dates and work due, across every client.</div>
           </div>
         </div>
 
@@ -128,27 +129,29 @@ export default function DueDatesPage() {
                   <div className="ct-table">
                     <div className="ct-table-inner">
                       {list.map((r) => {
+                        const sv = r.service;
                         const tone = g.id === 'overdue' ? 'red' : g.id === 'week' ? 'amber' : '';
-                        const invoiced = r.invoiced_for !== null && r.invoiced_for === r.next_date;
+                        const invoiced = (sv.invoiced ?? []).includes(r.what === 'due' ? 'due' : r.date);
+                        const what =
+                          r.what === 'due' ? `Due · ${STATUS_LABEL[sv.status]}` : r.what === 'scheduled' ? `Scheduled · ${REPEATS_LABEL[sv.repeats].toLowerCase()}` : 'Renewal';
+                        const amount = sv.amount * (r.what === 'due' ? sv.quantity || 1 : 1);
                         return (
-                          <div key={r.id} className="ct-row ct-cols-due">
+                          <div key={`${sv.id}-${r.what}`} className="ct-row ct-cols-due">
                             <div className="ct-who">
-                              <IconBox part={r.part} kind={r.kind} />
+                              <IconBox part={sv.type_part} kind={sv.recurs ?? undefined} />
                               <div>
-                                <div className="ct-strong">{r.name}</div>
-                                <div className="ct-muted">{r.kind === 'job' ? `One-off job · ${JOB_STATUS_LABEL[(r.job_status || 'not_started') as JobStatus]}` : r.kind === 'visits' ? 'Schedule' : 'Renewal'}</div>
+                                <div className="ct-strong">{serviceLabel(sv)}</div>
+                                <div className="ct-muted">{what}</div>
                               </div>
                             </div>
-                            <Link className="ct-strong" href={`/clients/view?id=${encodeURIComponent(r.client_id)}`}>{r.client_name}</Link>
+                            <Link className="ct-strong" href={`/clients/view?id=${encodeURIComponent(sv.client_id)}`}>{r.client_name}</Link>
                             <div>
-                              <div>{cfg.fmt(r.next_date)}</div>
-                              <span className={`ct-chipline ${tone}`}>{countdown(r.next_date as number)}</span>
+                              <div>{cfg.fmt(r.date)}</div>
+                              <span className={`ct-chipline ${tone}`}>{countdown(r.date)}</span>
                             </div>
                             <div>
-                              <div className="ct-num">{r.price > 0 ? fmtMoney(r.kind === 'job' ? r.price * (r.quantity || 1) : r.price, r.currency) : '—'}</div>
-                              {invoiced && r.invoice_id && (
-                                <Link className="ct-chipline blue" href={`/invoices/edit?id=${encodeURIComponent(r.invoice_id)}`}>Draft ready</Link>
-                              )}
+                              <div className="ct-num">{amount > 0 ? fmtMoney(amount, sv.currency) : '—'}</div>
+                              {invoiced && <span className="ct-chipline blue">Invoiced</span>}
                             </div>
                             <div className="ct-actions">{action(r)}</div>
                           </div>
@@ -162,11 +165,11 @@ export default function DueDatesPage() {
           })
         )}
       </div>
-      {visiting && (
-        <VisitDialog service={visiting} clientName={visiting.client_name} onClose={() => setVisiting(null)} onDone={(m) => { showToast(m); void load(); }} />
+      {doing && (
+        <DoneDialog service={doing.service} clientName={doing.client_name} onClose={() => setDoing(null)} onDone={(m) => { showToast(m); void load(); }} />
       )}
       {renewing && (
-        <RenewDialog service={renewing} clientName={renewing.client_name} onClose={() => setRenewing(null)} onDone={(m) => { showToast(m); void load(); }} />
+        <RenewDialog service={renewing.service} clientName={renewing.client_name} onClose={() => setRenewing(null)} onDone={(m) => { showToast(m); void load(); }} />
       )}
     </Shell>
   );

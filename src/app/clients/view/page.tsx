@@ -6,16 +6,20 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Shell } from '@/components/layout/shell';
 import {
   CLIENT_STATUS_LABEL,
-  JOB_STATUS_LABEL,
+  PER_LABEL,
+  REPEATS_LABEL,
+  STATUS_LABEL,
   countdown,
+  datesOf,
   daysUntil,
-  parseMeta,
-  parseTags,
+  isActive,
+  serviceLabel,
+  workOpen,
   type ClientNote,
   type ClientRow,
   type ComingUp,
-  type JobStatus,
   type ServiceRow,
+  type Status,
 } from '@/lib/clients';
 import { fmtMoney, invoiceStatusPill } from '@/lib/invoices';
 import type { InvoiceRow } from '@/lib/types';
@@ -23,10 +27,11 @@ import { send, useClientSettings, useServiceTypes } from '@/lib/use-clients';
 import { useMe, useTeam } from '@/lib/team';
 import { showToast } from '@/components/toast';
 import { useConfirm } from '@/components/invoices/choice-modal';
-import { ServiceDialog, RenewDialog, VisitDialog } from '@/components/clients/dialogs';
+import { DoneDialog, ServiceDialog, RenewDialog } from '@/components/clients/dialogs';
 import { IconBox, initialsOf } from '@/components/clients/ui';
 import { Edit, More, Plus } from '@/components/icons';
 import { usePopoverDismiss } from '@/lib/popover';
+import { Portal } from '@/components/portal';
 
 interface Detail {
   client: ClientRow;
@@ -61,11 +66,22 @@ function ClientView() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ServiceRow | null>(null);
   const [renewing, setRenewing] = useState<ServiceRow | null>(null);
-  const [visiting, setVisiting] = useState<ServiceRow | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
+  const [doing, setDoing] = useState<ServiceRow | null>(null);
+  const [menu, setMenu] = useState<{ id: string; left: number; top: number; up: boolean } | null>(null);
   const [showEnded, setShowEnded] = useState(false);
   const [ask, confirmModal] = useConfirm();
-  usePopoverDismiss(menu !== null, () => setMenu(null));
+  const closeMenu = useCallback(() => setMenu(null), []);
+  usePopoverDismiss(menu !== null, closeMenu);
+  useEffect(() => {
+    if (!menu) return;
+    // The menu is drawn above the page at a fixed spot, so it closes when the page scrolls under it.
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+    };
+  }, [menu, closeMenu]);
 
   const load = useCallback(async () => {
     try {
@@ -91,127 +107,166 @@ function ClientView() {
   };
 
   const services = useMemo(() => data?.services ?? [], [data]);
-  const active = services.filter((s) => !s.ended_at);
-  const ended = services.filter((s) => s.ended_at);
-  const overdue = active.filter((s) => s.next_date !== null && daysUntil(s.next_date) < 0);
-  const next = active.filter((s) => s.next_date !== null && daysUntil(s.next_date) >= 0).sort((a, b) => (a.next_date ?? 0) - (b.next_date ?? 0))[0];
+  // Cancelled or ended, or delivered with nothing coming back: tucked under "Show ended or delivered".
+  const finished = (s: ServiceRow) => !isActive(s) || (s.status === 'delivered' && s.next_at === null);
+  const active = services.filter((s) => !finished(s));
+  const ended = services.filter(finished);
+  const dated = active.flatMap((s) => datesOf(s).map((d) => ({ s, ...d })));
+  const overdue = dated.filter((d) => daysUntil(d.date) < 0);
+  const next = dated.filter((d) => daysUntil(d.date) >= 0).sort((a, b) => a.date - b.date)[0];
   const unpaidInvoices = (data?.invoices ?? []).filter((inv) => inv.status === 'overdue');
 
   if (error) return <div className="ct-page"><div className="ct-error">{error}</div></div>;
   if (!data || !cfg.loaded) return <div className="ct-page ct-empty">Loading…</div>;
   const { client, totals } = data;
-  const tags = parseTags(client.tags);
-  const phoneDigits = client.phone.replace(/[^\d]/g, '');
+  const waDigits = (client.whatsapp ? client.phone : client.whatsapp_number).replace(/[^\d]/g, '');
 
-  const setJob = (s: ServiceRow, job_status: JobStatus) =>
+  const setStatus = (s: ServiceRow, status: Status) =>
     act(async () => {
-      const res = await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${s.id}`, { job_status });
-      return res.invoice ? `${s.name}: ${JOB_STATUS_LABEL[job_status].toLowerCase()}. Draft invoice ${res.invoice.number} created.` : `${s.name}: ${JOB_STATUS_LABEL[job_status].toLowerCase()}`;
+      const res = await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${s.id}`, { status });
+      return res.invoice ? `${s.name}: ${STATUS_LABEL[status].toLowerCase()}. Draft invoice ${res.invoice.number} created.` : `${s.name}: ${STATUS_LABEL[status].toLowerCase()}`;
     });
 
   const primaryAction = (s: ServiceRow) => {
-    if (s.ended_at) return null;
-    if (s.kind === 'renews')
-      return s.next_date === null ? null : (
-        <button className={`btn btn-sm ${s.next_date !== null && daysUntil(s.next_date) < 0 ? 'btn-primary' : 'btn-outline'}`} onClick={() => setRenewing(s)}>
-          {s.next_date !== null && daysUntil(s.next_date) < 0 ? 'Renew now' : 'Renew'}
+    if (!isActive(s)) return null;
+    if (workOpen(s) && (s.due_at !== null || s.recurs === null)) {
+      return s.status === 'not_started' ? (
+        <button className="btn btn-outline btn-sm" onClick={() => void setStatus(s, 'in_progress')}>Start</button>
+      ) : (
+        <button className="btn btn-outline btn-sm" onClick={() => void setStatus(s, 'delivered')}>Mark delivered</button>
+      );
+    }
+    if (s.next_at === null) return null;
+    const late = daysUntil(s.next_at) < 0;
+    if (s.recurs === 'renews')
+      return (
+        <button className={`btn btn-sm ${late ? 'btn-primary' : 'btn-outline'}`} onClick={() => setRenewing(s)}>
+          {late ? 'Renew now' : 'Renew'}
         </button>
       );
-    if (s.kind === 'visits')
-      return s.next_date === null ? null : (
-        <button className="btn btn-outline btn-sm" onClick={() => setVisiting(s)}>
+    if (s.recurs === 'scheduled')
+      return (
+        <button className="btn btn-outline btn-sm" onClick={() => setDoing(s)}>
           Mark done
         </button>
       );
-    if (s.job_status === 'not_started') return <button className="btn btn-outline btn-sm" onClick={() => void setJob(s, 'in_progress')}>Start</button>;
-    return <button className="btn btn-outline btn-sm" onClick={() => void setJob(s, 'delivered')}>Mark delivered</button>;
+    return null;
   };
 
   const dateCell = (s: ServiceRow) => {
-    if (s.ended_at) return <div className="ct-muted">{s.kind === 'job' ? 'Delivered' : 'Ended'} {cfg.fmt(s.ended_at)}</div>;
-    if (s.next_date === null) return <div className="ct-muted">No date</div>;
-    const left = daysUntil(s.next_date);
-    const tone = left < 0 ? 'red' : left <= 30 ? 'amber' : '';
-    const word = s.kind === 'job' ? 'Due' : s.kind === 'visits' ? 'Next scheduled' : left < 0 ? 'Was due' : 'Renews';
+    if (s.ended_at) return <div className="ct-muted">{s.status === 'cancelled' ? 'Cancelled' : 'Ended'} {cfg.fmt(s.ended_at)}</div>;
+    const dates = datesOf(s);
+    if (!dates.length) return <div className="ct-muted">{s.status === 'delivered' ? 'Delivered' : 'No date'}</div>;
     return (
-      <div>
-        <div>{word} {cfg.fmt(s.next_date)}</div>
-        <span className={`ct-chipline ${tone}`} style={{ marginTop: 3 }}>{countdown(s.next_date)}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {dates.map((d) => {
+          const left = daysUntil(d.date);
+          const tone = left < 0 ? 'red' : left <= 30 ? 'amber' : '';
+          const word = d.what === 'due' ? 'Due' : d.what === 'scheduled' ? 'Next' : left < 0 ? 'Was due to renew' : 'Renews';
+          return (
+            <div key={d.what}>
+              <div>{word} {cfg.fmt(d.date)}</div>
+              <span className={`ct-chipline ${tone}`} style={{ marginTop: 3 }}>{countdown(d.date)}</span>
+            </div>
+          );
+        })}
       </div>
     );
   };
 
   const subLine = (s: ServiceRow) => {
-    const meta = parseMeta(s.meta);
-    const bits = [
-      s.kind === 'job' ? `One-off job · ${JOB_STATUS_LABEL[(s.job_status || 'not_started') as JobStatus]}` : s.cycle === 'monthly' ? 'Monthly' : 'Yearly',
-      meta.registrar,
-      meta.provider,
-      meta.plan,
-      meta.mailboxes ? `${meta.mailboxes} mailboxes` : '',
-      meta.built_with,
-      meta.looks_after?.length ? `looks after ${meta.looks_after.join(', ').toLowerCase()}` : '',
-      s.details && s.kind !== 'renews' ? s.details.split('\n')[0] : '',
-    ].filter(Boolean);
-    return bits.join(' · ');
+    const parts = s.parts ?? [];
+    const prov = (p: string) => parts.find((x) => x.part === p);
+    const email = prov('email');
+    const bits =
+      s.type_part === 'maintenance'
+        ? [parts.length ? `looks after ${parts.map((p) => (p.part === 'other' && p.provider ? p.provider : p.part)).join(', ').toLowerCase()}` : '']
+        : [
+            prov('website')?.provider,
+            prov('domain')?.provider ? `domain: ${prov('domain')!.provider}` : '',
+            prov('hosting')?.provider ? `hosting: ${prov('hosting')!.provider}` : '',
+            email?.provider,
+            email?.count ? `${email.count} mailboxes` : '',
+            prov('other')?.provider,
+          ];
+    const how = s.recurs === 'scheduled' ? `Scheduled ${REPEATS_LABEL[s.repeats].toLowerCase()}` : s.recurs === 'renews' ? `Renews ${REPEATS_LABEL[s.repeats].toLowerCase()}` : 'One-off';
+    return [STATUS_LABEL[s.status], how, ...bits, s.details ? s.details.split('\n')[0] : ''].filter(Boolean).join(' · ');
   };
 
-  const serviceRow = (s: ServiceRow) => (
-    <div key={s.id} className="ct-row ct-cols-services">
-      <div className="ct-who">
-        <IconBox part={s.part} kind={s.kind} muted={!!s.ended_at} />
-        <div>
-          <div className="ct-strong">{s.name}</div>
-          <div className="ct-muted">{subLine(s)}</div>
-        </div>
-      </div>
-      {dateCell(s)}
-      <div>
-        <div className="ct-num" style={{ fontWeight: 500 }}>
-          {s.price > 0 ? fmtMoney(s.kind === 'job' ? s.price * (s.quantity || 1) : s.price, s.currency) : '—'}
-        </div>
-        <div className="ct-muted">
-          {s.kind === 'job' ? (s.quantity > 1 ? `${s.quantity} × ${fmtMoney(s.price, s.currency)}` : 'once') : s.cycle === 'monthly' ? 'per month' : 'per year'}
-          {s.invoice_id && (
-            <> · <Link href={`/invoices/edit?id=${encodeURIComponent(s.invoice_id)}`}>invoice</Link></>
-          )}
-        </div>
-      </div>
-      <div className="ct-actions" data-popover-root style={{ position: 'relative' }}>
-        {primaryAction(s)}
-        <button className="icon-btn" aria-label={`More actions for ${s.name}`} onClick={() => setMenu(menu === s.id ? null : s.id)}>
-          <More />
-        </button>
-        {menu === s.id && (
-          <div className="dropdown" data-popover data-align="end" style={{ top: 'calc(100% + 4px)', right: 0, minWidth: 180 }}>
-            <div className="dropdown-item" onClick={() => { setMenu(null); setEditing(s); }}>Edit</div>
-            {s.kind === 'job' && s.job_status !== 'delivered' && s.job_status !== 'not_started' && (
-              <div className="dropdown-item" onClick={() => { setMenu(null); void setJob(s, 'not_started'); }}>Mark not started</div>
-            )}
-            {s.kind === 'job' && s.job_status === 'delivered' && (
-              <div className="dropdown-item" onClick={() => { setMenu(null); void setJob(s, 'in_progress'); }}>Reopen (in progress)</div>
-            )}
-            {s.kind !== 'job' && (
-              <div className="dropdown-item" onClick={() => { setMenu(null); void act(async () => {
-                await send('PATCH', `/api/clients/services/${s.id}`, { ended: !s.ended_at });
-                return s.ended_at ? `${s.name} restored` : `${s.name} ended. No more reminders for it.`;
-              }); }}>
-                {s.ended_at ? 'Restore' : 'End this service'}
-              </div>
-            )}
-            {admin && (
-              <div className="dropdown-item" style={{ color: 'var(--destructive)' }} onClick={() => { setMenu(null); void (async () => {
-                const ok = await ask({ title: `Remove ${s.name}?`, message: 'It is removed from this client with its reminders. Invoices already made stay.', confirmLabel: 'Remove', destructive: true });
-                if (ok) await act(async () => { await send('DELETE', `/api/clients/services/${s.id}`); return `${s.name} removed`; });
-              })(); }}>
-                Remove
-              </div>
-            )}
+  const openMenu = (s: ServiceRow, el: HTMLElement) => {
+    if (menu?.id === s.id) return setMenu(null);
+    const r = el.getBoundingClientRect();
+    const up = window.innerHeight - r.bottom < 220;
+    setMenu({ id: s.id, left: Math.max(8, Math.min(r.right - 200, window.innerWidth - 208)), top: up ? r.top - 4 : r.bottom + 4, up });
+  };
+
+  const menuFor = (s: ServiceRow) => (
+    <Portal>
+      <div
+        className="dropdown ct-floating-menu"
+        data-popover
+        role="menu"
+        style={{ position: 'fixed', left: menu!.left, right: 'auto', top: menu!.top, transform: menu!.up ? 'translateY(-100%)' : undefined, width: 200 }}
+      >
+        <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); setEditing(s); }}>Edit</div>
+        {s.status === 'in_progress' && (
+          <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); void setStatus(s, 'not_started'); }}>Mark not started</div>
+        )}
+        {s.status === 'delivered' && (
+          <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); void setStatus(s, 'in_progress'); }}>Reopen (in progress)</div>
+        )}
+        {s.status !== 'cancelled' && s.recurs !== null && (
+          <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); void act(async () => {
+            await send('PATCH', `/api/clients/services/${s.id}`, { ended: !s.ended_at });
+            return s.ended_at ? `${s.name} restored` : `${s.name} ended. No more reminders for it.`;
+          }); }}>
+            {s.ended_at ? 'Restore' : 'End this service'}
+          </div>
+        )}
+        {s.status === 'cancelled' ? (
+          <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); void setStatus(s, 'not_started'); }}>Restore</div>
+        ) : (
+          <div className="dropdown-item" role="menuitem" onClick={() => { setMenu(null); void setStatus(s, 'cancelled'); }}>Cancel</div>
+        )}
+        {admin && (
+          <div className="dropdown-item" role="menuitem" style={{ color: 'var(--destructive)' }} onClick={() => { setMenu(null); void (async () => {
+            const ok = await ask({ title: `Remove ${s.name}?`, message: 'It is removed from this client with its reminders. Invoices already made stay.', confirmLabel: 'Remove', destructive: true });
+            if (ok) await act(async () => { await send('DELETE', `/api/clients/services/${s.id}`); return `${s.name} removed`; });
+          })(); }}>
+            Remove
           </div>
         )}
       </div>
-    </div>
+    </Portal>
   );
+
+  const serviceRow = (s: ServiceRow) => {
+    const oneoff = s.recurs === null;
+    const total = oneoff ? s.amount * (s.quantity || 1) : s.amount;
+    return (
+      <div key={s.id} className="ct-row ct-cols-services">
+        <div className="ct-who">
+          <IconBox part={s.type_part} kind={s.recurs ?? undefined} muted={finished(s)} />
+          <div>
+            <div className="ct-strong">{serviceLabel(s)}</div>
+            <div className="ct-muted">{subLine(s)}</div>
+          </div>
+        </div>
+        {dateCell(s)}
+        <div>
+          <div className="ct-num" style={{ fontWeight: 500 }}>{total > 0 ? fmtMoney(total, s.currency) : '—'}</div>
+          <div className="ct-muted">{oneoff ? (s.quantity > 1 ? `${s.quantity} × ${fmtMoney(s.amount, s.currency)}` : 'once') : PER_LABEL[s.repeats].replace('/ ', 'per ')}</div>
+        </div>
+        <div className="ct-actions" data-popover-root>
+          {primaryAction(s)}
+          <button className="icon-btn" aria-label={`More actions for ${s.name}`} aria-expanded={menu?.id === s.id} onClick={(e) => openMenu(s, e.currentTarget)}>
+            <More />
+          </button>
+          {menu?.id === s.id && menuFor(s)}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="ct-page">
@@ -230,13 +285,13 @@ function ClientView() {
             {client.archived ? <span className="ct-chipline">Archived</span> : null}
           </h1>
           <div className="ct-sub">
-            {[client.contact_name, client.website, ...tags].filter(Boolean).join(' · ') || 'No contact details yet'}
+            {[client.contact_name, client.website].filter(Boolean).join(' · ') || 'No contact details yet'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {client.email && <a className="btn btn-outline btn-sm" href={`mailto:${client.email}`}>Email</a>}
-          {client.whatsapp && phoneDigits ? (
-            <a className="btn btn-outline btn-sm" href={`https://wa.me/${phoneDigits}`} target="_blank" rel="noopener noreferrer">WhatsApp</a>
+          {waDigits ? (
+            <a className="btn btn-outline btn-sm" href={`https://wa.me/${waDigits}`} target="_blank" rel="noopener noreferrer">WhatsApp</a>
           ) : null}
           <Link className="btn btn-outline btn-sm" href={`/clients/new?id=${encodeURIComponent(client.id)}`}>
             <Edit /> Edit
@@ -252,7 +307,7 @@ function ClientView() {
           <strong>Needs attention:</strong>
           <span>
             {[
-              ...overdue.map((s) => `${s.name} ${s.kind === 'job' ? 'was due' : 'expired'} ${cfg.fmt(s.next_date)}`),
+              ...overdue.map((d) => `${d.s.name} ${d.what === 'due' ? 'was due' : d.what === 'renews' ? 'expired' : 'was scheduled'} ${cfg.fmt(d.date)}`),
               ...unpaidInvoices.map((inv) => `${inv.number} is overdue`),
             ].join(' · ')}
           </span>
@@ -267,6 +322,7 @@ function ClientView() {
               {client.contact_name && <div><span className="k">Contact person</span><span className="v">{client.contact_name}</span></div>}
               {client.email && <div><span className="k">Email</span><span className="v">{client.email}</span></div>}
               {client.phone && <div><span className="k">Phone{client.whatsapp ? ' (also WhatsApp)' : ''}</span><span className="v">{client.phone}</span></div>}
+              {!client.whatsapp && client.whatsapp_number && <div><span className="k">WhatsApp</span><span className="v">{client.whatsapp_number}</span></div>}
               {client.website && <div><span className="k">Main website or domain</span><span className="v">{client.website}</span></div>}
               {client.billing_address && <div><span className="k">Billing address</span><span className="v">{client.billing_address}</span></div>}
               {client.tax_id && <div><span className="k">Tax ID</span><span className="v">{client.tax_id}</span></div>}
@@ -292,8 +348,8 @@ function ClientView() {
             </div>
             <div className="ct-tile">
               <div className="k">Next date</div>
-              <div className="v">{next?.next_date ? cfg.fmt(next.next_date).replace(/ \d{4}$/, '') : '—'}</div>
-              <div className="s amber">{next ? `${next.name}, ${countdown(next.next_date as number)}` : 'Nothing coming up'}</div>
+              <div className="v">{next ? cfg.fmt(next.date).replace(/ \d{4}$/, '') : '—'}</div>
+              <div className="s amber">{next ? `${next.s.name}, ${countdown(next.date)}` : 'Nothing coming up'}</div>
             </div>
             <div className="ct-tile">
               <div className="k">Unpaid</div>
@@ -369,7 +425,7 @@ function ClientView() {
               </div>
             </div>
             {data.invoices.length === 0 ? (
-              <div className="ct-empty">No invoices yet. Renewing a service or delivering a job drafts one.</div>
+              <div className="ct-empty">No invoices yet. Renewing a service or delivering work drafts one.</div>
             ) : (
               <div>
                 {data.invoices.map((inv) => {
@@ -422,11 +478,11 @@ function ClientView() {
           onSaved={(message) => { showToast(message); void load(); }}
         />
       )}
-      {visiting && (
-        <VisitDialog
-          service={visiting}
+      {doing && (
+        <DoneDialog
+          service={doing}
           clientName={client.name}
-          onClose={() => setVisiting(null)}
+          onClose={() => setDoing(null)}
           onDone={(message) => { showToast(message); void load(); }}
         />
       )}
