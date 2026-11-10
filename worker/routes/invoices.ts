@@ -115,6 +115,7 @@ invoices.post('/', async (c) => {
     { kind: 'tags', value: input.tag },
   ]);
   if (notAllowed) return c.json({ error: notAllowed }, 400);
+  if (input.client_id && !(await clientExists(db, input.client_id))) return c.json({ error: 'That client no longer exists' }, 400);
   const settings = await getSettings(db);
   const defaults = invoiceDefaults(settings, now);
 
@@ -153,9 +154,9 @@ invoices.post('/', async (c) => {
       .prepare(
         `INSERT INTO invoices (id, number, client_name, client_email, client_address, issued_at, due_at, currency, status,
           items, payments, subtotal, tax_rate, discount, total, notes, terms, folder, tag, avatar, created_at, updated_at,
-          discount_type, charges, payment_method, equivalent_amount, exchange_rate, created_by, updated_by)
+          discount_type, charges, payment_method, equivalent_amount, exchange_rate, created_by, updated_by, client_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21,
-          ?22, ?23, ?24, ?25, ?26, ?27, ?27)`
+          ?22, ?23, ?24, ?25, ?26, ?27, ?27, ?28)`
       )
       .bind(
         id,
@@ -184,7 +185,8 @@ invoices.post('/', async (c) => {
         input.payment_method ?? defaults.payment_method,
         input.equivalent_amount ?? 0,
         input.exchange_rate ?? 0,
-        c.var.user.email
+        c.var.user.email,
+        input.client_id ?? null
       ),
     activity(db, c.var.user, {
       action: 'created',
@@ -330,6 +332,9 @@ invoices.patch('/:id', async (c) => {
   ]);
   if (notAllowed) return c.json({ error: notAllowed }, 400);
   if (input.client_name !== undefined && !input.client_name) return c.json({ error: 'A client name is required' }, 400);
+  if (input.client_id && input.client_id !== existing.client_id && !(await clientExists(db, input.client_id))) {
+    return c.json({ error: 'That client no longer exists' }, 400);
+  }
   if (input.number !== undefined) {
     if (!input.number) return c.json({ error: 'An invoice number is required' }, 400);
     if (input.number !== existing.number && (await numberTaken(db, input.number, id))) {
@@ -369,7 +374,7 @@ invoices.patch('/:id', async (c) => {
         currency = ?7, status = ?8, items = ?9, payments = ?10, subtotal = ?11, tax_rate = ?12, discount = ?13,
         total = ?14, notes = ?15, terms = ?16, folder = ?17, tag = ?18, updated_at = ?19,
         discount_type = ?20, charges = ?21, payment_method = ?22, equivalent_amount = ?23, exchange_rate = ?24,
-        updated_by = ?26
+        updated_by = ?26, client_id = ?27
        WHERE id = ?25`
     )
     .bind(
@@ -398,7 +403,8 @@ invoices.patch('/:id', async (c) => {
       input.equivalent_amount ?? Number(existing.equivalent_amount ?? 0),
       input.exchange_rate ?? Number(existing.exchange_rate ?? 0),
       id,
-      c.var.user.email
+      c.var.user.email,
+      input.client_id === undefined ? existing.client_id ?? null : input.client_id
     );
   const currency = input.currency ?? existing.currency;
   const label = input.number ?? existing.number;
@@ -408,6 +414,8 @@ invoices.patch('/:id', async (c) => {
   const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ?1').bind(id).first<InvoiceRow>();
   return c.json({ invoice });
 });
+
+const clientExists = async (db: D1Database, id: string) => !!(await db.prepare('SELECT 1 FROM clients WHERE id = ?1').bind(id).first());
 
 invoices.delete('/:id', requireAdmin, async (c) => {
   const db = c.env.DB;

@@ -21,6 +21,7 @@ afterAll(async () => {
 const shot = async (name: string) => {
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
 };
+let loggedClient = '';
 const isoIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 run('client tracker', () => {
@@ -30,6 +31,24 @@ run('client tracker', () => {
     await page.locator('#c-name').fill(name);
     await page.locator('#c-site').fill('lagosfresh.example');
     await page.locator('#c-logins').fill('Password manager › Clients');
+    loggedClient = name;
+
+    // Billing details sit in one row, laid out like "Invoiced To" on an invoice.
+    await page.locator('#c-contact').fill('Ada Obi');
+    await page.locator('#c-email').fill('billing@lagosfresh.example');
+    // Billing details stay folded away until asked for.
+    await expect(page.locator('#c-street')).toHaveCount(0);
+    await page.getByRole('button', { name: '+ Add billing details' }).scrollIntoViewIfNeeded();
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/00a-billing-closed.png` });
+    await page.getByRole('button', { name: '+ Add billing details' }).click();
+    await page.locator('#c-street').fill('12 Allen Avenue');
+    await page.locator('#c-city').fill('Ikeja, Lagos 100001');
+    await page.locator('#c-country').fill('Nigeria');
+    const [street, city, country] = await Promise.all(['#c-street', '#c-city', '#c-country'].map((id) => page.locator(id).boundingBox()));
+    expect(street!.y).toBe(city!.y);
+    expect(city!.y).toBe(country!.y);
+    await page.locator('.ct-billing').scrollIntoViewIfNeeded();
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/00b-billing.png` });
 
     // The "i" tips open on hover and on a tap.
     await page.locator('.ct-tip').first().hover();
@@ -148,6 +167,41 @@ run('client tracker', () => {
     await shot('07-due-dates');
     expect(s.errors).toEqual([]);
     expect(s.nativeDialogs).toEqual([]);
+  });
+
+  it('picks a client on a new invoice and fills "Invoiced To" from their billing details', async () => {
+    expect(loggedClient).toBeTruthy();
+    await page.goto('/invoices');
+    await page.getByRole('button', { name: /Create invoice/ }).first().click();
+    const dlg = page.getByRole('dialog');
+    await dlg.getByLabel('Client name').fill(loggedClient.slice(0, 8));
+    const option = dlg.getByRole('option', { name: new RegExp(loggedClient) });
+    await expect(option).toBeVisible();
+    await expect(option).toContainText('Ada Obi');
+    await shot('10-invoice-client-picker');
+    await option.click();
+    await expect(dlg.getByLabel('Client name')).toHaveValue(loggedClient);
+    await expect(dlg.getByPlaceholder('Contact person')).toHaveValue('Ada Obi');
+    await expect(dlg.getByPlaceholder('Street address')).toHaveValue('12 Allen Avenue');
+    await expect(dlg.getByPlaceholder('City, State, Postal code')).toHaveValue('Ikeja, Lagos 100001');
+    await expect(dlg.getByPlaceholder('Country')).toHaveValue('Nigeria');
+    await expect(dlg.getByPlaceholder('client@company.com')).toHaveValue('billing@lagosfresh.example');
+    await expect(dlg.locator('.inv-linked')).toContainText("Use client's details");
+    await shot('11-invoice-filled');
+    await dlg.getByLabel('Item 1 name').fill('Consulting');
+    await dlg.getByLabel('Item 1 amount').fill('1000');
+    await dlg.getByRole('button', { name: /Create invoice/ }).click();
+    await page.waitForURL(/\/invoices\/edit\?id=/);
+    const id = new URL(page.url()).searchParams.get('id')!;
+    const invoice = (await api('GET', `/api/invoices/${id}`)).body.invoice as { client_id: string; client_address: string };
+    expect(invoice.client_id).toMatch(/^cli_/);
+    expect(invoice.client_address).toBe(`${loggedClient}\nAda Obi\n12 Allen Avenue\nIkeja, Lagos 100001\nNigeria`);
+
+    // One-way: editing the invoice leaves the client alone; "Use client's details" refills it.
+    await page.getByPlaceholder('Contact person').fill('Someone else');
+    await page.getByRole('button', { name: "Use client's details" }).click();
+    await expect(page.getByPlaceholder('Contact person')).toHaveValue('Ada Obi');
+    expect(s.errors).toEqual([]);
   });
 
   it('Settings → Clients: add a service type and see it in the Add list', async () => {

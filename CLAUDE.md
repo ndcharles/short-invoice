@@ -323,6 +323,11 @@ Settings UI. **The repo is public; never commit them.**
 - Schedules: "Mark done" (`POST /services/:sid/done`) shows the steps from Settings → Clients
   (`clients_checklist_site`, `clients_checklist_mail`), chosen by what the plan looks after (`scheduleChecklist()`),
   and logs how many were done. The UI says "Schedule"/"Scheduled", never "visit".
+- Billing details (0008) match an invoice's "Invoiced To": `contact_name`, `address_street`, `address_city`
+  ("City, State, Postal code"), `address_country`, `email`. `invoiceAddressOf()` builds the invoice's
+  `client_address` from them. One-way: invoices copy from the client, never the reverse. On the invoice canvas the
+  client name is a picker (`client-picker.tsx`) that fills Invoiced To and sets `invoices.client_id`; a linked
+  invoice shows "Use client's details" (refill) and "Unlink".
 - The service ⋯ menu on the client page is drawn in a portal at a fixed position so the table never clips it.
 - Notes (`client_notes`): a note with a "remind me on" date joins the daily email (once) until ticked done. The author
   or an admin can delete one.

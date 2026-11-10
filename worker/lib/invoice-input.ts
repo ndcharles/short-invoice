@@ -13,6 +13,8 @@ export interface InvoiceInput {
   client_name?: string;
   client_email?: string;
   client_address?: string;
+  /** The client this invoice is for, in the client tracker; null unlinks it. */
+  client_id?: string | null;
   issued_at?: number;
   due_at?: number;
   currency?: string;
@@ -130,6 +132,13 @@ export function parseInvoiceInput(body: Record<string, unknown>): Result<Invoice
     clientName === undefined ? null : check(parseText(clientName, 'Client name'), (v) => (out.client_name = v ?? '')),
     has(body, 'client_email') ? check(parseEmail(body.client_email ?? '', 'Client email'), (v) => (out.client_email = v ?? '')) : null,
     multiline('client_address', 'Client address'),
+    has(body, 'client_id')
+      ? body.client_id === null || body.client_id === ''
+        ? ((out.client_id = null), null)
+        : typeof body.client_id === 'string' && /^cli_[A-Za-z0-9_-]{1,40}$/.test(body.client_id)
+          ? ((out.client_id = body.client_id), null)
+          : 'Unknown client'
+      : null,
     has(body, 'issued_at') ? check(parseDate(body.issued_at, 'Invoice date'), (v) => (out.issued_at = v)) : null,
     has(body, 'due_at') ? check(parseDate(body.due_at, 'Due date'), (v) => (out.due_at = v)) : null,
     has(body, 'currency')

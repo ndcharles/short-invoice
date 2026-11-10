@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { currencyCode, draftTotals, dueDateFor, fmtMoney, type InvoiceItem } from '../../src/lib/invoices';
 import { startOfDay } from '../../src/lib/dates';
+import { invoiceAddressOf, type ClientRow } from '../../src/lib/clients';
 import type { SettingsMap } from './settings';
 import type { CurrentUser } from './auth';
 import { activity } from './activity';
@@ -69,7 +70,7 @@ export const advanceNumberStatement = (db: D1Database, advanceTo: number, now: n
     .bind(String(advanceTo), now);
 
 export interface DraftFor {
-  client: { id: string; name: string; email: string; billing_address: string };
+  client: Pick<ClientRow, 'id' | 'name' | 'contact_name' | 'email' | 'address_street' | 'address_city' | 'address_country'>;
   serviceId: string;
   /** The renewal or scheduled date this invoice covers; null for the work itself. */
   serviceFor: number | null;
@@ -109,7 +110,7 @@ export async function draftInvoiceStatements(
         allocated.number,
         draft.client.name,
         draft.client.email,
-        draft.client.billing_address,
+        invoiceAddressOf(draft.client),
         defaults.issued_at,
         defaults.due_at,
         draft.currency,

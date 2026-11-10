@@ -66,6 +66,36 @@ describe('clients', () => {
     expect('tags' in client).toBe(false);
   });
 
+  it('fills "Invoiced To" on drafted invoices from the client billing details', async () => {
+    const client = await createClient({
+      contact_name: 'Ada Obi',
+      email: 'billing@healtouch.example',
+      address_street: '12 Allen Avenue',
+      address_city: 'Ikeja, Lagos 100001',
+      address_country: 'Nigeria',
+      services: [{ type_id: 'st_other', name: 'Setup', mode: 'oneoff', amount: 5_000 }],
+    });
+    expect(client).toMatchObject({ address_street: '12 Allen Avenue', address_city: 'Ikeja, Lagos 100001', address_country: 'Nigeria' });
+    expect('billing_address' in client).toBe(false);
+    const job = (await detail(client.id)).services[0];
+    const done = await api('PATCH', `/api/clients/services/${job.id}`, { status: 'delivered' });
+    const invoice = (await api('GET', `/api/invoices/${done.body.invoice.id}`)).body.invoice as InvoiceRow;
+    expect(invoice.client_email).toBe('billing@healtouch.example');
+    expect(invoice.client_address).toBe(`${client.name}\nAda Obi\n12 Allen Avenue\nIkeja, Lagos 100001\nNigeria`);
+  });
+
+  it('links a hand-made invoice to a client, and refuses an unknown one', async () => {
+    const client = await createClient();
+    const made = await api('POST', '/api/invoices', { client_name: client.name, client_id: client.id, items: [{ name: 'Work', desc: '', qty: 1, unitPrice: 100 }] });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    expect(made.body.invoice.client_id).toBe(client.id);
+    expect((await detail(client.id)).invoices.map((i) => i.id)).toContain(made.body.invoice.id);
+    const unlinked = await api('PATCH', `/api/invoices/${made.body.invoice.id}`, { client_id: null });
+    expect(unlinked.body.invoice.client_id).toBeNull();
+    expect((await api('POST', '/api/invoices', { client_name: 'X', client_id: 'cli_nosuchclient' })).status).toBe(400);
+    expect((await api('POST', '/api/invoices', { client_name: 'X', client_id: 'not an id' })).status).toBe(400);
+  });
+
   it('requires a name, a name for "Something else", and a next date for a schedule', async () => {
     expect((await api('POST', '/api/clients', { name: '' })).status).toBe(400);
     const res = await api('POST', '/api/clients', { name: 'X', services: [{ type_id: 'st_other', mode: 'oneoff' }] });
@@ -253,7 +283,12 @@ describe('notes, schedules and import', () => {
 
   it('imports clients from invoices and links their invoices', async () => {
     const name = `Invoice-only client ${Date.now()}`;
-    const inv = await api('POST', '/api/invoices', { client_name: name, client_email: 'billing@invoiceonly.example', items: [{ name: 'Work', desc: '', qty: 1, unitPrice: 1000 }] });
+    const inv = await api('POST', '/api/invoices', {
+      client_name: name,
+      client_email: 'billing@invoiceonly.example',
+      client_address: `${name}\nTunde\n3 Marina\nLagos Island\nNigeria`,
+      items: [{ name: 'Work', desc: '', qty: 1, unitPrice: 1000 }],
+    });
     expect(inv.status).toBe(201);
     const list = await api('GET', '/api/clients/import/candidates');
     expect(list.body.candidates.some((c: { name: string }) => c.name === name)).toBe(true);
@@ -261,7 +296,7 @@ describe('notes, schedules and import', () => {
     const done = await api('POST', '/api/clients/import', { names: [name] });
     expect(done.body.imported).toBe(1);
     const found = (await api('GET', `/api/clients?search=${encodeURIComponent(name)}`)).body.clients[0];
-    expect(found.email).toBe('billing@invoiceonly.example');
+    expect(found).toMatchObject({ email: 'billing@invoiceonly.example', contact_name: 'Tunde', address_street: '3 Marina', address_city: 'Lagos Island', address_country: 'Nigeria' });
     expect((await detail(found.id)).invoices.map((i) => i.id)).toContain(inv.body.invoice.id);
     const again = await api('GET', '/api/clients/import/candidates');
     expect(again.body.candidates.some((c: { name: string }) => c.name === name)).toBe(false);

@@ -21,7 +21,7 @@ import {
   type ServiceTypeRow,
   type Status,
 } from '../../src/lib/clients';
-import { currencyCode, fmtMoney, paidTotal, parsePayments, round2, type InvoiceItem } from '../../src/lib/invoices';
+import { currencyCode, fmtMoney, paidTotal, parsePayments, round2, splitAddress, type InvoiceItem } from '../../src/lib/invoices';
 import { formatDate } from '../../src/lib/dates';
 import { getSettings, type SettingsMap } from '../lib/settings';
 import { readJsonObject } from '../lib/request';
@@ -254,7 +254,9 @@ clients.post('/', async (c) => {
     notes: input.notes ?? '',
     service_notes: input.service_notes ?? '',
     logins: input.logins ?? '',
-    billing_address: input.billing_address ?? '',
+    address_street: input.address_street ?? '',
+    address_city: input.address_city ?? '',
+    address_country: input.address_country ?? '',
     tax_id: input.tax_id ?? '',
     archived: 0,
     created_at: now,
@@ -264,11 +266,12 @@ clients.post('/', async (c) => {
     db
       .prepare(
         `INSERT INTO clients (id, name, contact_name, email, phone, whatsapp, whatsapp_number, website, status, notes, service_notes, logins,
-          billing_address, tax_id, created_at, updated_at, created_by, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15, ?16, ?16)`
+          address_street, address_city, address_country, tax_id, created_at, updated_at, created_by, updated_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17, ?18, ?18)`
       )
       .bind(id, client.name, client.contact_name, client.email, client.phone, client.whatsapp, client.whatsapp_number, client.website,
-        client.status, client.notes, client.service_notes, client.logins, client.billing_address, client.tax_id, now, user.email),
+        client.status, client.notes, client.service_notes, client.logins, client.address_street, client.address_city, client.address_country,
+        client.tax_id, now, user.email),
   ];
   const names: string[] = [];
   for (const [index, raw] of rawServices.entries()) {
@@ -385,7 +388,9 @@ const CLIENT_FIELDS: Record<string, string> = {
   notes: 'notes',
   service_notes: 'service notes',
   logins: 'logins',
-  billing_address: 'billing address',
+  address_street: 'street address',
+  address_city: 'city',
+  address_country: 'country',
   tax_id: 'tax ID',
 };
 
@@ -416,18 +421,21 @@ clients.patch('/:id', async (c) => {
     notes: input.notes ?? existing.notes,
     service_notes: input.service_notes ?? existing.service_notes,
     logins: input.logins ?? existing.logins,
-    billing_address: input.billing_address ?? existing.billing_address,
+    address_street: input.address_street ?? existing.address_street,
+    address_city: input.address_city ?? existing.address_city,
+    address_country: input.address_country ?? existing.address_country,
     tax_id: input.tax_id ?? existing.tax_id,
   };
   const statements = [
     db
       .prepare(
         `UPDATE clients SET name = ?1, contact_name = ?2, email = ?3, phone = ?4, whatsapp = ?5, whatsapp_number = ?6, website = ?7, status = ?8,
-          notes = ?9, service_notes = ?10, logins = ?11, billing_address = ?12, tax_id = ?13, archived = ?14, updated_at = ?15, updated_by = ?16
-         WHERE id = ?17`
+          notes = ?9, service_notes = ?10, logins = ?11, address_street = ?12, address_city = ?13, address_country = ?14, tax_id = ?15,
+          archived = ?16, updated_at = ?17, updated_by = ?18
+         WHERE id = ?19`
       )
       .bind(next.name, next.contact_name, next.email, next.phone, next.whatsapp, next.whatsapp_number, next.website, next.status, next.notes,
-        next.service_notes, next.logins, next.billing_address, next.tax_id, archived, now, user.email, id),
+        next.service_notes, next.logins, next.address_street, next.address_city, next.address_country, next.tax_id, archived, now, user.email, id),
   ];
   const fields = changedFields(existing as unknown as Record<string, unknown>, next, CLIENT_FIELDS);
   if (archived !== existing.archived) {
@@ -759,13 +767,17 @@ clients.post('/import', requireAdmin, async (c) => {
   for (const cand of picked) {
     const id = `cli_${nanoid(10)}`;
     const email = parseEmailLoose(cand.email);
+    // The invoice's "Invoiced To" lines: name, contact, street, city, country.
+    const addr = splitAddress(cand.address);
+    const line = (v: string, max: number) => v.trim().slice(0, max);
     statements.push(
       db
         .prepare(
-          `INSERT INTO clients (id, name, email, billing_address, status, created_at, updated_at, created_by, updated_by)
-           VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5, ?6, ?6)`
+          `INSERT INTO clients (id, name, contact_name, email, address_street, address_city, address_country, status, created_at, updated_at,
+            created_by, updated_by)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?8, ?9, ?9)`
         )
-        .bind(id, cand.name, email, cand.address.slice(0, 2000), now, user.email),
+        .bind(id, cand.name, line(addr.contact, 200), email, line(addr.addr1, 200), line(addr.addr2, 200), line(addr.country, 100), now, user.email),
       db.prepare("UPDATE invoices SET client_id = ?1 WHERE client_id IS NULL AND lower(trim(client_name)) = lower(?2)").bind(id, cand.name),
       activity(db, user, { action: 'created', type: 'client', id, label: cand.name, detail: `imported from ${cand.invoices} ${cand.invoices === 1 ? 'invoice' : 'invoices'}` }, now)
     );
