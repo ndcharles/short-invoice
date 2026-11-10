@@ -819,22 +819,17 @@ export function InvoiceCanvas({
                   <span className="inv-account-name">{account.title || `${account.currency} account`}</span>
                 </div>
                 <div className="inv-account-grid">
-                  <div>
-                    <label>Bank Name</label>
-                    <input className="inv-party-input" value={account.bank} readOnly />
-                  </div>
-                  <div>
-                    <label>Account name</label>
-                    <input className="inv-party-input" value={account.accountName} readOnly />
-                  </div>
-                  <div>
-                    <label>Account Number</label>
-                    <input className="inv-party-input" value={account.accountNumber} readOnly />
-                  </div>
-                  <div>
-                    <label>{account.extraLabel || 'Routing / SWIFT'}</label>
-                    <input className="inv-party-input" value={account.extraValue} readOnly />
-                  </div>
+                  {[
+                    ['Bank name', account.bank],
+                    ['Account name', account.accountName],
+                    ['Account number', account.accountNumber],
+                    [account.extraLabel || 'Routing / SWIFT', account.extraValue],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <span className="inv-account-label">{label}</span>
+                      <span className="inv-account-value">{value}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}

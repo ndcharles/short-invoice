@@ -762,7 +762,6 @@ textarea.popup-input { min-height: 84px; resize: none; line-height: 1.5; }
 }
 .settings-row-control > .setting-seg { max-width: 100%; }
 .setting-field > .input { max-width: 200px; }
-.inv-account-grid input { max-width: 100%; }
 .modal-body .field > .input { max-width: 100%; }
 
 /* Invoice footer strip: wrap instead of overflowing on narrow screens */

@@ -138,8 +138,33 @@ run('Invoice editor: USD equivalent and currency', () => {
   it('shows the right bank accounts: naira only, plus USD when the equivalent is added', async () => {
     await openInvoice();
     await expect(canvas(page).locator('.inv-account-name')).toHaveCount(1);
+    const columns = () => canvas(page).locator('.inv-account-grid').first().evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(' ').length);
+    // One account: its four details on one row, as text rather than boxes.
+    expect(await columns()).toBe(4);
+    await expect(canvas(page).locator('.inv-account-value')).toHaveCount(4);
+    await expect(canvas(page).locator('.inv-account-grid input')).toHaveCount(0);
     await page.getByText('+ Add USD equivalent').click();
     await expect(canvas(page).locator('.inv-account-name')).toHaveCount(2);
+    // Two accounts: side by side, two by two.
+    expect(await columns()).toBe(2);
+  });
+
+  it('prints only the invoice: no sidebar border line and nothing that extensions add to the page', async () => {
+    await openInvoice();
+    await page.evaluate(() => {
+      const w = document.createElement('div');
+      w.id = 'fake-extension';
+      w.textContent = 'Extension button';
+      document.body.appendChild(w);
+    });
+    await page.emulateMedia({ media: 'print' });
+    try {
+      expect(await page.locator('.main').evaluate((m) => getComputedStyle(m).borderLeftWidth)).toBe('0px');
+      expect(await page.locator('#fake-extension').isVisible()).toBe(false);
+      await expect(canvas(page)).toBeVisible();
+    } finally {
+      await page.emulateMedia({ media: 'screen' });
+    }
   });
 });
 
