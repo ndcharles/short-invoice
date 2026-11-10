@@ -300,20 +300,30 @@ Settings UI. **The repo is public; never commit them.**
 
 ## Clients (client tracker)
 
-- Tables (migration 0006): `clients`, `client_services`, `service_types`, `service_reminders`; invoices gain
-  `client_id`/`service_id`. Rules shared by Worker and UI live in `src/lib/clients.ts`.
-- Every service works one of three ways (`kind`): **renews** (`next_date` = renewal), **schedule** (stored as
-  `visits`: the next scheduled date, e.g. maintenance plans) or **job** (due date + `job_status`). The UI says
-  "Schedule", never "visit". Any service, built-in parts included, can switch how it works at any time (fields only
-  one way uses are reset, and its invoice tracking starts over). A type's kind is only the default for new services.
-  Built-in types and types in use cannot be deleted. "Something else" (`st_other`, kind `any`) has no default.
-- Renew moves the date one cycle **from the old date**. Invoices are drafted once per period (`invoiced_for`);
-  jobs draft once (`invoice_id`) when delivered or started (per job, type, or Settings default).
+- Tables (0006, reshaped by 0007): `clients`, `client_services`, `service_parts`, `service_types`,
+  `service_reminders`; invoices carry `client_id`/`service_id` and `service_for` (the renewal/scheduled date an
+  invoice covers; NULL = the work itself). Rules shared by Worker and UI live in `src/lib/clients.ts`.
+- Normalised, no JSON blobs: what a service includes / looks after is rows in `service_parts` (website, domain,
+  hosting, email, other + provider, and mailboxes as `count`). "Has this period been invoiced?" is answered from
+  `invoices.service_for`, never a copy on the service. Clients have no tags; `whatsapp_number` is used when the phone
+  is not on WhatsApp.
+- A service has an optional **due date** (`due_at`, the work, with `status` not_started | in_progress | delivered |
+  cancelled) and an optional **next date** (`next_at`) whose meaning is `recurs`: renews | scheduled | NULL, repeating
+  `repeats` monthly | quarterly | yearly. Website and Email have no "How it works": they renew yearly when "Renews on"
+  is set. Maintenance is scheduled or one-off; "Something else" and custom types pick renews, scheduled or one-off.
+  Domain, hosting and SSL are ticks inside Website (no separate types). Shaping per type lives in `shape()` in
+  `worker/routes/clients.ts`; the form is `src/components/clients/service-fields.tsx`.
+- Service types only hold name, default price (once/each), reminder days and "Show in Add list". Built-in types and
+  types in use cannot be deleted.
+- Renew moves `next_at` one period **from the old date** and may draft that period's invoice (once per period).
+  The work drafts once when delivered or started (Settings default). Cancelling sets `ended_at`.
 - Daily cron (07:00 UTC, `worker/lib/client-reminders.ts`, also `POST /api/clients/daily-run` for admins): drafts
-  renewal invoices ahead (max 15 per run) and emails the team one digest. Each reminder is recorded in
-  `service_reminders` only after sending, so it never repeats. Reminders are for the team, never the client.
-- Schedules: "Mark done" shows the steps from Settings → Clients (`clients_checklist_site`,
-  `clients_checklist_mail`), chosen by what the plan looks after (`visitChecklist()`), and logs how many were done.
+  invoices ahead for renewals and scheduled dates (max 15 per run) and emails the team one digest. Each reminder is
+  recorded in `service_reminders` only after sending, so it never repeats. Reminders are for the team, never the client.
+- Schedules: "Mark done" (`POST /services/:sid/done`) shows the steps from Settings → Clients
+  (`clients_checklist_site`, `clients_checklist_mail`), chosen by what the plan looks after (`scheduleChecklist()`),
+  and logs how many were done. The UI says "Schedule"/"Scheduled", never "visit".
+- The service ⋯ menu on the client page is drawn in a portal at a fixed position so the table never clips it.
 - Notes (`client_notes`): a note with a "remind me on" date joins the daily email (once) until ticked done. The author
   or an admin can delete one.
 - Import (admins): client names on invoices with no client yet become clients, and those invoices get `client_id`.

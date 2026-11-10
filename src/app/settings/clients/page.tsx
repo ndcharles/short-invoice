@@ -6,14 +6,10 @@ import { SaveBar, SettingsCard, SettingsLayout, SettingsRow, SettingToggle } fro
 import { useSettingsForm } from '@/lib/settings-form';
 import {
   CLIENT_SETTING_DEFAULTS,
-  CYCLE_LABEL,
   INVOICE_WHEN,
   INVOICE_WHEN_LABEL,
-  KIND_HELP,
-  KIND_LABEL,
   parseDays,
   type ServiceTypeRow,
-  type TypeKind,
 } from '@/lib/clients';
 import { fmtMoney } from '@/lib/invoices';
 import { send, useClientSettings, useServiceTypes } from '@/lib/use-clients';
@@ -31,6 +27,15 @@ export default function ClientSettingsPage() {
   const [editing, setEditing] = useState<ServiceTypeRow | 'new' | null>(null);
   const [running, setRunning] = useState(false);
   const get = (key: Key) => draft?.[key] ?? CLIENT_SETTING_DEFAULTS[key];
+
+  const toggleShow = async (t: ServiceTypeRow, on: boolean) => {
+    try {
+      await send('PATCH', `/api/service-types/${t.id}`, { show_in_add: on });
+      void reload();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not save', 'info');
+    }
+  };
 
   const runNow = async () => {
     setRunning(true);
@@ -54,7 +59,7 @@ export default function ClientSettingsPage() {
 
   return (
     <Shell>
-      <SettingsLayout title="Clients" subtitle="Service types, reminders, and what happens when something renews or a job is done.">
+      <SettingsLayout title="Clients" subtitle="Service types, reminders, and what happens when something renews or work is delivered.">
         {!draft ? (
           <div className="settings-card"><div className="settings-card-body" style={{ color: 'var(--muted-foreground)' }}>{error ?? 'Loading settings…'}</div></div>
         ) : (
@@ -63,36 +68,39 @@ export default function ClientSettingsPage() {
 
             <SettingsCard
               title="Service types"
-              subtitle="Every type works one of three ways: it renews, it is visited, or it is a one-off job. Each type sets the defaults for new services."
+              subtitle="What you sell. Each type sets the starting price and reminders for new services. How a service works is picked on the service itself."
               foot={
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', width: '100%' }}>
                   <button className="btn btn-outline btn-sm" onClick={() => setEditing('new')}>
                     <Plus /> Add service type
                   </button>
-                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>A type that is in use can be edited, but not deleted. Services already added keep how they work until you change them.</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>A type that is in use can be edited, but not deleted. Services already added keep their own price.</span>
                 </div>
               }
             >
               {!types ? (
                 <div style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>Loading…</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="ct-types">
+                  <div className="ct-types-row head">
+                    <span>Type</span>
+                    <span>Default price</span>
+                    <span>Reminds us</span>
+                    <span>In Add list</span>
+                    <span />
+                  </div>
                   {types.map((t) => (
-                    <div key={t.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,0.8fr) minmax(0,1fr) minmax(0,1.5fr) 36px', gap: 14, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+                    <div key={t.id} className="ct-types-row">
                       <div className="ct-who">
-                        <span className="ct-icon"><PartIcon part={t.part} kind={t.kind} /></span>
+                        <span className="ct-icon"><PartIcon part={t.part} /></span>
                         <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 500 }}>{t.name}</span>
-                            <span className="ct-kind">{KIND_LABEL[t.kind]}</span>
-                            {!t.show_in_add && <span className="ct-kind">Hidden</span>}
-                          </div>
+                          <div style={{ fontWeight: 500 }}>{t.name}</div>
                           <div className="ct-muted">{t.used ?? 0} {t.used === 1 ? 'service' : 'services'}</div>
                         </div>
                       </div>
-                      <span style={{ fontSize: 13 }}>{t.kind === 'job' || t.kind === 'any' ? 'Once' : CYCLE_LABEL[t.cycle]}</span>
                       <span className="ct-num" style={{ fontSize: 13 }}>{t.price > 0 ? `${fmtMoney(t.price, cfg.currency)}${t.price_unit === 'each' ? ' each' : ''}` : 'Not set'}</span>
                       <span style={{ fontSize: 13, color: '#404040' }}>{reminderSummary(t, get)}</span>
+                      <span><Switch on={!!t.show_in_add} label={`Show ${t.name} in the Add list`} onChange={(on) => void toggleShow(t, on)} /></span>
                       <button className="icon-btn" aria-label={`Edit ${t.name}`} onClick={() => setEditing(t)}><Edit /></button>
                     </div>
                   ))}
@@ -107,7 +115,7 @@ export default function ClientSettingsPage() {
               <SettingsRow label="Before something renews" help="Days ahead, separated by commas. A service type can have its own list.">
                 <input className="input" value={get('clients_reminder_days')} onChange={(e) => set('clients_reminder_days', e.target.value)} placeholder="60, 30, 14, 7" />
               </SettingsRow>
-              <SettingsRow label="Before a job is due" help="For one-off jobs, such as an LMS setup.">
+              <SettingsRow label="Before work is due" help="For any service with a due date, such as a website build or an LMS setup.">
                 <input className="input" value={get('clients_job_reminder_days')} onChange={(e) => set('clients_job_reminder_days', e.target.value)} placeholder="7, 1" />
               </SettingsRow>
               <SettingsRow label="When it is overdue" help="Until you renew it, mark it delivered, or end the service. 0 means never.">
@@ -127,8 +135,8 @@ export default function ClientSettingsPage() {
               </SettingsRow>
             </SettingsCard>
 
-            <SettingsCard title="Renewals and invoices" subtitle="What happens when a service comes up for renewal, or a job is finished. You always review and send invoices yourself.">
-              <SettingsRow label="Draft renewal invoices ahead of time" help="The daily run makes a draft for each renewal and each month of a maintenance plan that has a price.">
+            <SettingsCard title="Renewals and invoices" subtitle="What happens when a service comes up for renewal, or work is delivered. You always review and send invoices yourself.">
+              <SettingsRow label="Draft renewal invoices ahead of time" help="The daily run makes a draft for each renewal and each scheduled date that has a charge.">
                 <SettingToggle on={get('clients_auto_draft') !== 'false'} onToggle={() => set('clients_auto_draft', get('clients_auto_draft') === 'false' ? 'true' : 'false')} />
               </SettingsRow>
               <SettingsRow label="Yearly services" help="Days before the renewal date.">
@@ -137,13 +145,13 @@ export default function ClientSettingsPage() {
                   <span style={{ fontSize: 13 }}>days before</span>
                 </div>
               </SettingsRow>
-              <SettingsRow label="Monthly services" help="Days before the date (renewal or scheduled date).">
+              <SettingsRow label="Monthly and quarterly services" help="Days before the date (renewal or scheduled date).">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input className="input" style={{ width: 80 }} value={get('clients_draft_days_monthly')} onChange={(e) => set('clients_draft_days_monthly', e.target.value)} />
                   <span style={{ fontSize: 13 }}>days before</span>
                 </div>
               </SettingsRow>
-              <SettingsRow label="Invoice for a one-off job" help="The default for new jobs. You can change it per job.">
+              <SettingsRow label="Invoice for the work" help="For a service with a due date or a one-off price.">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {INVOICE_WHEN.map((w) => (
                     <label key={w} className="ct-check" style={{ fontSize: 13 }}>
@@ -173,7 +181,7 @@ export default function ClientSettingsPage() {
         <TypeDialog
           type={editing === 'new' ? null : editing}
           symbol={cfg.symbol}
-          defaults={{ renews: get('clients_reminder_days'), job: get('clients_job_reminder_days') }}
+          defaultDays={get('clients_reminder_days')}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void reload(); }}
         />
@@ -183,36 +191,35 @@ export default function ClientSettingsPage() {
 }
 
 function reminderSummary(t: ServiceTypeRow, get: (key: Key) => string): string {
-  if (t.kind === 'visits') return 'On each scheduled date';
-  if (t.kind === 'any') return 'Follows the way you set it up';
-  const days = parseDays(t.reminder_days).length ? parseDays(t.reminder_days) : parseDays(get(t.kind === 'job' ? 'clients_job_reminder_days' : 'clients_reminder_days'));
-  return days.length ? `${days.join(' · ')} days before${t.kind === 'job' ? ' it is due' : ''}` : 'None';
+  if (t.part === 'maintenance') return 'On each scheduled date';
+  if (t.part === 'other') return 'Follows the service';
+  const own = parseDays(t.reminder_days);
+  const days = own.length ? own : parseDays(get('clients_reminder_days'));
+  return days.length ? `${days.join(' · ')} days before it renews` : 'None';
 }
 
-/** New or edit a service type. Changing how it works applies to new services; ones already added keep theirs. */
-function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
+/** New or edit a service type: a name, a default price, reminder days and whether it shows in the Add list. */
+function TypeDialog({ type, symbol, defaultDays, onClose, onSaved }: {
   type: ServiceTypeRow | null;
   symbol: string;
-  defaults: { renews: string; job: string };
+  defaultDays: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(type?.name ?? '');
-  const [kind, setKind] = useState<TypeKind>(type?.kind ?? 'job');
-  const [cycle, setCycle] = useState(type?.cycle === 'monthly' ? 'monthly' : 'yearly');
   const [price, setPrice] = useState(Number(type?.price) || 0);
   const [unit, setUnit] = useState<'once' | 'each'>(type?.price_unit ?? 'once');
   const [days, setDays] = useState(type?.reminder_days ?? '');
-  const [invoiceWhen, setInvoiceWhen] = useState(type?.invoice_when ?? '');
   const [show, setShow] = useState(type ? !!type.show_in_add : true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const daysApply = type?.part !== 'maintenance' && type?.part !== 'other';
 
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
-      const body = { name, kind, cycle, price, price_unit: unit, reminder_days: days, invoice_when: invoiceWhen, show_in_add: show };
+      const body = { name, price, price_unit: unit, reminder_days: days, show_in_add: show };
       if (type) await send('PATCH', `/api/service-types/${type.id}`, body);
       else await send('POST', '/api/service-types', body);
       showToast(type ? 'Service type saved' : 'Service type created');
@@ -253,58 +260,21 @@ function TypeDialog({ type, symbol, defaults, onClose, onSaved }: {
               <Label htmlFor="t-name" required>Name</Label>
               <input id="t-name" type="text" value={name} maxLength={60} placeholder="LMS setup" onChange={(e) => setName(e.target.value)} />
             </div>
-            <div className="ct-field">
-              <Label tip="The default for new services of this type. You can still pick another way on each service, and services already added keep theirs.">How does it work?</Label>
-              <div className="ct-radios-row" role="radiogroup" aria-label="How does it work?">
-                {(['renews', 'visits', 'job'] as const).map((k) => (
-                  <label key={k} className={`ct-radio${kind === k ? ' on' : ''}`}>
-                    <input type="radio" name="t-kind" checked={kind === k} onChange={() => setKind(k)} />
-                    <span>
-                      <span className="t">{KIND_LABEL[k]}</span>
-                      <span className="d">{KIND_HELP[k]}</span>
-                    </span>
-                  </label>
-                ))}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 220px' }}>
+                <MoneyField id="t-price" label="Default price" symbol={symbol} value={price} onChange={setPrice} tip="Used for new services of this type. Ones already added keep their own price." />
               </div>
-              {kind === 'any' && <div className="ct-muted">You choose how each one works when you add it.</div>}
+              <select className="ct-input" style={{ width: 'auto' }} value={unit} onChange={(e) => setUnit(e.target.value as 'once' | 'each')} aria-label="Charged once or each">
+                <option value="once">once</option>
+                <option value="each">each</option>
+              </select>
             </div>
-            {(kind === 'renews' || kind === 'visits') && (
+            {daysApply && (
               <div className="ct-field">
-                <Label>{kind === 'visits' ? 'Repeats' : 'Billing cycle'}</Label>
-                <select value={cycle} onChange={(e) => setCycle(e.target.value as 'yearly' | 'monthly')}>
-                  <option value="yearly">Yearly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
-            )}
-            {kind !== 'any' && (
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                <div style={{ flex: '1 1 220px' }}>
-                  <MoneyField id="t-price" label="Default price" symbol={symbol} value={price} onChange={setPrice} tip="Used for new services of this type. Ones already added keep their own price." />
-                </div>
-                {kind === 'job' && (
-                  <select className="ct-input" style={{ width: 'auto' }} value={unit} onChange={(e) => setUnit(e.target.value as 'once' | 'each')} aria-label="Charged once or each">
-                    <option value="once">once</option>
-                    <option value="each">each</option>
-                  </select>
-                )}
-              </div>
-            )}
-            {(kind === 'renews' || kind === 'job') && (
-              <div className="ct-field">
-                <Label htmlFor="t-days" tip="Empty uses the list in Reminders. Ones already added keep following this type.">
-                  {kind === 'job' ? 'Remind us before it is due (days)' : 'Remind us before it renews (days)'}
+                <Label htmlFor="t-days" tip="Days before a renewal date, separated by commas. Empty uses the list in Reminders.">
+                  Remind us before it renews (days)
                 </Label>
-                <input id="t-days" type="text" value={days} placeholder={kind === 'job' ? defaults.job : defaults.renews} onChange={(e) => setDays(e.target.value)} />
-              </div>
-            )}
-            {kind === 'job' && (
-              <div className="ct-field">
-                <Label htmlFor="t-inv">Invoice</Label>
-                <select id="t-inv" value={invoiceWhen} onChange={(e) => setInvoiceWhen(e.target.value)}>
-                  <option value="">Settings default</option>
-                  {INVOICE_WHEN.map((w) => <option key={w} value={w}>{INVOICE_WHEN_LABEL[w]}</option>)}
-                </select>
+                <input id="t-days" type="text" value={days} placeholder={defaultDays} onChange={(e) => setDays(e.target.value)} />
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

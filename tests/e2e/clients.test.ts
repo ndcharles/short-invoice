@@ -24,7 +24,7 @@ const shot = async (name: string) => {
 const isoIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 run('client tracker', () => {
-  it('logs a client with only some parts switched on, plus a "Something else" job', async () => {
+  it('logs a client with a website (domain and hosting ticked), plus a "Something else" job', async () => {
     const name = unique('Lagos Fresh');
     await page.goto('/clients/new');
     await page.locator('#c-name').fill(name);
@@ -34,52 +34,65 @@ run('client tracker', () => {
     // The "i" tips open on hover and on a tap.
     await page.locator('.ct-tip').first().hover();
     await expect(page.getByRole('tooltip')).toBeVisible();
-    await shot('00-tooltip');
     await page.mouse.move(0, 0);
     await expect(page.getByRole('tooltip')).toHaveCount(0);
-    await page.locator('.ct-tip').first().click();
-    await expect(page.getByRole('tooltip')).toBeVisible();
-    await page.locator('#c-name').click();
-    await expect(page.getByRole('tooltip')).toHaveCount(0);
 
-    // Every part can choose how it works.
+    // No tags; unticking "Same number on WhatsApp" asks for the WhatsApp number.
+    await expect(page.locator('#c-wa')).toHaveCount(0);
+    await page.getByLabel('Same number on WhatsApp').uncheck();
+    await page.locator('#c-wa').fill('+234 901 222 3344');
+
+    // Website, Email and Maintenance plan, each off (collapsed) until switched on.
     await expect(page.locator('.ct-svc.on')).toHaveCount(0);
     await expect(page.locator('.ct-svc:not(.on)', { hasText: 'Email' })).toContainText('Not with us');
     await shot('01-log-client-empty');
 
-    await page.getByRole('switch', { name: 'Domain is with us' }).click();
-    await expect(page.locator('.ct-svc.on', { hasText: 'Domain' }).getByRole('group', { name: 'How it works' })).toBeVisible();
-    await page.locator('#p-domain-registrar').fill('Namecheap');
-    await page.locator('#p-domain-date').fill(isoIn(40));
-    await page.locator('#p-domain-price').fill('22000');
-    await page.getByRole('switch', { name: 'Hosting is with us' }).click();
-    await page.locator('#p-hosting-date').fill(isoIn(200));
-    await page.locator('#p-hosting-price').fill('45000');
-    // A website built as a one-off job.
     await page.getByRole('switch', { name: 'Website is with us' }).click();
-    const websiteCard = page.locator('.ct-svc', { has: page.getByRole('switch', { name: 'Website is with us' }) });
-    await websiteCard.getByRole('button', { name: 'One-off job', exact: true }).click();
-    await websiteCard.scrollIntoViewIfNeeded();
-    if (SHOTS) await page.screenshot({ path: `${SHOTS}/02a-parts.png` });
+    const site = page.locator('.ct-svc.on', { has: page.getByRole('switch', { name: 'Website is with us' }) });
+    // Website has no "How it works": a due date, a charge and an optional renewal date.
+    await expect(site.getByRole('group', { name: 'How it works' })).toHaveCount(0);
+    await page.locator('#p-website-built').fill('WordPress');
+    await expect(page.locator('#p-website-prov-domain')).toHaveCount(0);
+    await site.locator('label.ct-pill', { hasText: 'Domain' }).click();
+    await site.locator('label.ct-pill', { hasText: 'Hosting' }).click();
+    await page.locator('#p-website-prov-domain').fill('Namecheap');
+    await page.locator('#p-website-prov-hosting').fill('Hetzner');
+    await page.locator('#p-website-price').fill('45000');
+    await page.locator('#p-website-renew').fill(isoIn(40));
+    await site.getByRole('button', { name: 'Delivered', exact: true }).click();
+    await site.scrollIntoViewIfNeeded();
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/02a-website.png` });
 
     await page.getByRole('button', { name: 'Something else', exact: true }).click();
     await page.locator('#o-0-name').fill('Staff training day');
-    await page.locator('#o-0-qty').fill('2');
+    await page.locator('#o-0-due').fill(isoIn(10));
     await page.locator('#o-0-price').fill('120000');
     // The rail lists what each switched-on service gets.
-    await expect(page.locator('.ct-rail')).toContainText('Domain');
+    await expect(page.locator('.ct-rail')).toContainText('Website');
     await expect(page.locator('.ct-rail')).toContainText('Staff training day');
     await shot('02-log-client-filled');
 
     await page.getByRole('button', { name: 'Save client', exact: true }).click();
     await page.waitForURL(/\/clients\/view\?id=/);
     await expect(page.locator('h1')).toContainText(name);
-    for (const service of ['Domain', 'Hosting', 'Staff training day']) await expect(page.locator('.ct-row', { hasText: service }).first()).toBeVisible();
+    await expect(page.locator('.ct-row', { hasText: 'Website (domain, hosting)' })).toBeVisible();
+    await expect(page.locator('.ct-row', { hasText: 'Staff training day' })).toBeVisible();
     await shot('03-client-page');
 
-    // Renew the domain with an invoice.
-    await page.locator('.ct-row', { hasText: 'Namecheap' }).getByRole('button', { name: 'Renew', exact: true }).click();
+    // The ⋯ menu opens above the page, not clipped by the services table.
+    await page.getByRole('button', { name: 'More actions for Website' }).click();
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    const box = await menu.boundingBox();
+    expect(box && box.y >= 0 && box.y + box.height <= 1000).toBe(true);
+    await shot('03b-service-menu');
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+
+    // Renew the website with an invoice; the price can change in the dialog.
+    await page.locator('.ct-row', { hasText: 'Website (domain, hosting)' }).getByRole('button', { name: 'Renew', exact: true }).click();
     await expect(page.getByRole('dialog')).toContainText('Counted from the old date');
+    await page.locator('#renew-price').fill('48000');
     await shot('04-renew-dialog');
     await page.getByRole('button', { name: 'Renew and create invoice' }).click();
     await expect(page.locator('.toast').first()).toContainText('Draft invoice');
@@ -90,25 +103,29 @@ run('client tracker', () => {
     await page.locator('.ct-row', { hasText: 'Staff training day' }).getByRole('button', { name: 'Mark delivered' }).click();
     await expect(page.locator('.ct-card', { hasText: 'Invoices' }).locator('.ct-row')).toHaveCount(2);
 
-    // Add a service from the client page.
+    // Add Email from the client page.
     await page.getByRole('button', { name: 'Add service' }).first().click();
     await page.getByRole('dialog').getByRole('button', { name: 'Email', exact: true }).click();
-    await page.locator('#dlg-date').fill(isoIn(15));
-    await shot('05-add-service');
+    await page.locator('#dlg-provider').fill('Google Workspace');
+    await page.locator('#dlg-mailboxes').fill('5');
+    await page.locator('#dlg-renew').fill(isoIn(15));
+    await shot('05-add-email');
     await page.getByRole('button', { name: 'Save service' }).click();
-    await expect(page.locator('.ct-row', { hasText: 'Email' }).first()).toBeVisible();
+    await expect(page.locator('.ct-row', { hasText: 'Google Workspace' })).toBeVisible();
 
-    // A maintenance plan: the visit dialog lists the steps for what it looks after.
+    // A maintenance plan: scheduled, and "Mark done" lists the steps for what it looks after.
     await page.getByRole('button', { name: 'Add service' }).first().click();
     await page.getByRole('dialog').getByRole('button', { name: 'Maintenance plan', exact: true }).click();
-    await page.locator('#dlg-date').fill(isoIn(0));
+    await expect(page.getByRole('dialog').getByRole('group', { name: 'How it works' })).toContainText('Scheduled');
+    await page.locator('#dlg-next').fill(isoIn(0));
     await page.getByRole('dialog').locator('label.ct-pill', { hasText: 'Email' }).click();
+    await shot('05a-add-maintenance');
     await page.getByRole('button', { name: 'Save service' }).click();
     await page.locator('.ct-row', { hasText: 'Maintenance plan' }).getByRole('button', { name: 'Mark done' }).click();
-    await expect(page.getByRole('dialog')).toContainText('Schedule:');
+    await expect(page.getByRole('dialog')).toContainText('Mark done: Maintenance plan');
     await expect(page.getByRole('dialog')).toContainText('Check the DNS records');
     await page.getByRole('dialog').getByLabel('Check the DNS records').check();
-    await shot('05b-visit');
+    await shot('05b-mark-done');
     await page.getByRole('dialog').getByRole('button', { name: 'Mark done' }).click();
     await expect(page.locator('.toast').first()).toContainText('1 of 3 steps');
 
@@ -121,7 +138,9 @@ run('client tracker', () => {
 
     await page.goto('/clients');
     await page.getByPlaceholder(/Search name/).fill(name);
-    await expect(page.locator('.ct-row', { hasText: name })).toHaveCount(1);
+    const row = page.locator('.ct-row', { hasText: name });
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('.ct-svc-words')).toContainText('Website · Staff training day · Email · Maintenance plan');
     await shot('06-clients-list');
 
     await page.goto('/clients/due');
@@ -134,7 +153,9 @@ run('client tracker', () => {
   it('Settings → Clients: add a service type and see it in the Add list', async () => {
     const typeName = unique('LMS setup');
     await page.goto('/settings/clients');
+    await expect(page.locator('.ct-types')).not.toContainText('Hosting');
     await page.getByRole('button', { name: 'Add service type' }).click();
+    await expect(page.getByRole('dialog')).not.toContainText('How does it work');
     await page.locator('#t-name').fill(typeName);
     await page.locator('#t-price').fill('450000');
     await shot('08-new-service-type');
@@ -144,8 +165,8 @@ run('client tracker', () => {
 
     await page.goto('/clients/new');
     await expect(page.getByRole('button', { name: typeName })).toBeVisible();
-    const types = (await api('GET', '/api/service-types')).body.types as { name: string; kind: string }[];
-    expect(types.find((t) => t.name === typeName)?.kind).toBe('job');
+    const types = (await api('GET', '/api/service-types')).body.types as { name: string; show_in_add: number }[];
+    expect(types.find((t) => t.name === typeName)?.show_in_add).toBe(1);
     expect(s.errors).toEqual([]);
   });
 });

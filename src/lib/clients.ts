@@ -1,48 +1,46 @@
 /**
  * Client tracker rules shared by the Worker and the UI (no runtime imports).
  *
- * Every service a client has works one of three ways:
- *  - renews:  it comes back on a date (`next_date`) and you bill for it again (domain, hosting, email, SSL).
- *  - visits:  the same checklist on a schedule; `next_date` is the next visit (maintenance plan).
- *  - job:     done once; `next_date` is the due date, `job_status` moves to delivered (LMS setup, certificates).
+ * A client's service has up to two dates:
+ *  - `due_at`:  when the work itself is due (a build, a setup, a one-off job). Its `status` moves from Not started
+ *               to In progress to Delivered (or Cancelled).
+ *  - `next_at`: the next renewal (`recurs = 'renews'`) or scheduled date (`recurs = 'scheduled'`, maintenance),
+ *               repeating monthly, quarterly or yearly.
+ * Website and Email have both (the work, then a yearly renewal); Maintenance and the other types pick one way:
+ * Renews, Scheduled or One-off. What a service includes (domain, hosting, ...) is a list of parts with providers.
  * Dates are UTC midnights in epoch ms, like invoice dates.
  */
 
 import { startOfDay } from './dates';
 
-export type ServiceKind = 'renews' | 'visits' | 'job';
-export type TypeKind = ServiceKind | 'any';
-export type Cycle = 'yearly' | 'monthly' | 'once';
-export type JobStatus = 'not_started' | 'in_progress' | 'delivered';
+export type Recurs = 'renews' | 'scheduled';
+export type Mode = Recurs | 'oneoff';
+export type Repeats = 'monthly' | 'quarterly' | 'yearly';
+export type Status = 'not_started' | 'in_progress' | 'delivered' | 'cancelled';
 export type ClientStatus = 'prospect' | 'active' | 'past';
 export type InvoiceWhen = 'delivered' | 'start' | 'none';
-export type Part = 'website' | 'domain' | 'hosting' | 'email' | 'maintenance' | 'ssl' | 'other';
+/** What a service can include (or, for maintenance, look after). */
+export type PartName = 'website' | 'domain' | 'hosting' | 'email' | 'other';
+/** The built-in service types; custom types have none. */
+export type TypePart = 'website' | 'email' | 'maintenance' | 'other';
 
-export const SERVICE_KINDS: ServiceKind[] = ['renews', 'visits', 'job'];
-export const CYCLES: Cycle[] = ['yearly', 'monthly', 'once'];
-export const JOB_STATUSES: JobStatus[] = ['not_started', 'in_progress', 'delivered'];
+export const MODES: Mode[] = ['renews', 'scheduled', 'oneoff'];
+export const REPEATS: Repeats[] = ['monthly', 'quarterly', 'yearly'];
+export const STATUSES: Status[] = ['not_started', 'in_progress', 'delivered', 'cancelled'];
 export const CLIENT_STATUSES: ClientStatus[] = ['prospect', 'active', 'past'];
 export const INVOICE_WHEN: InvoiceWhen[] = ['delivered', 'start', 'none'];
-/** The parts on the Log a client form, in order. Website, domain and hosting sit together. */
-export const FORM_PARTS: Part[] = ['website', 'domain', 'hosting', 'email', 'maintenance'];
+export const PART_NAMES: PartName[] = ['website', 'domain', 'hosting', 'email', 'other'];
 
-export const KIND_LABEL: Record<TypeKind, string> = {
-  renews: 'Renews',
-  visits: 'Schedule',
-  job: 'One-off job',
-  any: 'You choose',
-};
-export const KIND_HELP: Record<ServiceKind, string> = {
-  renews: 'It comes back on a date and you bill for it again.',
-  visits: 'You do the same checklist on a schedule.',
-  job: 'You do it once, then mark it delivered.',
-};
-export const CYCLE_LABEL: Record<Cycle, string> = { yearly: 'Yearly', monthly: 'Monthly', once: 'Once' };
-export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
+export const MODE_LABEL: Record<Mode, string> = { renews: 'Renews', scheduled: 'Scheduled', oneoff: 'One-off' };
+export const REPEATS_LABEL: Record<Repeats, string> = { monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+export const PER_LABEL: Record<Repeats, string> = { monthly: '/ month', quarterly: '/ quarter', yearly: '/ year' };
+export const STATUS_LABEL: Record<Status, string> = {
   not_started: 'Not started',
   in_progress: 'In progress',
   delivered: 'Delivered',
+  cancelled: 'Cancelled',
 };
+export const PART_LABEL: Record<PartName, string> = { website: 'Website', domain: 'Domain', hosting: 'Hosting', email: 'Email', other: 'Other' };
 export const CLIENT_STATUS_LABEL: Record<ClientStatus, string> = { prospect: 'Prospect', active: 'Active', past: 'Past' };
 export const INVOICE_WHEN_LABEL: Record<InvoiceWhen, string> = {
   delivered: 'When I mark it delivered',
@@ -50,16 +48,27 @@ export const INVOICE_WHEN_LABEL: Record<InvoiceWhen, string> = {
   none: 'I will invoice it myself',
 };
 
+/** The ticks each type offers under Includes (Looks after, for maintenance). */
+export function includesFor(part: TypePart | null): PartName[] {
+  if (part === 'website') return ['website', 'domain', 'hosting', 'other'];
+  if (part === 'email') return ['domain', 'other'];
+  return PART_NAMES;
+}
+
+/** The ways a type can work: Website and Email have a fixed shape; maintenance is scheduled or one-off. */
+export function modesFor(part: TypePart | null): Mode[] {
+  if (part === 'website' || part === 'email') return [];
+  if (part === 'maintenance') return ['scheduled', 'oneoff'];
+  return MODES;
+}
+
 export interface ServiceTypeRow {
   id: string;
   name: string;
-  kind: TypeKind;
-  part: Part | null;
-  cycle: Cycle;
+  part: TypePart | null;
   price: number;
   price_unit: 'once' | 'each';
   reminder_days: string;
-  invoice_when: string;
   show_in_add: number;
   sort: number;
   created_at: number;
@@ -74,10 +83,12 @@ export interface ClientRow {
   contact_name: string;
   email: string;
   phone: string;
+  /** The phone number is also on WhatsApp. */
   whatsapp: number;
+  /** A separate WhatsApp number, used when `whatsapp` is 0. */
+  whatsapp_number: string;
   website: string;
   status: ClientStatus;
-  tags: string;
   notes: string;
   service_notes: string;
   logins: string;
@@ -90,14 +101,10 @@ export interface ClientRow {
   updated_by?: string | null;
 }
 
-/** Part-specific details, kept as JSON in `client_services.meta`. */
-export interface ServiceMeta {
-  built_with?: string;
-  registrar?: string;
-  provider?: string;
-  plan?: string;
-  mailboxes?: string;
-  looks_after?: string[];
+export interface ServicePart {
+  part: PartName;
+  provider: string;
+  count: number | null;
 }
 
 export interface ServiceRow {
@@ -105,61 +112,61 @@ export interface ServiceRow {
   client_id: string;
   type_id: string;
   name: string;
-  kind: ServiceKind;
   details: string;
-  meta: string;
-  cycle: Cycle;
-  next_date: number | null;
-  price: number;
+  recurs: Recurs | null;
+  repeats: Repeats;
+  next_at: number | null;
+  due_at: number | null;
+  status: Status;
+  amount: number;
   quantity: number;
   currency: string;
-  job_status: JobStatus | '';
-  invoice_when: InvoiceWhen | '';
-  invoice_id: string | null;
-  invoiced_for: number | null;
   ended_at: number | null;
   created_at: number;
   updated_at: number;
   created_by?: string | null;
   updated_by?: string | null;
-  /** Added by the API on lists: the service type's part (website, domain, ...). */
-  part?: Part | null;
+  /** Added by the API. */
+  parts?: ServicePart[];
+  type_part?: TypePart | null;
+  /** Added by the API: the dates that already have an invoice ("due" for the work itself). */
+  invoiced?: (number | 'due')[];
 }
 
-/** A client on the Clients list, with what the list shows about their services. */
+/** A client on the Clients list. */
 export interface ClientSummary extends ClientRow {
-  services: number;
-  parts: string[];
+  service_names: string[];
   next_date: number | null;
-  next_name: string | null;
+  next_what: string | null;
   unpaid: number;
   overdue_invoices: number;
 }
 
-/** One row on the due list (every client's active services by date). */
-export interface DueRow extends ServiceRow {
+/** One row on the Due dates page: a service's work due date, or its renewal / scheduled date. */
+export interface DueRow {
+  service: ServiceRow;
   client_name: string;
+  date: number;
+  what: 'due' | Recurs;
 }
 
-export const LOOKS_AFTER = ['Website', 'Hosting', 'Domain', 'Email', 'Other'] as const;
-
-export function parseMeta(value: string | null | undefined): ServiceMeta {
-  try {
-    const meta = JSON.parse(value || '{}');
-    return meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as ServiceMeta) : {};
-  } catch {
-    return {};
-  }
+export interface ClientNote {
+  id: string;
+  client_id: string;
+  at: number;
+  author: string;
+  text: string;
+  remind_at: number | null;
+  done: number;
 }
 
-export function parseTags(value: string | null | undefined): string[] {
-  try {
-    const tags = JSON.parse(value || '[]');
-    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === 'string') : [];
-  } catch {
-    return [];
-  }
-}
+/** How a service works, for the forms. */
+export const modeOf = (s: Pick<ServiceRow, 'recurs'>): Mode => s.recurs ?? 'oneoff';
+
+/** The work is still open (its due date matters). */
+export const workOpen = (s: Pick<ServiceRow, 'status'>) => s.status === 'not_started' || s.status === 'in_progress';
+/** Still with us: not cancelled and not ended. */
+export const isActive = (s: Pick<ServiceRow, 'status' | 'ended_at'>) => s.status !== 'cancelled' && !s.ended_at;
 
 /** "60, 30, 14, 7" → [60, 30, 14, 7]: whole days 0-730, largest first, no repeats. */
 export function parseDays(value: string | null | undefined): number[] {
@@ -167,20 +174,19 @@ export function parseDays(value: string | null | undefined): number[] {
     .split(/[,\s]+/)
     .filter((part) => /^\d+$/.test(part))
     .map((part) => Number(part))
-    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 730);
+    .filter((n) => n <= 730);
   return Array.from(new Set(days)).sort((a, b) => b - a);
 }
 
 export const DAY_MS = 86_400_000;
+const MONTHS: Record<Repeats, number> = { monthly: 1, quarterly: 3, yearly: 12 };
 
-/** The same calendar day `n` cycles later (31 Jan + 1 month = 28/29 Feb; 29 Feb + 1 year = 28 Feb). */
-export function addCycle(date: number, cycle: Cycle, n = 1): number {
-  if (cycle === 'once') return date;
+/** The same calendar day one period later (31 Jan + 1 month = 28/29 Feb; 29 Feb + 1 year = 28 Feb). */
+export function addPeriod(date: number, repeats: Repeats, n = 1): number {
   const d = new Date(date);
-  const year = d.getUTCFullYear() + (cycle === 'yearly' ? n : 0);
-  const month = d.getUTCMonth() + (cycle === 'monthly' ? n : 0);
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return Date.UTC(year, month, Math.min(d.getUTCDate(), lastDay));
+  const month = d.getUTCMonth() + MONTHS[repeats] * n;
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), month + 1, 0)).getUTCDate();
+  return Date.UTC(d.getUTCFullYear(), month, Math.min(d.getUTCDate(), lastDay));
 }
 
 /** Whole days from today to `date` (negative once it has passed). */
@@ -208,7 +214,16 @@ export function countdown(date: number, now = Date.now()): string {
   return `in ${days} days`;
 }
 
-/** Workspace defaults the schedule depends on (Settings → Clients). */
+/** The dates a service puts on the Due dates page: the open work, then the renewal or schedule. */
+export function datesOf(s: Pick<ServiceRow, 'due_at' | 'next_at' | 'recurs' | 'status' | 'ended_at'>): { date: number; what: 'due' | Recurs }[] {
+  if (!isActive(s)) return [];
+  const out: { date: number; what: 'due' | Recurs }[] = [];
+  if (s.due_at !== null && workOpen(s)) out.push({ date: s.due_at, what: 'due' });
+  if (s.next_at !== null && s.recurs) out.push({ date: s.next_at, what: s.recurs });
+  return out;
+}
+
+/** Workspace defaults the reminders depend on (Settings → Clients). */
 export interface ClientRules {
   renewDays: number[];
   jobDays: number[];
@@ -249,31 +264,24 @@ export function clientRules(settings: Record<string, string | undefined>): Clien
   };
 }
 
-/** The reminder days for one service: its type's own list, else the workspace list for its kind. */
-export function reminderDaysFor(service: Pick<ServiceRow, 'kind'>, type: Pick<ServiceTypeRow, 'reminder_days'> | null, rules: ClientRules): number[] {
-  if (service.kind === 'visits') return [0];
+/** Days before a date to remind the team: renewals use the type's own list or the workspace one. */
+export function reminderDays(what: 'due' | Recurs, type: Pick<ServiceTypeRow, 'reminder_days'> | null, rules: ClientRules): number[] {
+  if (what === 'scheduled') return [0];
+  if (what === 'due') return rules.jobDays;
   const own = type ? parseDays(type.reminder_days) : [];
-  if (own.length) return own;
-  return service.kind === 'job' ? rules.jobDays : rules.renewDays;
+  return own.length ? own : rules.renewDays;
 }
 
-/** When the renewal invoice for this date is drafted, or null when none is drafted ahead (jobs). */
-export function draftDateFor(service: Pick<ServiceRow, 'kind' | 'cycle' | 'next_date'>, rules: ClientRules): number | null {
-  if (service.next_date === null || service.kind === 'job') return null;
-  const days = service.cycle === 'monthly' ? rules.draftMonthly : rules.draftYearly;
-  return service.next_date - days * DAY_MS;
-}
-
-/** When a job's invoice is drafted, from the job's own choice or the workspace default. */
-export function jobInvoiceWhen(service: Pick<ServiceRow, 'invoice_when'>, type: Pick<ServiceTypeRow, 'invoice_when'> | null, rules: ClientRules): InvoiceWhen {
-  const own = service.invoice_when || type?.invoice_when || '';
-  return (INVOICE_WHEN as string[]).includes(own) ? (own as InvoiceWhen) : rules.jobInvoice;
+/** When the invoice for the next renewal or scheduled period is drafted, or null. */
+export function draftDateFor(s: Pick<ServiceRow, 'recurs' | 'repeats' | 'next_at' | 'amount'>, rules: ClientRules): number | null {
+  if (!s.recurs || s.next_at === null || !(s.amount > 0)) return null;
+  return s.next_at - (s.repeats === 'yearly' ? rules.draftYearly : rules.draftMonthly) * DAY_MS;
 }
 
 export interface ComingUp {
   date: number;
   service_id: string;
-  kind: 'reminder' | 'draft' | 'visit' | 'due';
+  kind: 'reminder' | 'draft' | 'scheduled' | 'due' | 'renews';
   text: string;
 }
 
@@ -288,45 +296,40 @@ export function comingUp(
   const today = startOfDay(now);
   const out: ComingUp[] = [];
   for (const s of services) {
-    if (s.ended_at || s.next_date === null) continue;
-    const date = s.next_date;
-    if (s.kind === 'visits') {
-      out.push({ date, service_id: s.id, kind: 'visit', text: `Scheduled: ${s.name}` });
-    } else {
-      for (const d of reminderDaysFor(s, types.get(s.type_id) ?? null, rules)) {
-        const at = date - d * DAY_MS;
-        if (at < today || d === 0) continue;
-        const word = s.kind === 'job' ? 'is due' : 'renews';
-        out.push({ date: at, service_id: s.id, kind: 'reminder', text: `Reminder: ${s.name} ${word} in ${d} ${d === 1 ? 'day' : 'days'}` });
+    for (const { date, what } of datesOf(s)) {
+      if (what === 'scheduled') {
+        out.push({ date, service_id: s.id, kind: 'scheduled', text: `Scheduled: ${s.name}` });
+        continue;
       }
-      out.push({ date, service_id: s.id, kind: 'due', text: s.kind === 'job' ? `${s.name} is due` : `${s.name} renews` });
+      const word = what === 'due' ? 'is due' : 'renews';
+      for (const d of reminderDays(what, types.get(s.type_id) ?? null, rules)) {
+        const at = date - d * DAY_MS;
+        if (at >= today && d > 0) out.push({ date: at, service_id: s.id, kind: 'reminder', text: `Reminder: ${s.name} ${word} in ${d} ${d === 1 ? 'day' : 'days'}` });
+      }
+      out.push({ date, service_id: s.id, kind: what, text: `${s.name} ${word}` });
     }
-    const draft = draftDateFor(s, rules);
-    if (rules.autoDraft && draft !== null && draft >= today && s.invoiced_for !== date && s.price > 0) {
+    const draft = isActive(s) ? draftDateFor(s, rules) : null;
+    if (rules.autoDraft && draft !== null && draft >= today && !(s.invoiced ?? []).includes(s.next_at as number)) {
       out.push({ date: draft, service_id: s.id, kind: 'draft', text: `Draft invoice for ${s.name}` });
     }
   }
   return out.sort((a, b) => a.date - b.date).slice(0, limit);
 }
 
-/** The words on a renewal invoice line: "Domain renewal: example.com, 14 Mar 2027 to 13 Mar 2028". */
-export function renewalLine(service: Pick<ServiceRow, 'name' | 'kind' | 'cycle'>, website: string, from: number, fmt: (ms: number) => string): string {
-  const what = website ? `${service.name}: ${website}` : service.name;
-  if (service.kind === 'job') return what;
-  const to = addCycle(from, service.cycle) - DAY_MS;
-  if (service.kind === 'visits') return `${what}, ${fmt(from)} to ${fmt(to)}`;
-  return `${service.name} renewal${website ? `: ${website}` : ''}, ${fmt(from)} to ${fmt(to)}`;
+/** "Website (domain, hosting)": the service and what it includes beyond itself. */
+export function serviceLabel(s: Pick<ServiceRow, 'name' | 'parts' | 'type_part'>): string {
+  const extra = (s.parts ?? [])
+    .filter((p) => !(s.type_part === 'website' && p.part === 'website') && !(s.type_part === 'email' && p.part === 'email'))
+    .map((p) => (p.part === 'other' && p.provider ? p.provider : PART_LABEL[p.part].toLowerCase()));
+  return extra.length ? `${s.name} (${extra.join(', ')})` : s.name;
 }
 
-/** A note on a client's page; `remind_at` puts it in that morning's reminder email until it is done. */
-export interface ClientNote {
-  id: string;
-  client_id: string;
-  at: number;
-  author: string;
-  text: string;
-  remind_at: number | null;
-  done: number;
+/** The words on an invoice line for a renewal or scheduled period: "Website renewal: example.com, 14 Mar 2027 to 13 Mar 2028". */
+export function periodLine(s: Pick<ServiceRow, 'name' | 'recurs' | 'repeats' | 'parts' | 'type_part'>, website: string, from: number, fmt: (ms: number) => string): string {
+  const to = addPeriod(from, s.repeats) - DAY_MS;
+  const label = serviceLabel(s);
+  if (s.recurs === 'scheduled') return `${label}${website ? `: ${website}` : ''}, ${fmt(from)} to ${fmt(to)}`;
+  return `${label} renewal${website ? `: ${website}` : ''}, ${fmt(from)} to ${fmt(to)}`;
 }
 
 export const DEFAULT_CHECKLIST_SITE = ['Update plugins and themes', 'Check that backups ran', 'Check uptime and page speed', 'Send the monthly report'];
@@ -342,13 +345,13 @@ function stringList(value: string | undefined, fallback: string[]): string[] {
 }
 
 /**
- * The steps for one maintenance visit, from what the plan looks after: website and hosting steps, domain and email
- * steps, or both. A plan that ticks nothing gets the website steps.
+ * The steps for "Mark done" on a scheduled service, from what it looks after: website and hosting steps, domain and
+ * email steps, or both. A service that ticks nothing gets the website steps.
  */
-export function visitChecklist(meta: ServiceMeta, settings: Record<string, string | undefined>): string[] {
-  const looks = meta.looks_after ?? [];
-  const site = looks.some((l) => l === 'Website' || l === 'Hosting');
-  const mail = looks.some((l) => l === 'Domain' || l === 'Email');
+export function scheduleChecklist(parts: Pick<ServicePart, 'part'>[], settings: Record<string, string | undefined>): string[] {
+  const names = parts.map((p) => p.part);
+  const site = names.includes('website') || names.includes('hosting');
+  const mail = names.includes('domain') || names.includes('email');
   const steps: string[] = [];
   if (site || !mail) steps.push(...stringList(settings.clients_checklist_site, DEFAULT_CHECKLIST_SITE));
   if (mail) steps.push(...stringList(settings.clients_checklist_mail, DEFAULT_CHECKLIST_MAIL));

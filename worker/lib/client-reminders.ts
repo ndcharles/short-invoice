@@ -1,14 +1,14 @@
 import type { Env } from '../env';
 import {
   clientRules,
+  datesOf,
   daysUntil,
-  parseMeta,
-  visitChecklist,
   draftDateFor,
-  reminderDaysFor,
-  renewalLine,
+  periodLine,
+  reminderDays,
+  scheduleChecklist,
+  serviceLabel,
   type ClientRow,
-  type ServiceRow,
   type ServiceTypeRow,
 } from '../../src/lib/clients';
 import { fmtMoney } from '../../src/lib/invoices';
@@ -20,14 +20,13 @@ import { activity } from './activity';
 import { mailSetup, isMailAddress } from './invoice-mail';
 import { decryptSecret } from './secrets';
 import { sendMail, SmtpError } from './smtp';
+import { loadServices } from './client-services';
 
 /** Most invoices one daily run drafts, so a big backlog cannot blow the CPU budget in one go. */
 const MAX_DRAFTS_PER_RUN = 15;
 
 /** Who the daily run's own changes are credited to in the activity feed. */
 const DAILY_RUN: CurrentUser = { email: 'reminders', name: 'Daily reminders', role: 'admin', owner: false, initials: 'DR' };
-
-type Row = ServiceRow & { client_name: string; client_email: string; client_website: string; client_address: string; reminder_days: string | null };
 
 export interface ReminderLine {
   service_id: string;
@@ -58,55 +57,56 @@ export async function dailyRun(env: Env, now = Date.now()): Promise<DailyRunResu
   const today = startOfDay(now);
   const fmt = (ms: number) => formatDate(ms, settings.date_format);
 
-  const { results } = await db
-    .prepare(
-      `SELECT s.*, c.name AS client_name, c.email AS client_email, c.website AS client_website, c.billing_address AS client_address,
-        t.reminder_days FROM client_services s
-       JOIN clients c ON c.id = s.client_id
-       LEFT JOIN service_types t ON t.id = s.type_id
-       WHERE s.ended_at IS NULL AND s.next_date IS NOT NULL AND c.archived = 0 AND c.status != 'past'
-       ORDER BY s.next_date`
-    )
-    .all<Row>();
+  const [services, clientRows, typeRows] = await Promise.all([
+    loadServices(db, { active: true }),
+    db.prepare("SELECT * FROM clients WHERE archived = 0 AND status != 'past'").all<ClientRow>(),
+    db.prepare('SELECT id, reminder_days FROM service_types').all<Pick<ServiceTypeRow, 'id' | 'reminder_days'>>(),
+  ]);
+  const clientsById = new Map(clientRows.results.map((c) => [c.id, c]));
+  const types = new Map(typeRows.results.map((t) => [t.id, t]));
+  const mine = services.filter((s) => clientsById.has(s.client_id));
 
-  // 1. Invoices drafted ahead of the date (renewals and monthly plans), once per date.
+  // 1. Invoices drafted ahead of each renewal or scheduled period, once per period.
   const drafted: DailyRunResult['drafted'] = [];
   if (rules.autoDraft) {
-    for (const s of results) {
+    for (const s of mine) {
       if (drafted.length >= MAX_DRAFTS_PER_RUN) break;
       const draftOn = draftDateFor(s, rules);
-      if (draftOn === null || draftOn > today || s.invoiced_for === s.next_date || !(Number(s.price) > 0)) continue;
-      const client = { id: s.client_id, name: s.client_name, email: s.client_email, billing_address: s.client_address } as ClientRow;
+      if (draftOn === null || draftOn > today || (s.invoiced ?? []).includes(s.next_at as number)) continue;
+      const client = clientsById.get(s.client_id) as ClientRow;
       const draft = await draftInvoiceStatements(db, settings, null, {
         client,
         serviceId: s.id,
-        items: [{ name: renewalLine(s, s.client_website, s.next_date as number, fmt).slice(0, 200), desc: s.details.slice(0, 2000), qty: 1, unitPrice: Number(s.price) }],
+        serviceFor: s.next_at,
+        items: [{ name: periodLine(s, client.website, s.next_at as number, fmt).slice(0, 200), desc: s.details.slice(0, 2000), qty: 1, unitPrice: Number(s.amount) }],
         currency: s.currency,
       }, now);
       if (!draft) break;
       await db.batch([
         ...draft.statements,
-        db.prepare('UPDATE client_services SET invoice_id = ?1, invoiced_for = ?2, updated_at = ?3 WHERE id = ?4').bind(draft.id, s.next_date, now, s.id),
-        activity(db, DAILY_RUN, { action: 'created', type: 'invoice', id: draft.id, label: draft.number, detail: `${s.client_name} · ${s.name} · ${fmtMoney(Number(s.price), s.currency)} (draft)` }, now),
+        activity(db, DAILY_RUN, { action: 'created', type: 'invoice', id: draft.id, label: draft.number, detail: `${client.name} · ${s.name} · ${fmtMoney(Number(s.amount), s.currency)} (draft)` }, now),
       ]);
       settings.inv_next_number = String(draft.advanceTo);
-      drafted.push({ invoice: draft.number, client: s.client_name, service: s.name });
+      drafted.push({ invoice: draft.number, client: client.name, service: s.name });
     }
   }
 
-  // 2. Today's reminders: the days before each date, the visit day itself, then every few days once overdue.
+  // 2. Today's reminders: the days before each date, the scheduled day itself, then every few days once overdue.
   const due: ReminderLine[] = [];
-  for (const s of results) {
-    const date = s.next_date as number;
-    const left = daysUntil(date, now);
-    const days = reminderDaysFor(s, { reminder_days: s.reminder_days ?? '' } as Pick<ServiceTypeRow, 'reminder_days'>, rules);
-    const steps = s.kind === 'visits' ? visitChecklist(parseMeta(s.meta), settings).length : 0;
-    const what = s.kind === 'job' ? 'is due' : s.kind === 'visits' ? `is scheduled${steps ? ` (${steps} steps)` : ''}` : 'renews';
-    if (left >= 0 && days.includes(left)) {
-      const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : `in ${left} days (${fmt(date)})`;
-      due.push({ service_id: s.id, client: s.client_name, text: `${s.name} ${what} ${when}`, days_before: left, for_date: date });
-    } else if (left < 0 && rules.overdueEvery > 0 && -left % rules.overdueEvery === 0) {
-      due.push({ service_id: s.id, client: s.client_name, text: `${s.name} is overdue by ${-left} days (was due ${fmt(date)})`, days_before: left, for_date: date });
+  for (const s of mine) {
+    const client = clientsById.get(s.client_id) as ClientRow;
+    const label = serviceLabel(s);
+    for (const { date, what } of datesOf(s)) {
+      const left = daysUntil(date, now);
+      const steps = what === 'scheduled' ? scheduleChecklist(s.parts ?? [], settings).length : 0;
+      const verb = what === 'due' ? 'is due' : what === 'scheduled' ? `is scheduled${steps ? ` (${steps} steps)` : ''}` : 'renews';
+      if (left >= 0 && reminderDays(what, types.get(s.type_id) ?? null, rules).includes(left)) {
+        const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : `in ${left} days (${fmt(date)})`;
+        due.push({ service_id: s.id, client: client.name, text: `${label} ${verb} ${when}`, days_before: left, for_date: date });
+      } else if (left < 0 && rules.overdueEvery > 0 && -left % rules.overdueEvery === 0) {
+        const late = what === 'due' ? 'is overdue' : what === 'renews' ? 'renewal is overdue' : 'is overdue';
+        due.push({ service_id: s.id, client: client.name, text: `${label} ${late} by ${-left} days (was due ${fmt(date)})`, days_before: left, for_date: date });
+      }
     }
   }
   // Notes with a "remind me on" date that has come, until someone ticks them done.
@@ -181,7 +181,7 @@ export function reminderText(lines: ReminderLine[], drafted: DailyRunResult['dra
     for (const d of drafted) out.push(`  - ${d.invoice}: ${d.client}, ${d.service}`);
     out.push('');
   }
-  out.push('Open Clients → Due dates in the app to renew, mark schedules done or deliver jobs.');
+  out.push('Open Clients → Due dates in the app to renew, mark scheduled work done or deliver it.');
   out.push('These reminders are for your team only. Nothing was sent to your clients.');
   return out.join('\n');
 }

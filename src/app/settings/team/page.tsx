@@ -59,7 +59,8 @@ const PHRASE: Record<string, string> = {
   'restored service': 'restored a service of',
   'visit done': 'marked a schedule done for',
   'schedule done': 'marked a schedule done for',
-  delivered: 'delivered a job for',
+  delivered: 'delivered work for',
+  cancelled: 'cancelled a service of',
 };
 
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
@@ -78,7 +79,7 @@ const ACCESS: { what: string; hint?: string; member: boolean; admin: boolean }[]
   { what: 'Links', hint: 'Create, edit, archive and see analytics', member: true, admin: true },
   { what: 'UTM campaigns', hint: 'Build, edit and archive', member: true, admin: true },
   { what: 'Invoices', hint: 'Create, edit, log payments and email to clients', member: true, admin: true },
-  { what: 'Clients', hint: 'Log clients, add, renew and end services, deliver jobs', member: true, admin: true },
+  { what: 'Clients', hint: 'Log clients, add, renew and end services, deliver work', member: true, admin: true },
   { what: 'Use existing folders and tags', member: true, admin: true },
   { what: 'Delete links, UTMs, invoices, clients and services', member: false, admin: true },
   { what: 'Create, rename and delete folders and tags', member: false, admin: true },

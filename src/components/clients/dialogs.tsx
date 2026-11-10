@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Portal } from '@/components/portal';
 import { XIcon } from '@/components/icons';
-import { addCycle, parseMeta, visitChecklist, type ClientRow, type ServiceRow, type ServiceTypeRow } from '@/lib/clients';
+import { addPeriod, scheduleChecklist, DAY_MS, type ClientRow, type ServiceRow, type ServiceTypeRow } from '@/lib/clients';
 import { fmtMoney } from '@/lib/invoices';
 import { send, useClientSettings } from '@/lib/use-clients';
 import { draftFromService, draftFromType, serviceProblem, servicePayload, ServiceFields, type ServiceDraft } from './service-fields';
@@ -81,9 +81,9 @@ export function ServiceDialog({
     setError(null);
     try {
       const data = service
-        ? await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${service.id}`, servicePayload(draft, true))
-        : await send<{ invoice?: { number: string } | null }>('POST', `/api/clients/${client.id}/services`, servicePayload(draft, true));
-      const name = draft.name || 'Service';
+        ? await send<{ invoice: { number: string } | null }>('PATCH', `/api/clients/services/${service.id}`, servicePayload(draft))
+        : await send<{ invoice?: { number: string } | null }>('POST', `/api/clients/${client.id}/services`, servicePayload(draft));
+      const name = draft.name || draft.typeName;
       onSaved(data.invoice ? `${name} saved. Draft invoice ${data.invoice.number} created.` : `${name} saved`);
       if (another) {
         setDraft(choices[0] ? draftFromType(choices[0]) : null);
@@ -124,7 +124,7 @@ export function ServiceDialog({
           <div className="ct-tiles">
             {choices.map((t) => (
               <button key={t.id} type="button" className={draft?.type_id === t.id ? 'on' : ''} aria-pressed={draft?.type_id === t.id} onClick={() => setDraft(draftFromType(t))}>
-                <PartIcon part={t.part} kind={t.kind} size={16} />
+                <PartIcon part={t.part} size={16} />
                 {t.name}
               </button>
             ))}
@@ -133,7 +133,7 @@ export function ServiceDialog({
       )}
       {error && <div className="ct-error" role="alert">{error}</div>}
       {draft && (
-        <ServiceFields draft={draft} onChange={setDraft} symbol={cfg.symbol} idPrefix="dlg" allowKindChange />
+        <ServiceFields draft={draft} onChange={setDraft} symbol={cfg.symbol} idPrefix="dlg" />
       )}
     </Dialog>
   );
@@ -147,21 +147,21 @@ export function RenewDialog({ service, clientName, onClose, onDone }: {
   onDone: (message: string, invoiceId?: string) => void;
 }) {
   const cfg = useClientSettings();
-  const [price, setPrice] = useState(Number(service.price) || 0);
-  const alreadyInvoiced = service.invoiced_for !== null && service.invoiced_for === service.next_date;
+  const [price, setPrice] = useState(Number(service.amount) || 0);
+  const alreadyInvoiced = service.next_at !== null && (service.invoiced ?? []).includes(service.next_at);
   const [invoice, setInvoice] = useState(!alreadyInvoiced);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const from = service.next_date as number;
-  const to = addCycle(from, service.cycle);
+  const from = service.next_at as number;
+  const to = addPeriod(from, service.repeats);
   const [now] = useState(() => Date.now());
-  const overdue = from < now - 86_400_000;
+  const overdue = from < now - DAY_MS;
 
   const renew = async () => {
     setSaving(true);
     setError(null);
     try {
-      const data = await send<{ invoice: { id: string; number: string } | null }>('POST', `/api/clients/services/${service.id}/renew`, { price, invoice });
+      const data = await send<{ invoice: { id: string; number: string } | null }>('POST', `/api/clients/services/${service.id}/renew`, { amount: price, invoice });
       onDone(
         data.invoice ? `Renewed. Draft invoice ${data.invoice.number} is ready to review.` : `Renewed. Next date ${cfg.fmt(to)}.`,
         data.invoice?.id
@@ -179,7 +179,7 @@ export function RenewDialog({ service, clientName, onClose, onDone }: {
       small
       title={`Renew ${service.name.toLowerCase()}`}
       sub={clientName}
-      icon={<PartIcon part={service.part} kind={service.kind} size={16} />}
+      icon={<PartIcon part={service.type_part} kind={service.recurs ?? undefined} size={16} />}
       onClose={onClose}
       footer={
         <>
@@ -204,7 +204,7 @@ export function RenewDialog({ service, clientName, onClose, onDone }: {
           <div style={{ fontSize: 12, color: '#525252' }}>Counted from the old date</div>
         </div>
       </div>
-      <MoneyField id="renew-price" label={`Price for the new ${service.cycle === 'monthly' ? 'month' : 'year'}`} symbol={cfg.symbol} value={price} onChange={setPrice} />
+      <MoneyField id="renew-price" label={`Price for the new ${service.repeats === 'monthly' ? 'month' : service.repeats === 'quarterly' ? 'quarter' : 'year'}`} symbol={cfg.symbol} value={price} onChange={setPrice} />
       {error && <div className="ct-error" role="alert">{error}</div>}
       <div className="ct-field">
         <span className="ct-label">What should we do?</span>
@@ -234,26 +234,26 @@ export function RenewDialog({ service, clientName, onClose, onDone }: {
 }
 
 /** Mark a scheduled service done: tick the steps (from what the plan looks after) and note anything worth keeping. */
-export function VisitDialog({ service, clientName, onClose, onDone }: {
+export function DoneDialog({ service, clientName, onClose, onDone }: {
   service: ServiceRow;
   clientName: string;
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
   const cfg = useClientSettings();
-  const steps = useMemo(() => visitChecklist(parseMeta(service.meta), cfg.settings), [service.meta, cfg.settings]);
+  const steps = useMemo(() => scheduleChecklist(service.parts ?? [], cfg.settings), [service.parts, cfg.settings]);
   const [ticked, setTicked] = useState<boolean[]>(() => steps.map(() => false));
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const next = addCycle(service.next_date as number, service.cycle);
+  const next = addPeriod(service.next_at as number, service.repeats);
   const doneCount = ticked.filter(Boolean).length;
 
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
-      await send('POST', `/api/clients/services/${service.id}/visit`, { done_steps: doneCount, total_steps: steps.length, note });
+      await send('POST', `/api/clients/services/${service.id}/done`, { done_steps: doneCount, total_steps: steps.length, note });
       onDone(`Marked done (${doneCount} of ${steps.length} steps). Next scheduled date ${cfg.fmt(next)}.`);
       onClose();
     } catch (err) {
@@ -266,8 +266,8 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
   return (
     <Dialog
       small
-      title={`Schedule: ${service.name}`}
-      sub={`${clientName} · due ${cfg.fmt(service.next_date)}`}
+      title={`Mark done: ${service.name}`}
+      sub={`${clientName} · due ${cfg.fmt(service.next_at)}`}
       icon={<PartIcon part="maintenance" size={16} />}
       onClose={onClose}
       footer={
@@ -291,8 +291,8 @@ export function VisitDialog({ service, clientName, onClose, onDone }: {
         <span className="ct-muted">Steps come from Settings → Clients and follow what the plan looks after.</span>
       </div>
       <div className="ct-field">
-        <label className="ct-label" htmlFor="visit-note">Note (optional)</label>
-        <textarea id="visit-note" rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Updated 6 plugins. Backups fine." />
+        <label className="ct-label" htmlFor="done-note">Note (optional)</label>
+        <textarea id="done-note" rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Updated 6 plugins. Backups fine." />
       </div>
       <div className="ct-box">The next scheduled date moves to {cfg.fmt(next)}.</div>
     </Dialog>

@@ -71,6 +71,8 @@ export const advanceNumberStatement = (db: D1Database, advanceTo: number, now: n
 export interface DraftFor {
   client: { id: string; name: string; email: string; billing_address: string };
   serviceId: string;
+  /** The renewal or scheduled date this invoice covers; null for the work itself. */
+  serviceFor: number | null;
   items: InvoiceItem[];
   currency: string;
 }
@@ -98,9 +100,9 @@ export async function draftInvoiceStatements(
       .prepare(
         `INSERT INTO invoices (id, number, client_name, client_email, client_address, issued_at, due_at, currency, status,
           items, payments, subtotal, tax_rate, discount, total, notes, terms, folder, tag, avatar, created_at, updated_at,
-          discount_type, charges, payment_method, equivalent_amount, exchange_rate, created_by, updated_by, client_id, service_id)
+          discount_type, charges, payment_method, equivalent_amount, exchange_rate, created_by, updated_by, client_id, service_id, service_for)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'draft', ?9, '[]', ?10, ?11, 0, ?12, '', ?13, ?14, ?15, ?16, ?17, ?17,
-          'value', 0, ?18, 0, 0, ?19, ?19, ?20, ?21)`
+          'value', 0, ?18, 0, 0, ?19, ?19, ?20, ?21, ?22)`
       )
       .bind(
         id,
@@ -123,7 +125,8 @@ export async function draftInvoiceStatements(
         defaults.payment_method,
         by,
         draft.client.id,
-        draft.serviceId
+        draft.serviceId,
+        draft.serviceFor
       ),
     advanceNumberStatement(db, allocated.advanceTo, now),
   ];

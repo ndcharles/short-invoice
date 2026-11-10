@@ -7,7 +7,7 @@ import { Shell } from '@/components/layout/shell';
 import { CLIENT_STATUS_LABEL, countdown, daysUntil, dueBucket, type ClientSummary, type DueRow } from '@/lib/clients';
 import { fmtMoney } from '@/lib/invoices';
 import { send, useClientSettings } from '@/lib/use-clients';
-import { initialsOf, PartIcon } from '@/components/clients/ui';
+import { initialsOf } from '@/components/clients/ui';
 import { Plus, Search } from '@/components/icons';
 
 type Tab = 'all' | 'active' | 'prospect' | 'past';
@@ -40,11 +40,11 @@ export default function ClientsPage() {
     const params = new URLSearchParams();
     if (search.trim()) params.set('search', search.trim());
     if (archived) params.set('archived', '1');
-    Promise.all([send<{ clients: ClientSummary[] }>('GET', `/api/clients?${params}`), send<{ services: DueRow[] }>('GET', '/api/clients/due')])
+    Promise.all([send<{ clients: ClientSummary[] }>('GET', `/api/clients?${params}`), send<{ rows: DueRow[] }>('GET', '/api/clients/due')])
       .then(([list, dueList]) => {
         if (cancelled) return;
         setClients(list.clients);
-        setDue(dueList.services);
+        setDue(dueList.rows);
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : 'Could not load clients'));
     return () => {
@@ -63,7 +63,7 @@ export default function ClientsPage() {
   const strip = useMemo(() => {
     const out = { overdue: 0, week: 0, month: 0 };
     for (const s of due) {
-      const b = dueBucket(s.next_date as number);
+      const b = dueBucket(s.date);
       if (b === 'overdue') out.overdue += 1;
       else if (b === 'week') out.week += 1;
       else if (b === 'month') out.month += 1;
@@ -173,23 +173,15 @@ export default function ClientsPage() {
                         <div className="ct-muted">{[c.contact_name, c.website].filter(Boolean).join(' · ') || '—'}</div>
                       </div>
                     </div>
-                    <div className="ct-icons" aria-label={`${c.services} services`}>
-                      {c.services === 0 ? (
-                        <span className="ct-muted" style={{ border: 0, width: 'auto' }}>None yet</span>
-                      ) : (
-                        c.parts.slice(0, 5).map((p) => (
-                          <span key={p} title={p}>
-                            <PartIcon part={p} size={13} />
-                          </span>
-                        ))
-                      )}
+                    <div className="ct-svc-words">
+                      {c.service_names.length === 0 ? <span className="ct-muted">None yet</span> : c.service_names.join(' · ')}
                     </div>
                     <div>
                       {c.next_date === null ? (
                         <span className="ct-muted">Nothing coming up</span>
                       ) : (
                         <>
-                          <div className="ct-muted" style={{ color: 'var(--foreground)' }}>{c.next_name} · {cfg.fmt(c.next_date)}</div>
+                          <div className="ct-muted" style={{ color: 'var(--foreground)' }}>{c.next_what} · {cfg.fmt(c.next_date)}</div>
                           <span className={`ct-chipline ${tone}`}>{countdown(c.next_date)}</span>
                         </>
                       )}
