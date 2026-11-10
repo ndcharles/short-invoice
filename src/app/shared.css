@@ -1643,7 +1643,7 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
   margin: 30px 0 24px;
 }
 
-/* Payment info: two accounts side by side */
+/* Payment info: two accounts side by side; a single account spans the width with its details on one row. */
 .inv-payment-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1683,25 +1683,23 @@ textarea.input { min-height: 60px; resize: vertical; font-family: inherit; }
   grid-template-columns: 1fr 1fr;
   gap: 8px 14px;
 }
-.inv-account-grid > div { display: flex; flex-direction: column; gap: 2px; }
-.inv-account-grid label {
+.inv-payment-grid:has(> .inv-account-card:only-child) { grid-template-columns: minmax(0, 1fr); }
+.inv-account-card:only-child .inv-account-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.inv-account-grid > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inv-account-label {
   font-size: 10px;
   color: var(--muted-foreground);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 500;
+  letter-spacing: 0.05em;
+  font-weight: 600;
 }
-.inv-account-grid input {
-  background: white;
-  border: 1px solid var(--border);
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-family: inherit;
+.inv-account-value {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
   color: var(--foreground);
-  outline: none;
+  overflow-wrap: anywhere;
 }
-.inv-account-grid input:focus { border-color: var(--border-strong); }
 
 .inv-terms-input { min-height: 120px; }
 .inv-terms-block { display: flex; flex-direction: column; }
@@ -2672,19 +2670,30 @@ a.inv-logo-slot { text-decoration: none; }
   html, body { background: white !important; }
   .sidebar, .crumb-bar, .right-rail, .save-bar, .inv-print-hide, .inv-footer-bar,
   .modal-backdrop { display: none !important; }
+  /* Only the invoice prints: anything else on the page, such as buttons that browser extensions add, is hidden. */
+  body > :not(:has(.invoice-canvas)) { display: none !important; }
   .inv-print-only { display: revert !important; }
   .app, .app-collapsed { display: block !important; }
   .main, .main-inner { padding: 0 !important; margin: 0 !important; max-width: none !important; overflow: visible !important; }
+  /* The main area's left border separates it from the sidebar on screen; on paper it is a stray line. */
+  .main { border-left: none !important; }
   .edit-invoice-layout { display: block !important; }
-  .invoice-canvas { border: none !important; padding: 0 !important; max-width: none !important; box-shadow: none !important; }
+  /* 1px each side keeps box borders on the right from landing on the page edge and being cut off. */
+  .invoice-canvas { border: none !important; padding: 0 1px !important; max-width: none !important; box-shadow: none !important; }
+  .inv-account-card { background: white !important; }
   .invoice-canvas input, .invoice-canvas textarea, .invoice-canvas .pay-method-select {
     border-color: transparent !important;
     background: transparent !important;
     box-shadow: none !important;
   }
   .invoice-canvas textarea { resize: none; }
+  /* Terms text lines up with its heading. */
+  .invoice-canvas .inv-terms-input { padding-left: 0 !important; padding-right: 0 !important; }
   .invoice-canvas .pay-method-select { min-width: 0; padding: 0; justify-content: flex-end; }
-  .inv-items, .inv-totals, .inv-account-card, .inv-stamp-wrap, .inv-total-words { break-inside: avoid; }
+  /* Rows stay whole, but a long item list flows onto the next page instead of leaving page one empty. */
+  .inv-item-row, .inv-totals, .inv-account-card, .inv-stamp-wrap, .inv-total-words { break-inside: avoid; }
+  .inv-items-head { break-after: avoid; }
+  .inv-items { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   .inv-items-head, .inv-tagline-strip, .inv-stamp, .inv-status-big, .inv-account-flag {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
@@ -2741,6 +2750,11 @@ a.inv-logo-slot { text-decoration: none; }
   .inv-items-head.items-detailed, .inv-item-row.items-detailed { grid-template-columns: 22px minmax(0, 1fr) 38px 74px 84px 26px; }
   .inv-items-head, .inv-item-row { padding-left: 8px; padding-right: 8px; gap: 6px; }
   .inv-totals .inv-discount-input { width: 84px; }
+}
+
+/* A single account keeps its one row down to phone widths. */
+@container (max-width: 480px) {
+  .inv-account-card:only-child .inv-account-grid { grid-template-columns: 1fr 1fr; }
 }
 
 /* Invoiced To / Pay To share one line rhythm (23px), inputs included. */
@@ -2833,7 +2847,8 @@ a.inv-logo-slot { text-decoration: none; }
   overflow-wrap: anywhere;
 }
 .invoice-canvas.is-capturing .inv-number .pdf-field { display: inline; padding: 0 0 0 4px; }
-.invoice-canvas.is-capturing .inv-account-grid .pdf-field { padding: 5px 8px; border: 1px solid var(--border) !important; background: white !important; border-radius: var(--radius-sm); font-size: 12px; }
+.invoice-canvas.is-capturing .inv-terms-input.pdf-field { padding-left: 0; padding-right: 0; }
+.invoice-canvas.is-capturing .inv-account-card { background: white; }
 .send-choice.is-disabled { opacity: 0.55; cursor: not-allowed; }
 .send-setup-note {
   padding: 10px 12px;
