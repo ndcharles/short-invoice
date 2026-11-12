@@ -36,6 +36,11 @@
     }
   ],
 
+  // Spots a short link getting a burst of clicks so they are counted by sample instead of one database
+  // write each (worker/lib/click-log.ts). Keyed by link, never by visitor, and it never blocks a redirect.
+  // In-memory counters per Cloudflare location: no KV, no D1 writes.
+  "ratelimits": [{ "name": "CLICK_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
+
   // Once a day at 07:00 UTC (8 AM in Lagos): client reminder email and invoices drafted ahead of
   // renewals (worker/lib/client-reminders.ts). Cron triggers are free and do not count as requests.
   "triggers": { "crons": ["0 7 * * *"] },

@@ -48,12 +48,22 @@ export function osOf(ua: string): string {
   return 'Other';
 }
 
-/** Host of the referrer only, so the rollup key space stays small. */
+/** A plain site name: dot-separated labels of letters, digits and hyphens, or an IPv4 address. */
+const SITE_RE = /^(?=.{1,100}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * Site the visitor came from: the host of the Referer header only, lower-cased, without "www.". The header is
+ * whatever the visitor's browser sends, so anything that is not a plain site name of ordinary length is
+ * recorded as "Other" instead of being stored as-is.
+ */
 export function refererHost(referer: string | null): string {
   if (!referer) return 'Direct';
+  let host: string;
   try {
-    return new URL(referer).hostname.replace(/^www\./, '') || 'Direct';
+    host = new URL(referer).hostname.toLowerCase().replace(/^www\./, '');
   } catch {
     return 'Direct';
   }
+  if (!host) return 'Direct';
+  return SITE_RE.test(host) ? host : 'Other';
 }

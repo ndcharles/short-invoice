@@ -100,6 +100,20 @@ describe('shorten and redirect', () => {
     }
   });
 
+  it('records a made-up or oversized referring site as "Other" and still redirects', async () => {
+    const link = await create({ dest: 'https://example.com' });
+    const ua = 'Mozilla/5.0 Firefox/120';
+    const long = `https://${Array.from({ length: 40 }, () => 'abcdefgh').join('.')}.example/`;
+    for (const referer of [long, 'https://localhost/x', 'https://Shop.Example.org/a']) {
+      const res = await raw(`/s/${link.alias}`, { headers: { 'user-agent': ua, referer } });
+      expect(res.status).toBe(302);
+    }
+    expect(await clicksOf(link.id, 3)).toBe(3);
+    const names = (await api('GET', '/api/analytics/links?range=7d')).body.referrers.map((r: { name: string }) => r.name).join(' ');
+    expect(names).not.toContain('abcdefgh');
+    expect(names).not.toContain('localhost');
+  });
+
   it('returns a 404 page for unknown aliases', async () => {
     const res = await raw('/s/does-not-exist-xyz');
     expect(res.status).toBe(404);
