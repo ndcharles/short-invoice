@@ -1,4 +1,5 @@
 import type { AuthMode, CurrentUser } from './lib/auth';
+import type { ClickLimiter } from './lib/click-log';
 
 export interface Env {
   DB: D1Database;
@@ -21,6 +22,11 @@ export interface Env {
    * ever misbehaves.
    */
   DEST_PREVIEW_FETCH?: string;
+  /**
+   * Tells when one short link is getting a burst of clicks, so they are counted by sample (wrangler.jsonc
+   * `ratelimits`, keyed by link). Optional: without it every click is counted exactly.
+   */
+  CLICK_LIMITER?: ClickLimiter;
 }
 
 export type AppEnv = { Bindings: Env; Variables: { user: CurrentUser; authMode: AuthMode } };

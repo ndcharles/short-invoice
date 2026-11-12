@@ -6,6 +6,7 @@ declare module 'node:sqlite' {
     prepare(sql: string): {
       run(...params: unknown[]): { changes: number | bigint };
       get(...params: unknown[]): unknown;
+      all(...params: unknown[]): unknown[];
     };
   }
 }

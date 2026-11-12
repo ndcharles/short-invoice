@@ -85,6 +85,14 @@ D1 5M rows read / 100k rows written per day, 5 GB storage.
   plus one `links.clicks` increment, in `waitUntil`. Bots are skipped.
   Analytics read the rollup in a single scan and aggregate in memory, since
   every extra GROUP BY over the same rows is billed again.
+- **Click counting is bounded (`worker/lib/click-log.ts`).** It never blocks or slows a redirect; it only
+  limits what a click may write, because D1's daily row-write allowance is shared with sign-in and every save.
+  A busy link (the `CLICK_LIMITER` rate-limit binding, keyed by link id, never by visitor) is counted by
+  sample: one click in ten, recorded as ten. A link keeps at most 300 breakdown rows a day; new combinations
+  after that go to one "Other" row (`device = 'Other'` marks it). The referrer is stored only when it is a
+  plain site name of at most 100 characters, otherwise "Other". The daily cron folds breakdown older than
+  180 days into one total per link per day. Totals are never dropped by any of these. The binding is
+  optional: without it every click is counted exactly.
 - **Every index costs writes.** Only add an index that backs a real query.
 - **CPU budget.** Link passwords use PBKDF2 via WebCrypto (`worker/lib/password.ts`),
   not scrypt. After one correct entry the visitor gets a 12 h HMAC-signed

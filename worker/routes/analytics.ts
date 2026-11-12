@@ -119,7 +119,7 @@ analytics.get('/links', async (c) => {
       // day/country/device/browser/os combinations stand in for visitors.
       uniqueVisitors: new Set(rows.map((r) => `${r.day}|${r.country}|${r.device}|${r.browser}|${r.os}`)).size,
       activeLinks: summary.activeLinks,
-      topReferrer: tally(rows, 'referer').find(([name]) => name !== 'Direct')?.[0] ?? 'Direct',
+      topReferrer: referrers.find(([name]) => name !== 'Direct' && name !== 'Other')?.[0] ?? 'Direct',
       lastClick: relativeTime(summary.lastClickedAt),
     },
     timeSeries,

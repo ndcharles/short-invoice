@@ -5,7 +5,8 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { verifyPassword } from '../lib/password';
 import { signUnlock, unlockCookieName, UNLOCK_TTL_SECONDS, verifyUnlock } from '../lib/unlock';
 import { withUtm, pickUtm } from '../../src/lib/links/utm';
-import { browserOf, deviceOf, isBot, isPreviewBot, osOf, refererHost } from '../lib/ua';
+import { clickStatements, clickWeight, linkIsBusy } from '../lib/click-log';
+import { isBot, isPreviewBot } from '../lib/ua';
 import { DEFAULT_SETTINGS } from '../lib/settings-defaults';
 import { parseHttpUrl } from '../../src/lib/validate';
 import { CLOAK_LOCK_SCRIPT, cloakPage } from '../lib/cloak';
@@ -74,38 +75,26 @@ type LinkRecord = Pick<
 >;
 
 /**
- * One rollup upsert plus one counter update per human click (bots skipped),
- * run after the response is sent so the redirect never waits on a write.
+ * Counts a human click (bots skipped) after the response is sent, so the redirect never waits on it.
+ * See worker/lib/click-log.ts for how busy links and the daily breakdown are kept within bounds.
  */
 function logClick(c: RedirectContext, linkId: string) {
-  const ua = c.req.header('user-agent') ?? '';
-  if (isBot(ua)) return;
+  const userAgent = c.req.header('user-agent') ?? '';
+  if (isBot(userAgent)) return;
 
-  const now = Date.now();
-  const country = (c.req.raw.cf?.country as string | undefined) ?? c.req.header('cf-ipcountry') ?? 'XX';
+  const click = {
+    linkId,
+    now: Date.now(),
+    country: (c.req.raw.cf?.country as string | undefined) ?? c.req.header('cf-ipcountry') ?? '',
+    userAgent,
+    referer: c.req.header('referer') ?? null,
+  };
   const db = c.env.DB;
-
   c.executionCtx.waitUntil(
-    db
-      .batch([
-        db.prepare('UPDATE links SET clicks = clicks + 1, last_clicked_at = ?1 WHERE id = ?2').bind(now, linkId),
-        db
-          .prepare(
-            `INSERT INTO link_clicks_daily (link_id, day, country, device, browser, os, referer, clicks)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
-             ON CONFLICT DO UPDATE SET clicks = clicks + 1`
-          )
-          .bind(
-            linkId,
-            new Date(now).toISOString().slice(0, 10),
-            country,
-            deviceOf(ua),
-            browserOf(ua),
-            osOf(ua),
-            refererHost(c.req.header('referer') ?? null)
-          ),
-      ])
-      .catch((err) => console.error('click logging failed', err))
+    (async () => {
+      const weight = clickWeight(await linkIsBusy(c.env.CLICK_LIMITER, linkId));
+      if (weight) await db.batch(clickStatements(db, click, weight));
+    })().catch((err) => console.error('click logging failed', err))
   );
 }
 

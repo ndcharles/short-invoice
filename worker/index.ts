@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import type { AppEnv, Env } from './env';
 import { dailyRun } from './lib/client-reminders';
+import { compactOldClicks } from './lib/click-log';
 import links from './routes/links';
 import utms from './routes/utms';
 import invoices from './routes/invoices';
@@ -190,6 +191,12 @@ app.all('*', (c) => appNotFound(c));
 export default {
   fetch: app.fetch,
   scheduled(_event, env, ctx) {
+    // Separate from the reminders so neither can stop the other.
+    ctx.waitUntil(
+      compactOldClicks(env.DB)
+        .then((days) => days.length && console.log('click detail folded', JSON.stringify(days)))
+        .catch((err) => console.error('click compaction failed', err))
+    );
     ctx.waitUntil(dailyRun(env).then((r) => console.log('daily run', JSON.stringify({ reminders: r.reminders.length, drafted: r.drafted.length, email: r.email, error: r.error }))));
   },
 } satisfies ExportedHandler<Env>;
